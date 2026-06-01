@@ -71,12 +71,10 @@ app_offline.htm
 .env
 .env.*
 !.env.example
-appsettings.Local.json
-appsettings.*.Local.json
-appsettings.*.local.json
-appsettings.Production.json
-appsettings.Staging.json
-appsettings.Secrets.json
+**/appsettings.json
+**/appsettings.*.json
+!**/appsettings.example.json
+!**/appsettings.*.example.json
 secrets.json
 *.secrets.json
 

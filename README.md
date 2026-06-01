@@ -78,7 +78,15 @@ dotnet tool install --global dotnet-ef
 
 ## Configuration
 
-Default connection string:
+Runtime settings are intentionally not committed.
+
+Create your local configuration file from the example:
+
+```bash
+copy AIStudyHub.API\appsettings.example.json AIStudyHub.API\appsettings.json
+```
+
+Default connection string in the example file:
 
 ```json
 {
@@ -88,9 +96,9 @@ Default connection string:
 }
 ```
 
-JWT settings are stored under the `Jwt` section in `AIStudyHub.API/appsettings.json`.
+JWT settings are stored under the `Jwt` section in your local `AIStudyHub.API/appsettings.json`.
 
-For real environments, do not commit production secrets. Use user secrets, environment variables, or a secure secret store.
+Do not commit real environment configuration. Use user secrets, environment variables, or a secure secret store for production values.
 
 ## Getting Started
 
