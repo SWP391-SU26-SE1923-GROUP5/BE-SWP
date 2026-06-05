@@ -1,12 +1,11 @@
 ﻿using System.Linq.Expressions;
-using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
 namespace AIStudyHub.Data.Repositories;
 
 public class GenericRepository<TEntity> : IRepository<TEntity>
-    where TEntity : BaseEntity
+    where TEntity : class
 {
     protected readonly ApplicationDbContext DbContext;
     protected readonly DbSet<TEntity> DbSet;

@@ -7,15 +7,10 @@ using AIStudyHub.Business.DTOs.Questions;
 using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.DTOs.QuizSubmissions;
 using AIStudyHub.Business.DTOs.Reports;
-using AIStudyHub.Business.DTOs.Users;
 using AIStudyHub.Business.DTOs.Votes;
 using AIStudyHub.Business.Interfaces.Services;
 
 namespace AIStudyHub.Business.Services;
-
-public sealed class UserService : CrudService<UserResponseDto, CreateUserRequestDto, UpdateUserRequestDto>, IUserService
-{
-}
 
 public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDocumentRequestDto, UpdateDocumentRequestDto>, IDocumentService
 {

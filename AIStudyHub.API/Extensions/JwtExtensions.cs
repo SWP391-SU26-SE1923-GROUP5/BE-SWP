@@ -32,6 +32,8 @@ public static class JwtExtensions
                 };
             });
 
+        services.AddAuthorization();
+
         return services;
     }
 }

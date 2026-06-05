@@ -1,4 +1,6 @@
+using AIStudyHub.Business.Behaviors;
 using AIStudyHub.Business.Interfaces.Services;
+using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace AIStudyHub.Business.Services;
@@ -7,6 +9,12 @@ public static class BusinessServiceExtensions
 {
     public static IServiceCollection AddBusinessServices(this IServiceCollection services)
     {
+        services.AddMediatR(configuration =>
+        {
+            configuration.RegisterServicesFromAssembly(typeof(BusinessServiceExtensions).Assembly);
+        });
+        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
+
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IDocumentService, DocumentService>();

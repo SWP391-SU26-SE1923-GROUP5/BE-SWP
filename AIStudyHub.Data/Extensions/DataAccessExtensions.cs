@@ -1,5 +1,7 @@
 using AIStudyHub.Data.Interfaces;
 using AIStudyHub.Data.Repositories;
+using AIStudyHub.Data.Entities;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,6 +19,18 @@ public static class DataAccessExtensions
 
         services.AddScoped(typeof(IRepository<>), typeof(GenericRepository<>));
         services.AddScoped<IUnitOfWork, UnitOfWork>();
+        services
+            .AddIdentityCore<User>(options =>
+            {
+                options.User.RequireUniqueEmail = true;
+                options.Password.RequiredLength = 8;
+                options.Password.RequireDigit = true;
+                options.Password.RequireLowercase = true;
+                options.Password.RequireUppercase = true;
+                options.Password.RequireNonAlphanumeric = false;
+            })
+            .AddRoles<IdentityRole<Guid>>()
+            .AddEntityFrameworkStores<ApplicationDbContext>();
 
         return services;
     }

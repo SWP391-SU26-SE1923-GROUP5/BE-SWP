@@ -7,9 +7,12 @@ public sealed class CreateUserRequestDtoValidator : AbstractValidator<CreateUser
 {
     public CreateUserRequestDtoValidator()
     {
-        RuleFor(x => x.FullName).NotEmpty().MaximumLength(150);
-        RuleFor(x => x.Email).NotEmpty().EmailAddress().MaximumLength(256);
+        RuleFor(x => x.FullName).NotEmpty().MaximumLength(255);
+        RuleFor(x => x.Email).NotEmpty().EmailAddress().MaximumLength(255);
         RuleFor(x => x.Password).NotEmpty().MinimumLength(8).MaximumLength(100);
+        RuleFor(x => x.CurrentStorageCapacity).GreaterThanOrEqualTo(0);
+        RuleFor(x => x.CurrentAiToken).GreaterThanOrEqualTo(0);
+        RuleFor(x => x.Status).NotEmpty().MaximumLength(20);
         RuleFor(x => x.Role).IsInEnum();
     }
 }
@@ -18,7 +21,10 @@ public sealed class UpdateUserRequestDtoValidator : AbstractValidator<UpdateUser
 {
     public UpdateUserRequestDtoValidator()
     {
-        RuleFor(x => x.FullName).NotEmpty().MaximumLength(150);
+        RuleFor(x => x.FullName).NotEmpty().MaximumLength(255);
+        RuleFor(x => x.CurrentStorageCapacity).GreaterThanOrEqualTo(0);
+        RuleFor(x => x.CurrentAiToken).GreaterThanOrEqualTo(0);
+        RuleFor(x => x.Status).NotEmpty().MaximumLength(20);
         RuleFor(x => x.Role).IsInEnum();
     }
 }

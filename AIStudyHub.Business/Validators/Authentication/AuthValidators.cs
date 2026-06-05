@@ -7,8 +7,8 @@ public sealed class RegisterRequestDtoValidator : AbstractValidator<RegisterRequ
 {
     public RegisterRequestDtoValidator()
     {
-        RuleFor(x => x.FullName).NotEmpty().MaximumLength(150);
-        RuleFor(x => x.Email).NotEmpty().EmailAddress().MaximumLength(256);
+        RuleFor(x => x.FullName).NotEmpty().MaximumLength(255);
+        RuleFor(x => x.Email).NotEmpty().EmailAddress().MaximumLength(255);
         RuleFor(x => x.Password).NotEmpty().MinimumLength(8).MaximumLength(100);
     }
 }
@@ -17,7 +17,7 @@ public sealed class LoginRequestDtoValidator : AbstractValidator<LoginRequestDto
 {
     public LoginRequestDtoValidator()
     {
-        RuleFor(x => x.Email).NotEmpty().EmailAddress().MaximumLength(256);
+        RuleFor(x => x.Email).NotEmpty().EmailAddress().MaximumLength(255);
         RuleFor(x => x.Password).NotEmpty();
     }
 }

@@ -1,5 +1,6 @@
 using AIStudyHub.Business.DTOs.Authentication;
-using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Features.Auth;
+using MediatR;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AIStudyHub.API.Controllers;
@@ -8,24 +9,24 @@ namespace AIStudyHub.API.Controllers;
 [Route("api/[controller]")]
 public sealed class AuthController : ControllerBase
 {
-    private readonly IAuthService _authService;
+    private readonly IMediator _mediator;
 
-    public AuthController(IAuthService authService)
+    public AuthController(IMediator mediator)
     {
-        _authService = authService;
+        _mediator = mediator;
     }
 
     [HttpPost("register")]
     public async Task<ActionResult<AuthResponseDto>> Register(RegisterRequestDto request, CancellationToken cancellationToken)
     {
-        var result = await _authService.RegisterAsync(request, cancellationToken);
+        var result = await _mediator.Send(new RegisterUserCommand(request), cancellationToken);
         return Ok(result);
     }
 
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponseDto>> Login(LoginRequestDto request, CancellationToken cancellationToken)
     {
-        var result = await _authService.LoginAsync(request, cancellationToken);
+        var result = await _mediator.Send(new LoginUserCommand(request), cancellationToken);
         return Ok(result);
     }
 }

@@ -11,10 +11,18 @@ internal sealed class UserConfiguration : IEntityTypeConfiguration<User>
     {
         builder.ToTable("Users");
         builder.HasKey(x => x.Id);
-        builder.Property(x => x.FullName).HasMaxLength(150).IsRequired();
-        builder.Property(x => x.Email).HasMaxLength(256).IsRequired();
-        builder.Property(x => x.PasswordHash).HasMaxLength(500).IsRequired();
-        builder.Property(x => x.Role).HasConversion<string>().HasMaxLength(50).HasDefaultValue(UserRole.Student);
+        builder.Property(x => x.Id).HasColumnName("id");
+        builder.Property(x => x.FullName).HasColumnName("full_name").HasMaxLength(255).IsRequired();
+        builder.Property(x => x.Email).HasColumnName("mail").HasMaxLength(255).IsRequired();
+        builder.Property(x => x.PasswordHash).HasColumnName("password_hash").HasMaxLength(255).IsRequired();
+        builder.Property(x => x.DateOfBirth).HasColumnName("dob").HasColumnType("date");
+        builder.Property(x => x.TierId).HasColumnName("tier_id");
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+        builder.Property(x => x.CurrentStorageCapacity).HasColumnName("current_storage_capacity");
+        builder.Property(x => x.CurrentAiToken).HasColumnName("current_ai_token");
+        builder.Property(x => x.Status).HasColumnName("status").HasMaxLength(20).HasDefaultValue("Active");
+        builder.Property(x => x.Role).HasColumnName("role").HasConversion<string>().HasMaxLength(20).HasDefaultValue(UserRole.Student);
         builder.HasIndex(x => x.Email).IsUnique();
     }
 }

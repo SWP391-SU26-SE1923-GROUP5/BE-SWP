@@ -29,6 +29,14 @@ public sealed class GlobalExceptionMiddleware
         {
             await WriteErrorResponseAsync(context, HttpStatusCode.Unauthorized, exception.Message);
         }
+        catch (KeyNotFoundException exception)
+        {
+            await WriteErrorResponseAsync(context, HttpStatusCode.NotFound, exception.Message);
+        }
+        catch (InvalidOperationException exception)
+        {
+            await WriteErrorResponseAsync(context, HttpStatusCode.Conflict, exception.Message);
+        }
         catch (Exception exception)
         {
             _logger.LogError(exception, "Unhandled exception occurred.");

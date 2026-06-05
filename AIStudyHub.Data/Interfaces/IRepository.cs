@@ -1,10 +1,8 @@
 ﻿using System.Linq.Expressions;
-using AIStudyHub.Data.Entities;
-
 namespace AIStudyHub.Data.Interfaces;
 
 public interface IRepository<TEntity>
-    where TEntity : BaseEntity
+    where TEntity : class
 {
     IQueryable<TEntity> Query();
     Task<IReadOnlyList<TEntity>> GetAllAsync(CancellationToken cancellationToken = default);
