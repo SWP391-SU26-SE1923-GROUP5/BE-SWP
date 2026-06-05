@@ -1,5 +1,5 @@
-using AIStudyHub.Business.Entities;
-using AIStudyHub.Business.Enums;
+﻿using AIStudyHub.Data.Entities;
+using AIStudyHub.Data.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace AIStudyHub.Data;

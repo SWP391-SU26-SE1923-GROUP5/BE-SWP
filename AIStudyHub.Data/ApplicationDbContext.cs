@@ -1,4 +1,4 @@
-using AIStudyHub.Business.Entities;
+﻿using AIStudyHub.Data.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace AIStudyHub.Data;

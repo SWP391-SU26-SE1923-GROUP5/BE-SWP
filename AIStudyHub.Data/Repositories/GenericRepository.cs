@@ -1,5 +1,5 @@
-using System.Linq.Expressions;
-using AIStudyHub.Business.Entities;
+﻿using System.Linq.Expressions;
+using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Interfaces;
 using Microsoft.EntityFrameworkCore;
 

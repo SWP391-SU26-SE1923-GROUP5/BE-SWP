@@ -1,4 +1,4 @@
-using AIStudyHub.Business.Enums;
+﻿using AIStudyHub.Data.Enums;
 
 namespace AIStudyHub.Business.DTOs.Votes;
 

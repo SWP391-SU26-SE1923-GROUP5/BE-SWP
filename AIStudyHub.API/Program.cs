@@ -1,6 +1,7 @@
 using AIStudyHub.API.Extensions;
 using AIStudyHub.API.Middleware;
 using AIStudyHub.Business.Mappings;
+using AIStudyHub.Business.Services;
 using AIStudyHub.Business.Validators.Authentication;
 using AIStudyHub.Data.Extensions;
 using FluentValidation;
@@ -18,7 +19,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerDocumentation();
 builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddDataAccess(builder.Configuration);
-builder.Services.AddApplicationServices();
+builder.Services.AddBusinessServices();
 builder.Services.AddAutoMapper(_ => { }, typeof(ApplicationMappingProfile).Assembly);
 builder.Services.AddValidatorsFromAssemblyContaining<LoginRequestDtoValidator>();
 

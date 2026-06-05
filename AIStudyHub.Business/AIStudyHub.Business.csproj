@@ -11,4 +11,8 @@
     <PackageReference Include="FluentValidation" Version="12.1.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\AIStudyHub.Data\AIStudyHub.Data.csproj" />
+  </ItemGroup>
+
 </Project>

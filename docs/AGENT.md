@@ -279,3 +279,47 @@ Core entities:
 - Add integration tests for controllers and service workflows.
 - Add unit tests for validators, business rules, and repository behavior.
 - Review `appsettings.json` before production deployment and move secrets out of source control.
+# Guideline triển khai dự án .NET 8 theo 3-layer architecture
+
+Tài liệu này rút ra từ cấu trúc hiện tại của `AIStudyHub` và chuyển hóa thành guideline áp dụng cho dự án mới dùng đúng 3 project:
+
+- `AIStudyHub.API`
+- `AIStudyHub.Business`
+- `AIStudyHub.Data`
+
+Không tách thêm project `Domain`, `Application`, `Infrastructure`. Các pattern như Controllers, service layer, repository, EF Core, FluentValidation, AutoMapper, JWT, Swagger, CORS, rate limiting, SignalR, background service và storage service đều được map vào 3 layer trên.
+
+## 1. Tổng quan 3-layer architecture
+
+Luồng phụ thuộc khuyến nghị:
+
+```text
+Client
+-> AIStudyHub.API
+-> AIStudyHub.Business
+-> AIStudyHub.Data
+-> Database / external storage / external providers
+```
+
+### AIStudyHub.API
+
+`AIStudyHub.API` là presentation layer. Layer này chịu trách nhiệm nhận HTTP request, áp dụng các middleware của ASP.NET Core, cấu hình bảo mật, rồi gọi Business layer.
+
+Nên đặt ở API:
+
+- `Program.cs`
+- `Controllers`
+- `Middleware`
+- `Configuration`
+- `Attributes`
+- `Hubs` nếu cần realtime bằng SignalR
+- `Services` chỉ cho các service thuần API như current user, realtime publisher, API-specific adapter
+- Extension method như `AddWebApiServices`, `AddJwtAuthentication`, `AddSwaggerDocumentation`
+- CORS, rate limiting, authentication, authorization, Swagger/OpenAPI
+
+Không nên đặt ở API:
+
+- Business rule
+- EF Core query trực tiếp
+- `DbContext` injection vào controller
+- Trả trực tiếp entity ra response nếu không thật sự cần

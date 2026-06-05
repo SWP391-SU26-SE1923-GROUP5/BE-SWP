@@ -1,11 +1,11 @@
 using AIStudyHub.Business.Interfaces.Services;
-using AIStudyHub.Business.Services;
+using Microsoft.Extensions.DependencyInjection;
 
-namespace AIStudyHub.API.Extensions;
+namespace AIStudyHub.Business.Services;
 
-public static class ServiceCollectionExtensions
+public static class BusinessServiceExtensions
 {
-    public static IServiceCollection AddApplicationServices(this IServiceCollection services)
+    public static IServiceCollection AddBusinessServices(this IServiceCollection services)
     {
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IUserService, UserService>();

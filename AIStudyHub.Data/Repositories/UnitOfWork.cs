@@ -1,4 +1,4 @@
-using AIStudyHub.Business.Entities;
+﻿using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Interfaces;
 
 namespace AIStudyHub.Data.Repositories;

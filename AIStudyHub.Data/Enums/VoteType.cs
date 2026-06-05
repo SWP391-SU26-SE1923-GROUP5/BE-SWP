@@ -1,4 +1,4 @@
-namespace AIStudyHub.Business.Enums;
+﻿namespace AIStudyHub.Data.Enums;
 
 public enum VoteType
 {

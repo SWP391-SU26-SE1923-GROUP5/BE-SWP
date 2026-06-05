@@ -1,4 +1,4 @@
-using AIStudyHub.Business.DTOs.AIChat;
+﻿using AIStudyHub.Business.DTOs.AIChat;
 using AIStudyHub.Business.DTOs.Answers;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Flashcards;
@@ -10,7 +10,7 @@ using AIStudyHub.Business.DTOs.QuizSubmissions;
 using AIStudyHub.Business.DTOs.Reports;
 using AIStudyHub.Business.DTOs.Users;
 using AIStudyHub.Business.DTOs.Votes;
-using AIStudyHub.Business.Entities;
+using AIStudyHub.Data.Entities;
 using AutoMapper;
 
 namespace AIStudyHub.Business.Mappings;

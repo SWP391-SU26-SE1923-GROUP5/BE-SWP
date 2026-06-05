@@ -1,6 +1,6 @@
-using AIStudyHub.Business.Enums;
+﻿using AIStudyHub.Data.Enums;
 
-namespace AIStudyHub.Business.Entities;
+namespace AIStudyHub.Data.Entities;
 
 public sealed class Question : BaseEntity
 {

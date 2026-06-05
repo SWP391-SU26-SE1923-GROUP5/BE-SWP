@@ -1,4 +1,4 @@
-namespace AIStudyHub.Business.Entities;
+﻿namespace AIStudyHub.Data.Entities;
 
 public sealed class QuizSubmission : BaseEntity
 {
