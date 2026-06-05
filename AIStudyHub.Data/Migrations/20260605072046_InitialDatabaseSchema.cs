@@ -265,6 +265,30 @@ namespace AIStudyHub.Data.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "RefreshTokens",
+                columns: table => new
+                {
+                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    UserId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    TokenHash = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
+                    ExpiresAt = table.Column<DateTime>(type: "datetime", nullable: false),
+                    RevokedAt = table.Column<DateTime>(type: "datetime", nullable: true),
+                    ReplacedByTokenHash = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime2", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_RefreshTokens", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_RefreshTokens_Users_UserId",
+                        column: x => x.UserId,
+                        principalTable: "Users",
+                        principalColumn: "id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "ChatMessages",
                 columns: table => new
                 {
@@ -560,6 +584,17 @@ namespace AIStudyHub.Data.Migrations
                 column: "DocumentId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_RefreshTokens_TokenHash",
+                table: "RefreshTokens",
+                column: "TokenHash",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_RefreshTokens_UserId",
+                table: "RefreshTokens",
+                column: "UserId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Reports_DocumentId",
                 table: "Reports",
                 column: "DocumentId");
@@ -634,6 +669,9 @@ namespace AIStudyHub.Data.Migrations
 
             migrationBuilder.DropTable(
                 name: "QuizSubmissions");
+
+            migrationBuilder.DropTable(
+                name: "RefreshTokens");
 
             migrationBuilder.DropTable(
                 name: "Reports");

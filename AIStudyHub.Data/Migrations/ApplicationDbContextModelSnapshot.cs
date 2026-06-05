@@ -401,6 +401,46 @@ namespace AIStudyHub.Data.Migrations
                     b.ToTable("QuizSubmissions", (string)null);
                 });
 
+            modelBuilder.Entity("AIStudyHub.Data.Entities.RefreshToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime");
+
+                    b.Property<string>("ReplacedByTokenHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("datetime");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("RefreshTokens", (string)null);
+                });
+
             modelBuilder.Entity("AIStudyHub.Data.Entities.Report", b =>
                 {
                     b.Property<Guid>("Id")
@@ -873,6 +913,17 @@ namespace AIStudyHub.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("AIStudyHub.Data.Entities.RefreshToken", b =>
+                {
+                    b.HasOne("AIStudyHub.Data.Entities.User", "User")
+                        .WithMany("RefreshTokens")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("AIStudyHub.Data.Entities.Report", b =>
                 {
                     b.HasOne("AIStudyHub.Data.Entities.Document", "Document")
@@ -1001,6 +1052,8 @@ namespace AIStudyHub.Data.Migrations
                     b.Navigation("Payments");
 
                     b.Navigation("QuizSubmissions");
+
+                    b.Navigation("RefreshTokens");
 
                     b.Navigation("Reports");
 

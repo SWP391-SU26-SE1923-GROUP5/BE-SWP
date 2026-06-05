@@ -10,4 +10,11 @@ public sealed record RegisterRequestDto(
 
 public sealed record LoginRequestDto(string Email, string Password);
 
-public sealed record AuthResponseDto(UserResponseDto User, string AccessToken, DateTime ExpiresAt);
+public sealed record RefreshTokenRequestDto(string RefreshToken);
+
+public sealed record AuthResponseDto(
+    UserResponseDto User,
+    string AccessToken,
+    DateTime AccessTokenExpiresAt,
+    string RefreshToken,
+    DateTime RefreshTokenExpiresAt);

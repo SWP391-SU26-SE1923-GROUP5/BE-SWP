@@ -29,4 +29,11 @@ public sealed class AuthController : ControllerBase
         var result = await _mediator.Send(new LoginUserCommand(request), cancellationToken);
         return Ok(result);
     }
+
+    [HttpPost("refresh-token")]
+    public async Task<ActionResult<AuthResponseDto>> RefreshToken(RefreshTokenRequestDto request, CancellationToken cancellationToken)
+    {
+        var result = await _mediator.Send(new RefreshTokenCommand(request), cancellationToken);
+        return Ok(result);
+    }
 }

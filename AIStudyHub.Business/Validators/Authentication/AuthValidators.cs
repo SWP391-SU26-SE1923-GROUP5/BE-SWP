@@ -21,3 +21,11 @@ public sealed class LoginRequestDtoValidator : AbstractValidator<LoginRequestDto
         RuleFor(x => x.Password).NotEmpty();
     }
 }
+
+public sealed class RefreshTokenRequestDtoValidator : AbstractValidator<RefreshTokenRequestDto>
+{
+    public RefreshTokenRequestDtoValidator()
+    {
+        RuleFor(x => x.RefreshToken).NotEmpty();
+    }
+}
