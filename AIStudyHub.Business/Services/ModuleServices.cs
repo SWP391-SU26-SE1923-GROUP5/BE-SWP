@@ -7,6 +7,7 @@ using AIStudyHub.Business.DTOs.Questions;
 using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.DTOs.QuizSubmissions;
 using AIStudyHub.Business.DTOs.Reports;
+using AIStudyHub.Business.DTOs.Subjects;
 using AIStudyHub.Business.DTOs.Votes;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Data.Interfaces;
@@ -918,6 +919,84 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
         }
 
         _unitOfWork.Payments.Remove(payment);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+}
+
+public sealed class SubjectService : CrudService<SubjectResponseDto, CreateSubjectRequestDto, UpdateSubjectRequestDto>, ISubjectService
+{
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IMapper _mapper;
+
+    public SubjectService(IUnitOfWork unitOfWork, IMapper mapper)
+    {
+        _unitOfWork = unitOfWork;
+        _mapper = mapper;
+    }
+
+    public override async Task<IReadOnlyList<SubjectResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        var subjects = await _unitOfWork.Subjects.GetAllAsync(cancellationToken);
+        return subjects.Select(_mapper.Map<SubjectResponseDto>).ToList();
+    }
+
+    public override async Task<SubjectResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
+        return subject is null ? null : _mapper.Map<SubjectResponseDto>(subject);
+    }
+
+    public override async Task<SubjectResponseDto> CreateAsync(CreateSubjectRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var existing = await _unitOfWork.Subjects
+            .Query()
+            .FirstOrDefaultAsync(s => s.SubjectCode == request.SubjectCode, cancellationToken);
+
+        if (existing is not null)
+        {
+            throw new InvalidOperationException($"Subject with code '{request.SubjectCode}' already exists.");
+        }
+
+        var subject = _mapper.Map<Data.Entities.Subject>(request);
+        await _unitOfWork.Subjects.AddAsync(subject, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return _mapper.Map<SubjectResponseDto>(subject);
+    }
+
+    public override async Task<SubjectResponseDto> UpdateAsync(Guid id, UpdateSubjectRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
+        if (subject is null)
+        {
+            throw new KeyNotFoundException($"Subject with ID {id} not found.");
+        }
+
+        var codeConflict = await _unitOfWork.Subjects
+            .Query()
+            .FirstOrDefaultAsync(s => s.SubjectCode == request.SubjectCode && s.Id != id, cancellationToken);
+
+        if (codeConflict is not null)
+        {
+            throw new InvalidOperationException($"Subject with code '{request.SubjectCode}' already exists.");
+        }
+
+        _mapper.Map(request, subject);
+        _unitOfWork.Subjects.Update(subject);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return _mapper.Map<SubjectResponseDto>(subject);
+    }
+
+    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
+        if (subject is null)
+        {
+            throw new KeyNotFoundException($"Subject with ID {id} not found.");
+        }
+
+        _unitOfWork.Subjects.Remove(subject);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 }
