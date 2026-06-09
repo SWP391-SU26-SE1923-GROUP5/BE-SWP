@@ -11,6 +11,7 @@ using AIStudyHub.Data.Entities;
 using AutoMapper;
 using FluentValidation;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
@@ -24,7 +25,11 @@ public sealed class AuthService : IAuthService
     private readonly IValidator<RegisterRequestDto> _registerValidator;
     private readonly IValidator<LoginRequestDto> _loginValidator;
     private readonly IValidator<RefreshTokenRequestDto> _refreshTokenValidator;
+    private readonly IValidator<ConfirmEmailRequestDto> _confirmEmailValidator;
+    private readonly IValidator<ResendEmailVerificationRequestDto> _resendEmailVerificationValidator;
     private readonly JwtOptions _jwtOptions;
+    private readonly IEmailService _emailService;
+    private readonly EmailVerificationOptions _emailVerificationOptions;
 
     public AuthService(
         UserManager<User> userManager,
@@ -33,7 +38,11 @@ public sealed class AuthService : IAuthService
         IValidator<RegisterRequestDto> registerValidator,
         IValidator<LoginRequestDto> loginValidator,
         IValidator<RefreshTokenRequestDto> refreshTokenValidator,
-        JwtOptions jwtOptions)
+        IValidator<ConfirmEmailRequestDto> confirmEmailValidator,
+        IValidator<ResendEmailVerificationRequestDto> resendEmailVerificationValidator,
+        JwtOptions jwtOptions,
+        IEmailService emailService,
+        EmailVerificationOptions emailVerificationOptions)
     {
         _userManager = userManager;
         _dbContext = dbContext;
@@ -41,10 +50,14 @@ public sealed class AuthService : IAuthService
         _registerValidator = registerValidator;
         _loginValidator = loginValidator;
         _refreshTokenValidator = refreshTokenValidator;
+        _confirmEmailValidator = confirmEmailValidator;
+        _resendEmailVerificationValidator = resendEmailVerificationValidator;
         _jwtOptions = jwtOptions;
+        _emailService = emailService;
+        _emailVerificationOptions = emailVerificationOptions;
     }
 
-    public async Task<AuthResponseDto> RegisterAsync(RegisterRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<RegisterResultDto> RegisterAsync(RegisterRequestDto request, CancellationToken cancellationToken = default)
     {
         await _registerValidator.ValidateAndThrowAsync(request, cancellationToken);
 
@@ -56,12 +69,14 @@ public sealed class AuthService : IAuthService
             throw new InvalidOperationException("Email is already registered.");
         }
 
-        var user = BuildStudentUser(normalizedEmail, request.FullName, request.DateOfBirth, emailConfirmed: true);
+        var user = BuildStudentUser(normalizedEmail, request.FullName, request.DateOfBirth, emailConfirmed: false);
         var createResult = await _userManager.CreateAsync(user, request.Password);
         EnsureIdentitySucceeded(createResult);
 
         await EnsureStudentRoleAsync(user);
-        return await CreateAuthResponseAsync(user, cancellationToken);
+        await SendEmailVerificationAsync(user, cancellationToken);
+
+        return new RegisterResultDto("Registration successful. Please verify your email before logging in.", normalizedEmail);
     }
 
     public async Task<AuthResponseDto> LoginAsync(LoginRequestDto request, CancellationToken cancellationToken = default)
@@ -74,6 +89,11 @@ public sealed class AuthService : IAuthService
         if (user is null || !await _userManager.CheckPasswordAsync(user, request.Password))
         {
             throw new UnauthorizedAccessException("Invalid email or password.");
+        }
+
+        if (!user.EmailConfirmed)
+        {
+            throw new UnauthorizedAccessException("Email address has not been verified.");
         }
 
         EnsureUserIsActive(user);
@@ -139,9 +159,60 @@ public sealed class AuthService : IAuthService
             EnsureIdentitySucceeded(createResult);
             await EnsureStudentRoleAsync(user);
         }
+        else if (!user.EmailConfirmed)
+        {
+            user.EmailConfirmed = true;
+            var updateResult = await _userManager.UpdateAsync(user);
+            EnsureIdentitySucceeded(updateResult);
+        }
 
         EnsureUserIsActive(user);
         return await CreateAuthResponseAsync(user, cancellationToken);
+    }
+
+    public async Task ConfirmEmailAsync(ConfirmEmailRequestDto request, CancellationToken cancellationToken = default)
+    {
+        await _confirmEmailValidator.ValidateAndThrowAsync(request, cancellationToken);
+
+        if (!Guid.TryParse(request.UserId, out var userId))
+        {
+            throw new InvalidOperationException("Invalid email verification request.");
+        }
+
+        var user = await _userManager.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
+        if (user is null)
+        {
+            throw new InvalidOperationException("Invalid email verification request.");
+        }
+
+        if (user.EmailConfirmed)
+        {
+            return;
+        }
+
+        var decodedToken = DecodeToken(request.Token);
+        var result = await _userManager.ConfirmEmailAsync(user, decodedToken);
+        EnsureIdentitySucceeded(result);
+    }
+
+    public async Task ResendEmailVerificationAsync(ResendEmailVerificationRequestDto request, CancellationToken cancellationToken = default)
+    {
+        await _resendEmailVerificationValidator.ValidateAndThrowAsync(request, cancellationToken);
+
+        var normalizedEmail = NormalizeEmail(request.Email);
+        var user = await _userManager.FindByEmailAsync(normalizedEmail);
+
+        if (user is null)
+        {
+            return;
+        }
+
+        if (user.EmailConfirmed)
+        {
+            return;
+        }
+
+        await SendEmailVerificationAsync(user, cancellationToken);
     }
 
     private async Task<AuthResponseDto> CreateAuthResponseAsync(User user, CancellationToken cancellationToken)
@@ -193,6 +264,48 @@ public sealed class AuthService : IAuthService
     {
         var roleResult = await _userManager.AddToRoleAsync(user, "Student");
         EnsureIdentitySucceeded(roleResult);
+    }
+
+    private async Task SendEmailVerificationAsync(User user, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_emailVerificationOptions.VerificationBaseUrl))
+        {
+            throw new InvalidOperationException("Email verification URL is not configured.");
+        }
+
+        var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
+        var encodedToken = EncodeToken(token);
+        var verificationUrl = BuildVerificationUrl(user.Id, encodedToken);
+        var htmlBody = $"<p>Hello {System.Net.WebUtility.HtmlEncode(user.FullName)},</p><p>Please verify your email by clicking the link below:</p><p><a href=\"{verificationUrl}\">Verify email</a></p><p>If you did not create this account, you can ignore this email.</p>";
+
+        await _emailService.SendAsync(user.Email!, "Verify your AIStudyHub email", htmlBody, cancellationToken);
+    }
+
+    private string BuildVerificationUrl(Guid userId, string token)
+    {
+        return QueryHelpers.AddQueryString(_emailVerificationOptions.VerificationBaseUrl, new Dictionary<string, string?>
+        {
+            ["userId"] = userId.ToString(),
+            ["token"] = token
+        });
+    }
+
+    private static string EncodeToken(string token)
+    {
+        return WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
+    }
+
+    private static string DecodeToken(string token)
+    {
+        try
+        {
+            var decodedBytes = WebEncoders.Base64UrlDecode(token);
+            return Encoding.UTF8.GetString(decodedBytes);
+        }
+        catch (Exception)
+        {
+            throw new InvalidOperationException("Invalid email verification request.");
+        }
     }
 
     private static void EnsureUserIsActive(User user)
@@ -260,6 +373,7 @@ public sealed class AuthService : IAuthService
         var buffer = new byte[randomBytes.Length + entropyBytes.Length];
         Buffer.BlockCopy(randomBytes, 0, buffer, 0, randomBytes.Length);
         Buffer.BlockCopy(entropyBytes, 0, buffer, randomBytes.Length, entropyBytes.Length);
+
         return Convert.ToBase64String(buffer);
     }
 

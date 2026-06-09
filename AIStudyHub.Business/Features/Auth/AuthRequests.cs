@@ -4,13 +4,17 @@ using MediatR;
 
 namespace AIStudyHub.Business.Features.Auth;
 
-public sealed record RegisterUserCommand(RegisterRequestDto Request) : IRequest<AuthResponseDto>;
+public sealed record RegisterUserCommand(RegisterRequestDto Request) : IRequest<RegisterResultDto>;
 
 public sealed record LoginUserCommand(LoginRequestDto Request) : IRequest<AuthResponseDto>;
 
 public sealed record RefreshTokenCommand(RefreshTokenRequestDto Request) : IRequest<AuthResponseDto>;
 
-internal sealed class RegisterUserCommandHandler : IRequestHandler<RegisterUserCommand, AuthResponseDto>
+public sealed record ConfirmEmailCommand(ConfirmEmailRequestDto Request) : IRequest;
+
+public sealed record ResendEmailVerificationCommand(ResendEmailVerificationRequestDto Request) : IRequest;
+
+internal sealed class RegisterUserCommandHandler : IRequestHandler<RegisterUserCommand, RegisterResultDto>
 {
     private readonly IAuthService _authService;
 
@@ -19,7 +23,7 @@ internal sealed class RegisterUserCommandHandler : IRequestHandler<RegisterUserC
         _authService = authService;
     }
 
-    public Task<AuthResponseDto> Handle(RegisterUserCommand request, CancellationToken cancellationToken)
+    public Task<RegisterResultDto> Handle(RegisterUserCommand request, CancellationToken cancellationToken)
     {
         return _authService.RegisterAsync(request.Request, cancellationToken);
     }
@@ -52,5 +56,35 @@ internal sealed class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenC
     public Task<AuthResponseDto> Handle(RefreshTokenCommand request, CancellationToken cancellationToken)
     {
         return _authService.RefreshTokenAsync(request.Request, cancellationToken);
+    }
+}
+
+internal sealed class ConfirmEmailCommandHandler : IRequestHandler<ConfirmEmailCommand>
+{
+    private readonly IAuthService _authService;
+
+    public ConfirmEmailCommandHandler(IAuthService authService)
+    {
+        _authService = authService;
+    }
+
+    public Task Handle(ConfirmEmailCommand request, CancellationToken cancellationToken)
+    {
+        return _authService.ConfirmEmailAsync(request.Request, cancellationToken);
+    }
+}
+
+internal sealed class ResendEmailVerificationCommandHandler : IRequestHandler<ResendEmailVerificationCommand>
+{
+    private readonly IAuthService _authService;
+
+    public ResendEmailVerificationCommandHandler(IAuthService authService)
+    {
+        _authService = authService;
+    }
+
+    public Task Handle(ResendEmailVerificationCommand request, CancellationToken cancellationToken)
+    {
+        return _authService.ResendEmailVerificationAsync(request.Request, cancellationToken);
     }
 }
