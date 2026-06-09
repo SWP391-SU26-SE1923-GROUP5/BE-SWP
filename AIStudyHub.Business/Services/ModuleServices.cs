@@ -8,6 +8,8 @@ using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.DTOs.QuizSubmissions;
 using AIStudyHub.Business.DTOs.Reports;
 using AIStudyHub.Business.DTOs.Subjects;
+using AIStudyHub.Business.DTOs.TierMemberships;
+using AIStudyHub.Business.DTOs.TierUsers;
 using AIStudyHub.Business.DTOs.Votes;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Data.Interfaces;
@@ -998,5 +1000,180 @@ public sealed class SubjectService : CrudService<SubjectResponseDto, CreateSubje
 
         _unitOfWork.Subjects.Remove(subject);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+}
+
+public sealed class TierMembershipService : CrudService<TierMembershipResponseDto, CreateTierMembershipRequestDto, UpdateTierMembershipRequestDto>, ITierMembershipService
+{
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IMapper _mapper;
+
+    public TierMembershipService(IUnitOfWork unitOfWork, IMapper mapper)
+    {
+        _unitOfWork = unitOfWork;
+        _mapper = mapper;
+    }
+
+    public override async Task<IReadOnlyList<TierMembershipResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        var tiers = await _unitOfWork.TierMemberships.GetAllAsync(cancellationToken);
+        return tiers.Select(_mapper.Map<TierMembershipResponseDto>).ToList();
+    }
+
+    public override async Task<TierMembershipResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var tier = await _unitOfWork.TierMemberships.GetByIdAsync(id, cancellationToken);
+        return tier is null ? null : _mapper.Map<TierMembershipResponseDto>(tier);
+    }
+
+    public override async Task<TierMembershipResponseDto> CreateAsync(CreateTierMembershipRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var existing = await _unitOfWork.TierMemberships
+            .Query()
+            .FirstOrDefaultAsync(t => t.TierName == request.TierName, cancellationToken);
+
+        if (existing is not null)
+        {
+            throw new InvalidOperationException($"Tier with name '{request.TierName}' already exists.");
+        }
+
+        var tier = _mapper.Map<Data.Entities.TierMembership>(request);
+        await _unitOfWork.TierMemberships.AddAsync(tier, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return _mapper.Map<TierMembershipResponseDto>(tier);
+    }
+
+    public override async Task<TierMembershipResponseDto> UpdateAsync(Guid id, UpdateTierMembershipRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var tier = await _unitOfWork.TierMemberships.GetByIdAsync(id, cancellationToken);
+        if (tier is null)
+        {
+            throw new KeyNotFoundException($"Tier membership with ID {id} not found.");
+        }
+
+        var nameConflict = await _unitOfWork.TierMemberships
+            .Query()
+            .FirstOrDefaultAsync(t => t.TierName == request.TierName && t.Id != id, cancellationToken);
+
+        if (nameConflict is not null)
+        {
+            throw new InvalidOperationException($"Tier with name '{request.TierName}' already exists.");
+        }
+
+        _mapper.Map(request, tier);
+        _unitOfWork.TierMemberships.Update(tier);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return _mapper.Map<TierMembershipResponseDto>(tier);
+    }
+
+    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var tier = await _unitOfWork.TierMemberships.GetByIdAsync(id, cancellationToken);
+        if (tier is null)
+        {
+            throw new KeyNotFoundException($"Tier membership with ID {id} not found.");
+        }
+
+        _unitOfWork.TierMemberships.Remove(tier);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+}
+
+public sealed class TierUserService : ITierUserService
+{
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IMapper _mapper;
+
+    public TierUserService(IUnitOfWork unitOfWork, IMapper mapper)
+    {
+        _unitOfWork = unitOfWork;
+        _mapper = mapper;
+    }
+
+    public async Task<IReadOnlyList<TierUserResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    {
+        var assignments = await _unitOfWork.TierUsers
+            .Query()
+            .Include(tu => tu.User)
+            .Include(tu => tu.TierMembership)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return assignments.Select(_mapper.Map<TierUserResponseDto>).ToList();
+    }
+
+    public async Task<TierUserResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var assignment = await _unitOfWork.TierUsers
+            .Query()
+            .Include(tu => tu.User)
+            .Include(tu => tu.TierMembership)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(tu => tu.Id == id, cancellationToken);
+
+        return assignment is null ? null : _mapper.Map<TierUserResponseDto>(assignment);
+    }
+
+    public async Task<TierUserResponseDto> CreateAsync(CreateTierUserRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var userExists = await _unitOfWork.Users.GetByIdAsync(request.UserId, cancellationToken) is not null;
+        if (!userExists)
+        {
+            throw new KeyNotFoundException($"User with ID {request.UserId} not found.");
+        }
+
+        var tierExists = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierMembershipId, cancellationToken) is not null;
+        if (!tierExists)
+        {
+            throw new KeyNotFoundException($"Tier membership with ID {request.TierMembershipId} not found.");
+        }
+
+        var existing = await _unitOfWork.TierUsers
+            .Query()
+            .FirstOrDefaultAsync(tu => tu.UserId == request.UserId && tu.TierMembershipId == request.TierMembershipId, cancellationToken);
+
+        if (existing is not null)
+        {
+            throw new InvalidOperationException($"User is already assigned to this tier.");
+        }
+
+        var assignment = _mapper.Map<Data.Entities.TierUser>(request);
+        await _unitOfWork.TierUsers.AddAsync(assignment, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var created = await _unitOfWork.TierUsers
+            .Query()
+            .Include(tu => tu.User)
+            .Include(tu => tu.TierMembership)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(tu => tu.Id == assignment.Id, cancellationToken);
+
+        return _mapper.Map<TierUserResponseDto>(created);
+    }
+
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        var assignment = await _unitOfWork.TierUsers.GetByIdAsync(id, cancellationToken);
+        if (assignment is null)
+        {
+            throw new KeyNotFoundException($"Tier user assignment with ID {id} not found.");
+        }
+
+        _unitOfWork.TierUsers.Remove(assignment);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<TierUserResponseDto?> GetActiveByUserIdAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var assignment = await _unitOfWork.TierUsers
+            .Query()
+            .Include(tu => tu.User)
+            .Include(tu => tu.TierMembership)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(tu => tu.UserId == userId, cancellationToken);
+
+        return assignment is null ? null : _mapper.Map<TierUserResponseDto>(assignment);
     }
 }

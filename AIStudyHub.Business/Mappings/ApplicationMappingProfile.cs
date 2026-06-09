@@ -9,6 +9,8 @@ using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.DTOs.QuizSubmissions;
 using AIStudyHub.Business.DTOs.Reports;
 using AIStudyHub.Business.DTOs.Subjects;
+using AIStudyHub.Business.DTOs.TierMemberships;
+using AIStudyHub.Business.DTOs.TierUsers;
 using AIStudyHub.Business.DTOs.Users;
 using AIStudyHub.Business.DTOs.Votes;
 using AIStudyHub.Data.Entities;
@@ -66,6 +68,13 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<CreatePaymentRequestDto, Payment>()
             .ForMember(dest => dest.PaymentDate, opt => opt.MapFrom(src => src.PaymentDate ?? DateTime.UtcNow));
         CreateMap<UpdatePaymentRequestDto, Payment>();
+
+        CreateMap<TierMembership, TierMembershipResponseDto>();
+        CreateMap<CreateTierMembershipRequestDto, TierMembership>();
+        CreateMap<UpdateTierMembershipRequestDto, TierMembership>();
+
+        CreateMap<TierUser, TierUserResponseDto>();
+        CreateMap<CreateTierUserRequestDto, TierUser>();
 
         CreateMap<Subject, SubjectResponseDto>();
         CreateMap<CreateSubjectRequestDto, Subject>();

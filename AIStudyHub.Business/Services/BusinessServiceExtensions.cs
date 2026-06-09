@@ -28,6 +28,8 @@ public static class BusinessServiceExtensions
         services.AddScoped<IQuizSubmissionService, QuizSubmissionService>();
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IPaymentService, PaymentService>();
+        services.AddScoped<ITierMembershipService, TierMembershipService>();
+        services.AddScoped<ITierUserService, TierUserService>();
         services.AddScoped<IAIChatService, AIChatService>();
 
         return services;
