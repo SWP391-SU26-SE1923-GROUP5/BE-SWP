@@ -8,9 +8,7 @@ public sealed class CreatePaymentRequestDtoValidator : AbstractValidator<CreateP
     public CreatePaymentRequestDtoValidator()
     {
         RuleFor(x => x.UserId).NotEmpty();
-        RuleFor(x => x.Amount).GreaterThan(0);
-        RuleFor(x => x.Currency).NotEmpty().Length(3);
-        RuleFor(x => x.Provider).NotEmpty().MaximumLength(100);
+        RuleFor(x => x.PaymentInfo).NotEmpty();
     }
 }
 
@@ -18,7 +16,6 @@ public sealed class UpdatePaymentRequestDtoValidator : AbstractValidator<UpdateP
 {
     public UpdatePaymentRequestDtoValidator()
     {
-        RuleFor(x => x.ProviderTransactionId).MaximumLength(200);
-        RuleFor(x => x.Status).IsInEnum();
+        RuleFor(x => x.PaymentInfo).NotEmpty();
     }
 }

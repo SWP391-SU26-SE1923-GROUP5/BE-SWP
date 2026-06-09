@@ -3,8 +3,10 @@
 public sealed class ChatSession : BaseEntity
 {
     public Guid UserId { get; set; }
-    public string Title { get; set; } = string.Empty;
+    public Guid DocumentId { get; set; }
+    public string SessionTitle { get; set; } = string.Empty;
 
     public User User { get; set; } = null!;
+    public Document Document { get; set; } = null!;
     public ICollection<ChatMessage> ChatMessages { get; set; } = new List<ChatMessage>();
 }

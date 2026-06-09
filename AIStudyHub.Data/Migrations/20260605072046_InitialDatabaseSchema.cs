@@ -36,7 +36,7 @@ namespace AIStudyHub.Data.Migrations
                     dob = table.Column<DateOnly>(type: "date", nullable: true),
                     tier_id = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
                     current_storage_capacity = table.Column<int>(type: "int", nullable: false),
-                    current_ai_token = table.Column<int>(type: "int", nullable: false),
+                    current_ai_token_usage = table.Column<int>(type: "int", nullable: false),
                     status = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false, defaultValue: "Active"),
                     role = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false, defaultValue: "Student"),
                     IsActive = table.Column<bool>(type: "bit", nullable: false),

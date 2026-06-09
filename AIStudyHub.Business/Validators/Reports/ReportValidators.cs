@@ -9,8 +9,6 @@ public sealed class CreateReportRequestDtoValidator : AbstractValidator<CreateRe
     {
         RuleFor(x => x.UserId).NotEmpty();
         RuleFor(x => x.DocumentId).NotEmpty();
-        RuleFor(x => x.Reason).NotEmpty().MaximumLength(200);
-        RuleFor(x => x.Details).MaximumLength(2000);
     }
 }
 
@@ -18,6 +16,5 @@ public sealed class UpdateReportRequestDtoValidator : AbstractValidator<UpdateRe
 {
     public UpdateReportRequestDtoValidator()
     {
-        RuleFor(x => x.Status).IsInEnum();
     }
 }

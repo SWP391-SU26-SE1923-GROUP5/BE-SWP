@@ -2,8 +2,8 @@
 
 namespace AIStudyHub.Business.DTOs.Payments;
 
-public sealed record PaymentResponseDto(Guid Id, Guid UserId, decimal Amount, string Currency, string Provider, string ProviderTransactionId, PaymentStatus Status, DateTime CreatedAt, DateTime? UpdatedAt);
+public sealed record PaymentResponseDto(Guid Id, Guid UserId, string PaymentInfo, DateTime PaymentDate, PaymentStatus? Status, Guid? TierId, DateTime CreatedAt, DateTime? UpdatedAt);
 
-public sealed record CreatePaymentRequestDto(Guid UserId, decimal Amount, string Currency, string Provider);
+public sealed record CreatePaymentRequestDto(Guid UserId, string PaymentInfo, DateTime? PaymentDate, Guid? TierId);
 
-public sealed record UpdatePaymentRequestDto(string ProviderTransactionId, PaymentStatus Status);
+public sealed record UpdatePaymentRequestDto(string PaymentInfo, PaymentStatus? Status, Guid? TierId);

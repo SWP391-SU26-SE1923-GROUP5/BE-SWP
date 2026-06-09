@@ -1,5 +1,4 @@
 using AIStudyHub.Data.Entities;
-using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Options;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Configuration;
@@ -29,7 +28,7 @@ public static class AdminSeedExtensions
         using var scope = services.CreateScope();
         var userManager = scope.ServiceProvider.GetRequiredService<UserManager<User>>();
         var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
-        var adminRole = UserRole.Admin.ToString();
+        const string adminRole = "Admin";
 
         if (!await roleManager.RoleExistsAsync(adminRole))
         {
@@ -57,9 +56,9 @@ public static class AdminSeedExtensions
             Email = normalizedEmail,
             EmailConfirmed = true,
             CurrentStorageCapacity = 0,
-            CurrentAiToken = 0,
-            Status = "Active",
-            Role = UserRole.Admin,
+            CurrentAiTokenUsage = 0,
+            Status = "active",
+            Role = "admin",
             IsActive = true
         };
 

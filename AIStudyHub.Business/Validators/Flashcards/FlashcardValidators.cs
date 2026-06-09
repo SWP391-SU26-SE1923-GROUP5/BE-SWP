@@ -8,9 +8,8 @@ public sealed class CreateFlashcardRequestDtoValidator : AbstractValidator<Creat
     public CreateFlashcardRequestDtoValidator()
     {
         RuleFor(x => x.DocumentId).NotEmpty();
-        RuleFor(x => x.Front).NotEmpty().MaximumLength(1000);
-        RuleFor(x => x.Back).NotEmpty().MaximumLength(4000);
-        RuleFor(x => x.SortOrder).GreaterThanOrEqualTo(0);
+        RuleFor(x => x.Front).NotEmpty();
+        RuleFor(x => x.Back).NotEmpty();
     }
 }
 
@@ -18,8 +17,7 @@ public sealed class UpdateFlashcardRequestDtoValidator : AbstractValidator<Updat
 {
     public UpdateFlashcardRequestDtoValidator()
     {
-        RuleFor(x => x.Front).NotEmpty().MaximumLength(1000);
-        RuleFor(x => x.Back).NotEmpty().MaximumLength(4000);
-        RuleFor(x => x.SortOrder).GreaterThanOrEqualTo(0);
+        RuleFor(x => x.Front).NotEmpty();
+        RuleFor(x => x.Back).NotEmpty();
     }
 }

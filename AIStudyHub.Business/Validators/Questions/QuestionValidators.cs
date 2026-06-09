@@ -8,10 +8,7 @@ public sealed class CreateQuestionRequestDtoValidator : AbstractValidator<Create
     public CreateQuestionRequestDtoValidator()
     {
         RuleFor(x => x.QuizId).NotEmpty();
-        RuleFor(x => x.Text).NotEmpty().MaximumLength(2000);
-        RuleFor(x => x.Type).IsInEnum();
-        RuleFor(x => x.SortOrder).GreaterThanOrEqualTo(0);
-        RuleFor(x => x.Points).GreaterThan(0);
+        RuleFor(x => x.Title).NotEmpty();
     }
 }
 
@@ -19,9 +16,6 @@ public sealed class UpdateQuestionRequestDtoValidator : AbstractValidator<Update
 {
     public UpdateQuestionRequestDtoValidator()
     {
-        RuleFor(x => x.Text).NotEmpty().MaximumLength(2000);
-        RuleFor(x => x.Type).IsInEnum();
-        RuleFor(x => x.SortOrder).GreaterThanOrEqualTo(0);
-        RuleFor(x => x.Points).GreaterThan(0);
+        RuleFor(x => x.Title).NotEmpty();
     }
 }

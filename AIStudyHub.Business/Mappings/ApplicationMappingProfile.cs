@@ -20,8 +20,10 @@ public sealed class ApplicationMappingProfile : Profile
     public ApplicationMappingProfile()
     {
         CreateMap<User, UserResponseDto>();
-        CreateMap<CreateUserRequestDto, User>();
-        CreateMap<UpdateUserRequestDto, User>();
+        CreateMap<CreateUserRequestDto, User>()
+            .ForMember(dest => dest.CurrentAiTokenUsage, opt => opt.MapFrom(src => src.CurrentAiTokenUsage));
+        CreateMap<UpdateUserRequestDto, User>()
+            .ForMember(dest => dest.CurrentAiTokenUsage, opt => opt.MapFrom(src => src.CurrentAiTokenUsage));
 
         CreateMap<Document, DocumentResponseDto>();
         CreateMap<CreateDocumentRequestDto, Document>();
@@ -60,12 +62,16 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<UpdateNotificationRequestDto, Notification>();
 
         CreateMap<Payment, PaymentResponseDto>();
-        CreateMap<CreatePaymentRequestDto, Payment>();
+        CreateMap<CreatePaymentRequestDto, Payment>()
+            .ForMember(dest => dest.PaymentDate, opt => opt.MapFrom(src => src.PaymentDate ?? DateTime.UtcNow));
         CreateMap<UpdatePaymentRequestDto, Payment>();
 
         CreateMap<ChatSession, ChatSessionResponseDto>();
         CreateMap<CreateChatSessionRequestDto, ChatSession>();
         CreateMap<ChatMessage, ChatMessageResponseDto>();
-        CreateMap<CreateChatMessageRequestDto, ChatMessage>();
+        CreateMap<CreateChatMessageRequestDto, ChatMessage>()
+            .ForMember(dest => dest.ChatSessionId, opt => opt.MapFrom(src => src.SessionId))
+            .ForMember(dest => dest.Content, opt => opt.MapFrom(src => src.Message))
+            .ForMember(dest => dest.Sender, opt => opt.MapFrom(_ => "user"));
     }
 }

@@ -8,9 +8,7 @@ public sealed class CreateNotificationRequestDtoValidator : AbstractValidator<Cr
     public CreateNotificationRequestDtoValidator()
     {
         RuleFor(x => x.UserId).NotEmpty();
-        RuleFor(x => x.Title).NotEmpty().MaximumLength(200);
-        RuleFor(x => x.Message).NotEmpty().MaximumLength(2000);
-        RuleFor(x => x.Type).IsInEnum();
+        RuleFor(x => x.Message).NotEmpty();
     }
 }
 
@@ -18,8 +16,6 @@ public sealed class UpdateNotificationRequestDtoValidator : AbstractValidator<Up
 {
     public UpdateNotificationRequestDtoValidator()
     {
-        RuleFor(x => x.Title).NotEmpty().MaximumLength(200);
-        RuleFor(x => x.Message).NotEmpty().MaximumLength(2000);
-        RuleFor(x => x.Type).IsInEnum();
+        RuleFor(x => x.Message).NotEmpty();
     }
 }

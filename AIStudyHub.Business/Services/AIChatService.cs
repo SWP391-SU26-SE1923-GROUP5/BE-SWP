@@ -5,22 +5,22 @@ namespace AIStudyHub.Business.Services;
 
 public sealed class AIChatService : IAIChatService
 {
-    public Task<IReadOnlyList<ChatSessionResponseDto>> GetSessionsAsync(CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<ChatSessionResponseDto>> GetSessionsAsync()
     {
         throw new NotImplementedException();
     }
 
-    public Task<ChatSessionResponseDto> CreateSessionAsync(CreateChatSessionRequestDto request, CancellationToken cancellationToken = default)
+    public Task<ChatSessionResponseDto> CreateSessionAsync(CreateChatSessionRequestDto request)
     {
         throw new NotImplementedException();
     }
 
-    public Task<IReadOnlyList<ChatMessageResponseDto>> GetMessagesAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    public Task<IReadOnlyList<ChatMessageResponseDto>> GetMessagesAsync(Guid sessionId)
     {
         throw new NotImplementedException();
     }
 
-    public Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request, CancellationToken cancellationToken = default)
+    public Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request)
     {
         throw new NotImplementedException();
     }

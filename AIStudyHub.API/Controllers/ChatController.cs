@@ -18,30 +18,30 @@ public sealed class ChatController : ControllerBase
     }
 
     [HttpGet("sessions")]
-    public async Task<ActionResult<IReadOnlyList<ChatSessionResponseDto>>> GetSessions(CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyList<ChatSessionResponseDto>>> GetSessions()
     {
-        var result = await _chatService.GetSessionsAsync(cancellationToken);
+        var result = await _chatService.GetSessionsAsync();
         return Ok(result);
     }
 
     [HttpPost("sessions")]
-    public async Task<ActionResult<ChatSessionResponseDto>> CreateSession(CreateChatSessionRequestDto request, CancellationToken cancellationToken)
+    public async Task<ActionResult<ChatSessionResponseDto>> CreateSession(CreateChatSessionRequestDto request)
     {
-        var result = await _chatService.CreateSessionAsync(request, cancellationToken);
+        var result = await _chatService.CreateSessionAsync(request);
         return Ok(result);
     }
 
     [HttpGet("sessions/{sessionId:guid}/messages")]
-    public async Task<ActionResult<IReadOnlyList<ChatMessageResponseDto>>> GetMessages(Guid sessionId, CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyList<ChatMessageResponseDto>>> GetMessages(Guid sessionId)
     {
-        var result = await _chatService.GetMessagesAsync(sessionId, cancellationToken);
+        var result = await _chatService.GetMessagesAsync(sessionId);
         return Ok(result);
     }
 
     [HttpPost("messages")]
-    public async Task<ActionResult<ChatMessageResponseDto>> CreateMessage(CreateChatMessageRequestDto request, CancellationToken cancellationToken)
+    public async Task<ActionResult<ChatMessageResponseDto>> CreateMessage(CreateChatMessageRequestDto request)
     {
-        var result = await _chatService.CreateMessageAsync(request, cancellationToken);
+        var result = await _chatService.CreateMessageAsync(request);
         return Ok(result);
     }
 }

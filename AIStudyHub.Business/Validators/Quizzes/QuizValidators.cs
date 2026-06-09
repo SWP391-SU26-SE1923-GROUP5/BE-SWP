@@ -8,10 +8,7 @@ public sealed class CreateQuizRequestDtoValidator : AbstractValidator<CreateQuiz
     public CreateQuizRequestDtoValidator()
     {
         RuleFor(x => x.DocumentId).NotEmpty();
-        RuleFor(x => x.Title).NotEmpty().MaximumLength(200);
-        RuleFor(x => x.Description).MaximumLength(2000);
-        RuleFor(x => x.TimeLimitMinutes).GreaterThanOrEqualTo(0);
-        RuleFor(x => x.PassingScore).InclusiveBetween(0, 100);
+        RuleFor(x => x.Title).NotEmpty().MaximumLength(255);
     }
 }
 
@@ -19,9 +16,6 @@ public sealed class UpdateQuizRequestDtoValidator : AbstractValidator<UpdateQuiz
 {
     public UpdateQuizRequestDtoValidator()
     {
-        RuleFor(x => x.Title).NotEmpty().MaximumLength(200);
-        RuleFor(x => x.Description).MaximumLength(2000);
-        RuleFor(x => x.TimeLimitMinutes).GreaterThanOrEqualTo(0);
-        RuleFor(x => x.PassingScore).InclusiveBetween(0, 100);
+        RuleFor(x => x.Title).NotEmpty().MaximumLength(255);
     }
 }

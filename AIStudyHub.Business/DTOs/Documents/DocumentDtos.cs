@@ -2,8 +2,38 @@
 
 namespace AIStudyHub.Business.DTOs.Documents;
 
-public sealed record DocumentResponseDto(Guid Id, Guid UserId, string Title, string Description, string FileUrl, string ContentType, long FileSizeBytes, DocumentStatus Status, DateTime CreatedAt, DateTime? UpdatedAt);
+public sealed record DocumentResponseDto(
+    Guid Id,
+    Guid UserId,
+    Guid SubjectId,
+    string Title,
+    string? FileLink,
+    string? FileName,
+    string? FileExtension,
+    string? FileType,
+    string? SharedUsers,
+    string ShareStatus,
+    DocumentStatus? Status,
+    DateTime CreatedAt,
+    DateTime? UpdatedAt);
 
-public sealed record CreateDocumentRequestDto(Guid UserId, string Title, string Description, string FileUrl, string ContentType, long FileSizeBytes);
+public sealed record CreateDocumentRequestDto(
+    Guid UserId,
+    Guid SubjectId,
+    string Title,
+    string? FileLink,
+    string? FileName,
+    string? FileExtension,
+    string? FileType,
+    string? SharedUsers,
+    string ShareStatus);
 
-public sealed record UpdateDocumentRequestDto(string Title, string Description, DocumentStatus Status);
+public sealed record UpdateDocumentRequestDto(
+    string Title,
+    string? FileLink,
+    string? FileName,
+    string? FileExtension,
+    string? FileType,
+    string? SharedUsers,
+    string ShareStatus,
+    DocumentStatus? Status);

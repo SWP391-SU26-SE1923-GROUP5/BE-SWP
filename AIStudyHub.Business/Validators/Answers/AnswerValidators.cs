@@ -8,8 +8,7 @@ public sealed class CreateAnswerRequestDtoValidator : AbstractValidator<CreateAn
     public CreateAnswerRequestDtoValidator()
     {
         RuleFor(x => x.QuestionId).NotEmpty();
-        RuleFor(x => x.Text).NotEmpty().MaximumLength(2000);
-        RuleFor(x => x.SortOrder).GreaterThanOrEqualTo(0);
+        RuleFor(x => x.SelectedOption).NotEmpty();
     }
 }
 
@@ -17,7 +16,6 @@ public sealed class UpdateAnswerRequestDtoValidator : AbstractValidator<UpdateAn
 {
     public UpdateAnswerRequestDtoValidator()
     {
-        RuleFor(x => x.Text).NotEmpty().MaximumLength(2000);
-        RuleFor(x => x.SortOrder).GreaterThanOrEqualTo(0);
+        RuleFor(x => x.SelectedOption).NotEmpty();
     }
 }

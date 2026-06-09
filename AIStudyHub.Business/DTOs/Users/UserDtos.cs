@@ -1,5 +1,3 @@
-using AIStudyHub.Data.Enums;
-
 namespace AIStudyHub.Business.DTOs.Users;
 
 public sealed record UserResponseDto(
@@ -7,11 +5,10 @@ public sealed record UserResponseDto(
     string FullName,
     string Email,
     DateOnly? DateOfBirth,
-    Guid? TierId,
     int CurrentStorageCapacity,
-    int CurrentAiToken,
+    int CurrentAiTokenUsage,
     string Status,
-    UserRole Role,
+    string Role,
     DateTime CreatedAt,
     DateTime? UpdatedAt);
 
@@ -20,17 +17,15 @@ public sealed record CreateUserRequestDto(
     string Email,
     string Password,
     DateOnly? DateOfBirth,
-    Guid? TierId,
     int CurrentStorageCapacity,
-    int CurrentAiToken,
+    int CurrentAiTokenUsage,
     string Status,
-    UserRole Role);
+    string Role);
 
 public sealed record UpdateUserRequestDto(
     string FullName,
     DateOnly? DateOfBirth,
-    Guid? TierId,
     int CurrentStorageCapacity,
-    int CurrentAiToken,
+    int CurrentAiTokenUsage,
     string Status,
-    UserRole Role);
+    string Role);

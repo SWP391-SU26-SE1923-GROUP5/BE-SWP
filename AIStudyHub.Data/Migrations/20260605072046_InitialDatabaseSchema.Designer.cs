@@ -507,7 +507,7 @@ namespace AIStudyHub.Data.Migrations
 
                     b.Property<int>("CurrentAiToken")
                         .HasColumnType("int")
-                        .HasColumnName("current_ai_token");
+                        .HasColumnName("current_ai_token_usage");
 
                     b.Property<int>("CurrentStorageCapacity")
                         .HasColumnType("int")

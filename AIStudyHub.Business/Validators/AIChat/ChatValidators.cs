@@ -8,7 +8,8 @@ public sealed class CreateChatSessionRequestDtoValidator : AbstractValidator<Cre
     public CreateChatSessionRequestDtoValidator()
     {
         RuleFor(x => x.UserId).NotEmpty();
-        RuleFor(x => x.Title).NotEmpty().MaximumLength(200);
+        RuleFor(x => x.DocumentId).NotEmpty();
+        RuleFor(x => x.SessionTitle).NotEmpty().MaximumLength(64);
     }
 }
 
@@ -16,8 +17,7 @@ public sealed class CreateChatMessageRequestDtoValidator : AbstractValidator<Cre
 {
     public CreateChatMessageRequestDtoValidator()
     {
-        RuleFor(x => x.ChatSessionId).NotEmpty();
-        RuleFor(x => x.Role).NotEmpty().MaximumLength(50);
-        RuleFor(x => x.Content).NotEmpty().MaximumLength(8000);
+        RuleFor(x => x.SessionId).NotEmpty();
+        RuleFor(x => x.Message).NotEmpty();
     }
 }

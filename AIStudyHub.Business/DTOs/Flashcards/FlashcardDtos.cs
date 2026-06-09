@@ -1,7 +1,7 @@
 namespace AIStudyHub.Business.DTOs.Flashcards;
 
-public sealed record FlashcardResponseDto(Guid Id, Guid DocumentId, string Front, string Back, int SortOrder, DateTime CreatedAt, DateTime? UpdatedAt);
+public sealed record FlashcardResponseDto(Guid Id, Guid DocumentId, string Front, string Back, DateTime CreatedAt, DateTime? UpdatedAt);
 
-public sealed record CreateFlashcardRequestDto(Guid DocumentId, string Front, string Back, int SortOrder);
+public sealed record CreateFlashcardRequestDto(Guid DocumentId, string Front, string Back);
 
-public sealed record UpdateFlashcardRequestDto(string Front, string Back, int SortOrder);
+public sealed record UpdateFlashcardRequestDto(string Front, string Back);

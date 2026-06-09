@@ -1,7 +1,6 @@
 using AIStudyHub.Business.DTOs.Users;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Data.Entities;
-using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
 using FluentValidation;
@@ -55,6 +54,7 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
             throw new InvalidOperationException("Email is already registered.");
         }
 
+        var normalizedRole = request.Role.Trim().ToLowerInvariant();
         var user = new User
         {
             Id = Guid.NewGuid(),
@@ -62,19 +62,18 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
             UserName = normalizedEmail,
             Email = normalizedEmail,
             DateOfBirth = request.DateOfBirth,
-            TierId = request.TierId,
             CurrentStorageCapacity = request.CurrentStorageCapacity,
-            CurrentAiToken = request.CurrentAiToken,
-            Status = request.Status.Trim(),
-            Role = request.Role,
-            IsActive = string.Equals(request.Status, "Active", StringComparison.OrdinalIgnoreCase),
+            CurrentAiTokenUsage = request.CurrentAiTokenUsage,
+            Status = request.Status.Trim().ToLowerInvariant(),
+            Role = normalizedRole,
+            IsActive = string.Equals(request.Status, "active", StringComparison.OrdinalIgnoreCase),
             EmailConfirmed = true
         };
 
         var createResult = await _userManager.CreateAsync(user, request.Password);
         EnsureIdentitySucceeded(createResult);
 
-        var roleResult = await _userManager.AddToRoleAsync(user, request.Role.ToString());
+        var roleResult = await _userManager.AddToRoleAsync(user, CapitalizeRole(normalizedRole));
         EnsureIdentitySucceeded(roleResult);
 
         return _mapper.Map<UserResponseDto>(user);
@@ -88,30 +87,33 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
             ?? throw new KeyNotFoundException("User not found.");
 
         var previousRole = user.Role;
+        var normalizedRole = request.Role.Trim().ToLowerInvariant();
 
         user.FullName = request.FullName.Trim();
         user.DateOfBirth = request.DateOfBirth;
-        user.TierId = request.TierId;
         user.CurrentStorageCapacity = request.CurrentStorageCapacity;
-        user.CurrentAiToken = request.CurrentAiToken;
-        user.Status = request.Status.Trim();
-        user.Role = request.Role;
-        user.IsActive = string.Equals(user.Status, "Active", StringComparison.OrdinalIgnoreCase);
+        user.CurrentAiTokenUsage = request.CurrentAiTokenUsage;
+        user.Status = request.Status.Trim().ToLowerInvariant();
+        user.Role = normalizedRole;
+        user.IsActive = string.Equals(user.Status, "active", StringComparison.OrdinalIgnoreCase);
 
         var updateResult = await _userManager.UpdateAsync(user);
         EnsureIdentitySucceeded(updateResult);
 
-        if (previousRole != request.Role)
+        if (!string.Equals(previousRole, normalizedRole, StringComparison.OrdinalIgnoreCase))
         {
-            if (await _userManager.IsInRoleAsync(user, previousRole.ToString()))
+            var previousRoleName = CapitalizeRole(previousRole);
+            var newRoleName = CapitalizeRole(normalizedRole);
+
+            if (await _userManager.IsInRoleAsync(user, previousRoleName))
             {
-                var removeResult = await _userManager.RemoveFromRoleAsync(user, previousRole.ToString());
+                var removeResult = await _userManager.RemoveFromRoleAsync(user, previousRoleName);
                 EnsureIdentitySucceeded(removeResult);
             }
 
-            if (!await _userManager.IsInRoleAsync(user, request.Role.ToString()))
+            if (!await _userManager.IsInRoleAsync(user, newRoleName))
             {
-                var addResult = await _userManager.AddToRoleAsync(user, request.Role.ToString());
+                var addResult = await _userManager.AddToRoleAsync(user, newRoleName);
                 EnsureIdentitySucceeded(addResult);
             }
         }
@@ -142,5 +144,15 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
     private static string NormalizeEmail(string email)
     {
         return email.Trim().ToLowerInvariant();
+    }
+
+    private static string CapitalizeRole(string role)
+    {
+        if (string.IsNullOrWhiteSpace(role))
+        {
+            return "Student";
+        }
+
+        return char.ToUpperInvariant(role[0]) + role[1..].ToLowerInvariant();
     }
 }
