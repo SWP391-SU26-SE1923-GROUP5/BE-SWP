@@ -24,4 +24,5 @@ public sealed class User : IdentityUser<Guid>
     public ICollection<QuizSubmission> QuizSubmissions { get; set; } = new List<QuizSubmission>();
     public ICollection<ChatSession> ChatSessions { get; set; } = new List<ChatSession>();
     public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
+    public ICollection<TierUser> TierUsers { get; set; } = new List<TierUser>();
 }

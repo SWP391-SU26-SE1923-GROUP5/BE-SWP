@@ -42,18 +42,84 @@ internal sealed class RefreshTokenConfiguration : IEntityTypeConfiguration<Refre
     }
 }
 
+internal sealed class SubjectConfiguration : IEntityTypeConfiguration<Subject>
+{
+    public void Configure(EntityTypeBuilder<Subject> builder)
+    {
+        builder.ToTable("Subjects");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.SubjectCode).HasColumnName("subject_code").HasMaxLength(20).IsRequired();
+        builder.Property(x => x.SubjectName).HasColumnName("subject_name").HasMaxLength(255).IsRequired();
+        builder.Property(x => x.Description).HasColumnName("description");
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+        builder.HasIndex(x => x.SubjectCode).IsUnique();
+    }
+}
+
+internal sealed class TierMembershipConfiguration : IEntityTypeConfiguration<TierMembership>
+{
+    public void Configure(EntityTypeBuilder<TierMembership> builder)
+    {
+        builder.ToTable("TierMemberships");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.TierName).HasColumnName("tier_name").HasMaxLength(50).IsRequired();
+        builder.Property(x => x.StorageLimitMb).HasColumnName("storage_limit_mb").IsRequired();
+        builder.Property(x => x.AiTokens).HasColumnName("ai_tokens").IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+    }
+}
+
+internal sealed class TierUserConfiguration : IEntityTypeConfiguration<TierUser>
+{
+    public void Configure(EntityTypeBuilder<TierUser> builder)
+    {
+        builder.ToTable("TierUsers");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.TierMembershipId).HasColumnName("tier_id").IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+        builder.HasIndex(x => new { x.UserId, x.TierMembershipId }).IsUnique();
+        builder.HasOne(x => x.User).WithMany(x => x.TierUsers).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne(x => x.TierMembership).WithMany(x => x.TierUsers).HasForeignKey(x => x.TierMembershipId).OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
 internal sealed class DocumentConfiguration : IEntityTypeConfiguration<Document>
 {
     public void Configure(EntityTypeBuilder<Document> builder)
     {
         builder.ToTable("Documents");
         builder.HasKey(x => x.Id);
-        builder.Property(x => x.Title).HasMaxLength(200).IsRequired();
-        builder.Property(x => x.Description).HasMaxLength(2000);
-        builder.Property(x => x.FileUrl).HasMaxLength(1000).IsRequired();
-        builder.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
-        builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(50).HasDefaultValue(DocumentStatus.Draft);
+        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.SubjectId).HasColumnName("subject_id");
+        builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(200).IsRequired();
+        builder.Property(x => x.Description).HasColumnName("description").HasMaxLength(2000);
+        builder.Property(x => x.FileUrl).HasColumnName("file_link").HasMaxLength(1000).IsRequired();
+        builder.Property(x => x.ContentType).HasColumnName("file_type").HasMaxLength(100).IsRequired();
+        builder.Property(x => x.FileSizeBytes).HasColumnName("file_size_bytes");
+        builder.Property(x => x.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(50).HasDefaultValue(DocumentStatus.Draft);
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.User).WithMany(x => x.Documents).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(x => x.Subject).WithMany(x => x.Documents).HasForeignKey(x => x.SubjectId).OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+internal sealed class DocumentChunkConfiguration : IEntityTypeConfiguration<DocumentChunk>
+{
+    public void Configure(EntityTypeBuilder<DocumentChunk> builder)
+    {
+        builder.ToTable("DocumentChunks");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
+        builder.Property(x => x.ChunkJson).HasColumnName("chunk_json");
+        builder.Property(x => x.EmbeddingJson).HasColumnName("embedding_json");
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+        builder.HasOne(x => x.Document).WithMany(x => x.DocumentChunks).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 
@@ -164,12 +230,15 @@ internal sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
     {
         builder.ToTable("Payments");
         builder.HasKey(x => x.Id);
+        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.TierId).HasColumnName("tier_id");
         builder.Property(x => x.Amount).HasPrecision(18, 2);
         builder.Property(x => x.Currency).HasMaxLength(3).IsRequired();
         builder.Property(x => x.Provider).HasMaxLength(100).IsRequired();
         builder.Property(x => x.ProviderTransactionId).HasMaxLength(200);
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(50).HasDefaultValue(PaymentStatus.Pending);
         builder.HasOne(x => x.User).WithMany(x => x.Payments).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(x => x.TierMembership).WithMany(x => x.Payments).HasForeignKey(x => x.TierId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 
