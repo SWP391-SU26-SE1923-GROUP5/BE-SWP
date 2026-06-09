@@ -1,6 +1,7 @@
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Options;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -36,15 +37,14 @@ public static class AdminSeedExtensions
         }
 
         var normalizedEmail = options.Email.Trim().ToLowerInvariant();
-        var existingAdmin = await userManager.FindByEmailAsync(normalizedEmail);
+        var existingAdmin = await userManager.Users
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Select(user => new { user.Id, user.Email })
+            .SingleOrDefaultAsync(user => user.Email == normalizedEmail);
 
         if (existingAdmin is not null)
         {
-            if (!await userManager.IsInRoleAsync(existingAdmin, adminRole))
-            {
-                await userManager.AddToRoleAsync(existingAdmin, adminRole);
-            }
-
             return;
         }
 

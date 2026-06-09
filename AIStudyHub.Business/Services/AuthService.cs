@@ -1,18 +1,18 @@
 using System.IdentityModel.Tokens.Jwt;
-using System.Security.Cryptography;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using AIStudyHub.Business.DTOs.Authentication;
 using AIStudyHub.Business.DTOs.Users;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
+using AIStudyHub.Data;
 using AIStudyHub.Data.Entities;
 using AutoMapper;
 using FluentValidation;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using AIStudyHub.Data;
 
 namespace AIStudyHub.Business.Services;
 
@@ -56,28 +56,12 @@ public sealed class AuthService : IAuthService
             throw new InvalidOperationException("Email is already registered.");
         }
 
-        var user = new User
-        {
-            Id = Guid.NewGuid(),
-            FullName = request.FullName.Trim(),
-            UserName = normalizedEmail,
-            Email = normalizedEmail,
-            DateOfBirth = request.DateOfBirth,
-            CurrentStorageCapacity = 0,
-            CurrentAiTokenUsage = 0,
-            Status = "active",
-            Role = "student",
-            IsActive = true,
-            EmailConfirmed = true
-        };
-
+        var user = BuildStudentUser(normalizedEmail, request.FullName, request.DateOfBirth, emailConfirmed: true);
         var createResult = await _userManager.CreateAsync(user, request.Password);
         EnsureIdentitySucceeded(createResult);
 
-        var roleResult = await _userManager.AddToRoleAsync(user, "Student");
-        EnsureIdentitySucceeded(roleResult);
-
-        return await CreateAuthResponseAsync(user);
+        await EnsureStudentRoleAsync(user);
+        return await CreateAuthResponseAsync(user, cancellationToken);
     }
 
     public async Task<AuthResponseDto> LoginAsync(LoginRequestDto request, CancellationToken cancellationToken = default)
@@ -92,12 +76,8 @@ public sealed class AuthService : IAuthService
             throw new UnauthorizedAccessException("Invalid email or password.");
         }
 
-        if (!user.IsActive || !string.Equals(user.Status, "active", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new UnauthorizedAccessException("User account is inactive.");
-        }
-
-        return await CreateAuthResponseAsync(user);
+        EnsureUserIsActive(user);
+        return await CreateAuthResponseAsync(user, cancellationToken);
     }
 
     public async Task<AuthResponseDto> RefreshTokenAsync(RefreshTokenRequestDto request, CancellationToken cancellationToken = default)
@@ -115,11 +95,7 @@ public sealed class AuthService : IAuthService
         }
 
         var user = storedToken.User;
-
-        if (!user.IsActive || !string.Equals(user.Status, "active", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new UnauthorizedAccessException("User account is inactive.");
-        }
+        EnsureUserIsActive(user);
 
         var newRefreshTokenExpiresAt = DateTime.UtcNow.AddDays(_jwtOptions.RefreshTokenExpirationDays);
         var newRefreshToken = GenerateRefreshToken(user, newRefreshTokenExpiresAt);
@@ -141,7 +117,34 @@ public sealed class AuthService : IAuthService
         return await CreateAuthResponseAsync(user, newRefreshToken, newRefreshTokenExpiresAt);
     }
 
-    private async Task<AuthResponseDto> CreateAuthResponseAsync(User user)
+    public async Task<AuthResponseDto> LoginExternalAsync(ExternalLoginRequestDto request, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Email))
+        {
+            throw new InvalidOperationException($"{request.Provider} account did not provide an email address.");
+        }
+
+        var normalizedEmail = NormalizeEmail(request.Email);
+        var user = await _userManager.FindByEmailAsync(normalizedEmail);
+
+        if (user is null)
+        {
+            var fullName = string.IsNullOrWhiteSpace(request.FullName)
+                ? normalizedEmail.Split('@')[0]
+                : request.FullName.Trim();
+
+            user = BuildStudentUser(normalizedEmail, fullName, null, emailConfirmed: true);
+            var tempPassword = $"Ext#{Guid.NewGuid():N}aA1!";
+            var createResult = await _userManager.CreateAsync(user, tempPassword);
+            EnsureIdentitySucceeded(createResult);
+            await EnsureStudentRoleAsync(user);
+        }
+
+        EnsureUserIsActive(user);
+        return await CreateAuthResponseAsync(user, cancellationToken);
+    }
+
+    private async Task<AuthResponseDto> CreateAuthResponseAsync(User user, CancellationToken cancellationToken)
     {
         var refreshTokenExpiresAt = DateTime.UtcNow.AddDays(_jwtOptions.RefreshTokenExpirationDays);
         var refreshToken = GenerateRefreshToken(user, refreshTokenExpiresAt);
@@ -152,10 +155,9 @@ public sealed class AuthService : IAuthService
             UserId = user.Id,
             TokenHash = HashRefreshToken(refreshToken),
             ExpiresAt = refreshTokenExpiresAt
-        });
+        }, cancellationToken);
 
-        await _dbContext.SaveChangesAsync();
-
+        await _dbContext.SaveChangesAsync(cancellationToken);
         return await CreateAuthResponseAsync(user, refreshToken, refreshTokenExpiresAt);
     }
 
@@ -167,6 +169,38 @@ public sealed class AuthService : IAuthService
         var response = _mapper.Map<UserResponseDto>(user);
 
         return new AuthResponseDto(response, accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt);
+    }
+
+    private static User BuildStudentUser(string normalizedEmail, string fullName, DateOnly? dateOfBirth, bool emailConfirmed)
+    {
+        return new User
+        {
+            Id = Guid.NewGuid(),
+            FullName = fullName.Trim(),
+            UserName = normalizedEmail,
+            Email = normalizedEmail,
+            DateOfBirth = dateOfBirth,
+            CurrentStorageCapacity = 0,
+            CurrentAiTokenUsage = 0,
+            Status = "active",
+            Role = "student",
+            IsActive = true,
+            EmailConfirmed = emailConfirmed
+        };
+    }
+
+    private async Task EnsureStudentRoleAsync(User user)
+    {
+        var roleResult = await _userManager.AddToRoleAsync(user, "Student");
+        EnsureIdentitySucceeded(roleResult);
+    }
+
+    private static void EnsureUserIsActive(User user)
+    {
+        if (!user.IsActive || !string.Equals(user.Status, "active", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UnauthorizedAccessException("User account is inactive.");
+        }
     }
 
     private string GenerateAccessToken(User user, IEnumerable<string> roles, DateTime expiresAt)
