@@ -25,8 +25,6 @@ public sealed class AuthService : IAuthService
     private readonly IValidator<RegisterRequestDto> _registerValidator;
     private readonly IValidator<LoginRequestDto> _loginValidator;
     private readonly IValidator<RefreshTokenRequestDto> _refreshTokenValidator;
-    private readonly IValidator<ConfirmEmailRequestDto> _confirmEmailValidator;
-    private readonly IValidator<ResendEmailVerificationRequestDto> _resendEmailVerificationValidator;
     private readonly JwtOptions _jwtOptions;
     private readonly IEmailService _emailService;
     private readonly EmailVerificationOptions _emailVerificationOptions;
@@ -39,8 +37,6 @@ public sealed class AuthService : IAuthService
         IValidator<RegisterRequestDto> registerValidator,
         IValidator<LoginRequestDto> loginValidator,
         IValidator<RefreshTokenRequestDto> refreshTokenValidator,
-        IValidator<ConfirmEmailRequestDto> confirmEmailValidator,
-        IValidator<ResendEmailVerificationRequestDto> resendEmailVerificationValidator,
         JwtOptions jwtOptions,
         IEmailService emailService,
         EmailVerificationOptions emailVerificationOptions,
@@ -52,8 +48,6 @@ public sealed class AuthService : IAuthService
         _registerValidator = registerValidator;
         _loginValidator = loginValidator;
         _refreshTokenValidator = refreshTokenValidator;
-        _confirmEmailValidator = confirmEmailValidator;
-        _resendEmailVerificationValidator = resendEmailVerificationValidator;
         _jwtOptions = jwtOptions;
         _emailService = emailService;
         _emailVerificationOptions = emailVerificationOptions;
@@ -72,12 +66,12 @@ public sealed class AuthService : IAuthService
             throw new InvalidOperationException("Email is already registered.");
         }
 
-        var user = BuildStudentUser(normalizedEmail, request.FullName, request.DateOfBirth, emailConfirmed: false);
+        var user = BuildStudentUser(normalizedEmail, request.FullName, request.DateOfBirth, emailConfirmed: true);
         var createResult = await _userManager.CreateAsync(user, request.Password);
         EnsureIdentitySucceeded(createResult);
 
         await EnsureStudentRoleAsync(user);
-        await SendEmailVerificationAsync(user, cancellationToken);
+        await SendEmailVerificationOtpAsync(user, cancellationToken);
 
         return new RegisterResultDto("Registration successful. Please verify your email before logging in.", normalizedEmail);
     }
@@ -92,11 +86,6 @@ public sealed class AuthService : IAuthService
         if (user is null || !await _userManager.CheckPasswordAsync(user, request.Password))
         {
             throw new UnauthorizedAccessException("Invalid email or password.");
-        }
-
-        if (!user.EmailConfirmed)
-        {
-            throw new UnauthorizedAccessException("Email address has not been verified.");
         }
 
         EnsureUserIsActive(user);
@@ -174,41 +163,13 @@ public sealed class AuthService : IAuthService
         return await CreateAuthResponseAsync(user, cancellationToken);
     }
 
-    public async Task ConfirmEmailAsync(ConfirmEmailRequestDto request, CancellationToken cancellationToken = default)
+    public async Task VerifyRegistrationOtpAsync(VerifyRegistrationOtpRequestDto request, CancellationToken cancellationToken = default)
     {
-        await _confirmEmailValidator.ValidateAndThrowAsync(request, cancellationToken);
-
-        if (!Guid.TryParse(request.UserId, out var userId))
-        {
-            throw new InvalidOperationException("Invalid email verification request.");
-        }
-
-        var user = await _userManager.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
-        if (user is null)
-        {
-            throw new InvalidOperationException("Invalid email verification request.");
-        }
-
-        if (user.EmailConfirmed)
-        {
-            return;
-        }
-
-        var decodedToken = DecodeToken(request.Token);
-        var result = await _userManager.ConfirmEmailAsync(user, decodedToken);
-        EnsureIdentitySucceeded(result);
-    }
-
-    public async Task ResendEmailVerificationAsync(ResendEmailVerificationRequestDto request, CancellationToken cancellationToken = default)
-    {
-        await _resendEmailVerificationValidator.ValidateAndThrowAsync(request, cancellationToken);
-
         var normalizedEmail = NormalizeEmail(request.Email);
         var user = await _userManager.FindByEmailAsync(normalizedEmail);
-
         if (user is null)
         {
-            return;
+            throw new InvalidOperationException("Invalid email verification request.");
         }
 
         if (user.EmailConfirmed)
@@ -216,7 +177,42 @@ public sealed class AuthService : IAuthService
             return;
         }
 
-        await SendEmailVerificationAsync(user, cancellationToken);
+        var otpRecord = await _dbContext.OtpRecords
+            .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.EmailVerification && !o.IsUsed)
+            .OrderByDescending(o => o.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (otpRecord is null)
+        {
+            throw new InvalidOperationException("Invalid or expired OTP.");
+        }
+
+        if (otpRecord.IsLocked)
+        {
+            throw new InvalidOperationException($"Too many failed attempts. Please wait {OtpRecord.LockoutMinutes} minutes before trying again.");
+        }
+
+        if (otpRecord.IsExpired)
+        {
+            throw new InvalidOperationException("OTP has expired. Please request a new one.");
+        }
+
+        if (!VerifyOtp(request.Otp, otpRecord.OtpHash))
+        {
+            otpRecord.FailedAttempts++;
+            if (otpRecord.FailedAttempts >= OtpRecord.MaxFailedAttempts)
+            {
+                otpRecord.LockedUntil = DateTime.UtcNow.AddMinutes(OtpRecord.LockoutMinutes);
+            }
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            throw new InvalidOperationException("Invalid or expired OTP.");
+        }
+
+        otpRecord.UsedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        user.EmailConfirmed = true;
+        await _userManager.UpdateAsync(user);
     }
 
     public async Task ForgotPasswordAsync(ForgotPasswordRequestDto request, CancellationToken cancellationToken = default)
@@ -423,46 +419,25 @@ public sealed class AuthService : IAuthService
         EnsureIdentitySucceeded(roleResult);
     }
 
-    private async Task SendEmailVerificationAsync(User user, CancellationToken cancellationToken)
+    private async Task SendEmailVerificationOtpAsync(User user, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(_emailVerificationOptions.VerificationBaseUrl))
+        var otp = GenerateOtp();
+        var otpHash = HashOtp(otp);
+        var expiresAt = DateTime.UtcNow.AddMinutes(_otpOptions.ExpiryMinutes);
+
+        await _dbContext.OtpRecords.AddAsync(new OtpRecord
         {
-            throw new InvalidOperationException("Email verification URL is not configured.");
-        }
+            UserId = user.Id,
+            Email = user.Email!,
+            OtpHash = otpHash,
+            Type = OtpType.EmailVerification,
+            ExpiresAt = expiresAt
+        }, cancellationToken);
 
-        var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
-        var encodedToken = EncodeToken(token);
-        var verificationUrl = BuildVerificationUrl(user.Id, encodedToken);
-        var htmlBody = $"<p>Hello {System.Net.WebUtility.HtmlEncode(user.FullName)},</p><p>Please verify your email by clicking the link below:</p><p><a href=\"{verificationUrl}\">Verify email</a></p><p>If you did not create this account, you can ignore this email.</p>";
+        await _dbContext.SaveChangesAsync(cancellationToken);
 
+        var htmlBody = $"<p>Hello {System.Net.WebUtility.HtmlEncode(user.FullName)},</p><p>Your email verification OTP is: <strong>{otp}</strong></p><p>This code expires in {_otpOptions.ExpiryMinutes} minutes.</p><p>If you did not create this account, you can ignore this email.</p>";
         await _emailService.SendAsync(user.Email!, "Verify your AIStudyHub email", htmlBody, cancellationToken);
-    }
-
-    private string BuildVerificationUrl(Guid userId, string token)
-    {
-        return QueryHelpers.AddQueryString(_emailVerificationOptions.VerificationBaseUrl, new Dictionary<string, string?>
-        {
-            ["userId"] = userId.ToString(),
-            ["token"] = token
-        });
-    }
-
-    private static string EncodeToken(string token)
-    {
-        return WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(token));
-    }
-
-    private static string DecodeToken(string token)
-    {
-        try
-        {
-            var decodedBytes = WebEncoders.Base64UrlDecode(token);
-            return Encoding.UTF8.GetString(decodedBytes);
-        }
-        catch (Exception)
-        {
-            throw new InvalidOperationException("Invalid email verification request.");
-        }
     }
 
     private static void EnsureUserIsActive(User user)
