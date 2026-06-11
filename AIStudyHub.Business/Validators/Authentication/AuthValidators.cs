@@ -70,24 +70,21 @@ public sealed class RefreshTokenRequestDtoValidator : AbstractValidator<RefreshT
     }
 }
 
-public sealed class ConfirmEmailRequestDtoValidator : AbstractValidator<ConfirmEmailRequestDto>
+public sealed class VerifyRegistrationOtpRequestDtoValidator : AbstractValidator<VerifyRegistrationOtpRequestDto>
 {
-    public ConfirmEmailRequestDtoValidator()
-    {
-        RuleFor(x => x.UserId).NotEmpty();
-        RuleFor(x => x.Token).NotEmpty();
-    }
-}
-
-public sealed class ResendEmailVerificationRequestDtoValidator : AbstractValidator<ResendEmailVerificationRequestDto>
-{
-    public ResendEmailVerificationRequestDtoValidator()
+    public VerifyRegistrationOtpRequestDtoValidator()
     {
         RuleFor(x => x.Email)
             .NotEmpty()
             .MaximumLength(255)
             .Must(BeValidEmailAddress)
             .WithMessage("Email must be a valid email address.");
+
+        RuleFor(x => x.Otp)
+            .NotEmpty()
+            .Length(6)
+            .Matches("^[0-9]+$")
+            .WithMessage("OTP must be a 6-digit number.");
     }
 
     private static bool BeValidEmailAddress(string email)
