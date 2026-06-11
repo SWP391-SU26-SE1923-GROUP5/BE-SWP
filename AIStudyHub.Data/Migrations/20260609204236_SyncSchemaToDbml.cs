@@ -320,21 +320,6 @@ namespace AIStudyHub.Data.Migrations
                 newName: "doc_id");
 
             migrationBuilder.RenameColumn(
-                name: "DateOfBirth",
-                table: "Users",
-                newName: "dob");
-
-            migrationBuilder.RenameColumn(
-                name: "CurrentStorageCapacity",
-                table: "Users",
-                newName: "current_storage_capacity");
-
-            migrationBuilder.RenameColumn(
-                name: "CurrentAiToken",
-                table: "Users",
-                newName: "current_ai_token_usage");
-
-            migrationBuilder.RenameColumn(
                 name: "CreatedAt",
                 table: "Votes",
                 newName: "create_at");
