@@ -117,8 +117,9 @@ public sealed class AuthService : IAuthService
         var user = storedToken.User;
         EnsureUserIsActive(user);
 
+        var roles = await _userManager.GetRolesAsync(user);
         var newRefreshTokenExpiresAt = DateTime.UtcNow.AddDays(_jwtOptions.RefreshTokenExpirationDays);
-        var newRefreshToken = GenerateRefreshToken(user, newRefreshTokenExpiresAt);
+        var newRefreshToken = GenerateRefreshToken(user, roles, newRefreshTokenExpiresAt);
         var newRefreshTokenHash = HashRefreshToken(newRefreshToken);
 
         storedToken.RevokedAt = DateTime.UtcNow;
@@ -217,8 +218,9 @@ public sealed class AuthService : IAuthService
 
     private async Task<AuthResponseDto> CreateAuthResponseAsync(User user, CancellationToken cancellationToken)
     {
+        var roles = await _userManager.GetRolesAsync(user);
         var refreshTokenExpiresAt = DateTime.UtcNow.AddDays(_jwtOptions.RefreshTokenExpirationDays);
-        var refreshToken = GenerateRefreshToken(user, refreshTokenExpiresAt);
+        var refreshToken = GenerateRefreshToken(user, roles, refreshTokenExpiresAt);
 
         await _dbContext.RefreshTokens.AddAsync(new RefreshToken
         {
@@ -361,20 +363,34 @@ public sealed class AuthService : IAuthService
         return email.Trim().ToLowerInvariant();
     }
 
-    private string GenerateRefreshToken(User user, DateTime expiresAt)
+    private string GenerateRefreshToken(User user, IEnumerable<string> roles, DateTime expiresAt)
     {
         if (string.IsNullOrWhiteSpace(_jwtOptions.SecretKey))
         {
             throw new InvalidOperationException("Jwt:SecretKey is not configured.");
         }
 
-        var randomBytes = RandomNumberGenerator.GetBytes(64);
-        var entropyBytes = Encoding.UTF8.GetBytes($"{user.Id}:{expiresAt:O}:{Guid.NewGuid()}");
-        var buffer = new byte[randomBytes.Length + entropyBytes.Length];
-        Buffer.BlockCopy(randomBytes, 0, buffer, 0, randomBytes.Length);
-        Buffer.BlockCopy(entropyBytes, 0, buffer, randomBytes.Length, entropyBytes.Length);
+        var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtOptions.SecretKey));
+        var credentials = new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256);
 
-        return Convert.ToBase64String(buffer);
+        var claims = new List<Claim>
+        {
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new(JwtRegisteredClaimNames.Name, user.FullName),
+            new(JwtRegisteredClaimNames.Email, user.Email ?? string.Empty),
+            new("type", "refresh")
+        };
+        claims.AddRange(roles.Select(role => new Claim(ClaimTypes.Role, role)));
+
+        var token = new JwtSecurityToken(
+            issuer: _jwtOptions.Issuer,
+            audience: _jwtOptions.Audience,
+            claims: claims,
+            expires: expiresAt,
+            signingCredentials: credentials);
+
+        return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
     private static string HashRefreshToken(string refreshToken)

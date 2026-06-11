@@ -17,7 +17,7 @@ public static class JwtExtensions
         var externalAuthSection = configuration.GetSection("Authentication");
         var externalAuthOptions = externalAuthSection.Get<ExternalAuthOptions>() ?? new ExternalAuthOptions();
 
-        services
+        var authBuilder = services
             .AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
@@ -38,20 +38,28 @@ public static class JwtExtensions
                     IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey)),
                     ClockSkew = TimeSpan.Zero
                 };
-            })
-            .AddGoogle(GoogleDefaults.AuthenticationScheme, options =>
+            });
+
+        if (!string.IsNullOrWhiteSpace(externalAuthOptions.Google.ClientId))
+        {
+            authBuilder.AddGoogle(GoogleDefaults.AuthenticationScheme, options =>
             {
                 options.ClientId = externalAuthOptions.Google.ClientId;
                 options.ClientSecret = externalAuthOptions.Google.ClientSecret;
                 options.CallbackPath = "/signin-google";
-            })
-            .AddGitHub(GitHubAuthenticationDefaults.AuthenticationScheme, options =>
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(externalAuthOptions.GitHub.ClientId))
+        {
+            authBuilder.AddGitHub(GitHubAuthenticationDefaults.AuthenticationScheme, options =>
             {
                 options.ClientId = externalAuthOptions.GitHub.ClientId;
                 options.ClientSecret = externalAuthOptions.GitHub.ClientSecret;
                 options.CallbackPath = "/signin-github";
                 options.Scope.Add("user:email");
             });
+        }
 
         services.AddAuthorization();
 

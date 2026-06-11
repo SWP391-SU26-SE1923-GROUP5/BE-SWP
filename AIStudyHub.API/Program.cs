@@ -6,7 +6,6 @@ using AIStudyHub.Business.Services;
 using AIStudyHub.Business.Validators.Authentication;
 using AIStudyHub.Data.Extensions;
 using FluentValidation;
-using Microsoft.AspNetCore.Identity;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -23,16 +22,6 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddSingleton(builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new JwtOptions());
 builder.Services.AddSingleton(builder.Configuration.GetSection("Smtp").Get<SmtpOptions>() ?? new SmtpOptions());
 builder.Services.AddSingleton(builder.Configuration.GetSection("EmailVerification").Get<EmailVerificationOptions>() ?? new EmailVerificationOptions());
-builder.Services.Configure<IdentityOptions>(options =>
-{
-    options.Password.RequiredLength = 12;
-    options.Password.RequireUppercase = true;
-    options.Password.RequireLowercase = true;
-    options.Password.RequireDigit = true;
-    options.Password.RequireNonAlphanumeric = true;
-    options.Password.RequiredUniqueChars = 6;
-    options.SignIn.RequireConfirmedEmail = true;
-});
 builder.Services.AddDataAccess(builder.Configuration);
 builder.Services.AddBusinessServices();
 builder.Services.AddAutoMapper(_ => { }, typeof(ApplicationMappingProfile).Assembly);
