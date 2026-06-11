@@ -66,8 +66,20 @@ public static class AdminSeedExtensions
 
         if (!createResult.Succeeded)
         {
-            var errors = string.Join("; ", createResult.Errors.Select(error => error.Description));
-            throw new InvalidOperationException($"Failed to seed admin account: {errors}");
+            var errorMessages = createResult.Errors.Select(error =>
+            {
+                return error.Code switch
+                {
+                    "PasswordTooShort" => $"Password must be at least {options.Password.Length} characters (minimum: 12)",
+                    "PasswordRequiresDigit" => "Password must contain at least one digit (0-9)",
+                    "PasswordRequiresUpper" => "Password must contain at least one uppercase letter (A-Z)",
+                    "PasswordRequiresLower" => "Password must contain at least one lowercase letter (a-z)",
+                    "PasswordRequiresNonAlphanumeric" => "Password must contain at least one special character (!@#$%^&*)",
+                    "PasswordRequiresUniqueChars" => $"Password must have at least {6} unique characters",
+                    _ => error.Description
+                };
+            });
+            throw new InvalidOperationException($"Failed to seed admin account: {string.Join("; ", errorMessages)}");
         }
 
         var roleResult = await userManager.AddToRoleAsync(admin, adminRole);
