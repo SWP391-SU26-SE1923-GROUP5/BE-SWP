@@ -12,6 +12,7 @@
     <PackageReference Include="MediatR" Version="12.4.1" />
     <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="8.0.27" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.0.2" />
+      <PackageReference Include="PdfPig" Version="0.1.14" />
   </ItemGroup>
 
   <ItemGroup>

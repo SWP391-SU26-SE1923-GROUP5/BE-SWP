@@ -5,6 +5,7 @@ using AIStudyHub.Business.Options;
 using AIStudyHub.Business.Services;
 using AIStudyHub.Business.Validators.Authentication;
 using AIStudyHub.Data.Extensions;
+using CloudinaryDotNet;
 using FluentValidation;
 using Serilog;
 
@@ -16,6 +17,7 @@ builder.Host.UseSerilog((context, loggerConfiguration) =>
 });
 
 builder.Services.AddControllers();
+builder.Services.AddHttpClient();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerDocumentation();
 builder.Services.AddJwtAuthentication(builder.Configuration);
@@ -28,7 +30,20 @@ builder.Services.AddDataAccess(builder.Configuration);
 builder.Services.AddBusinessServices();
 builder.Services.AddAutoMapper(_ => { }, typeof(ApplicationMappingProfile).Assembly);
 builder.Services.AddValidatorsFromAssemblyContaining<LoginRequestDtoValidator>();
+builder.Services.AddSingleton(sp =>
+{
+    var config = builder.Configuration.GetSection("Cloudinary");
 
+    var account = new Account(
+        config["User"],
+        config["ApiKey"],
+        config["ApiSecret"]);
+
+    var cloudinary = new Cloudinary(account);
+    cloudinary.Api.Secure = true;
+
+    return cloudinary;
+});
 var app = builder.Build();
 
 await app.Services.SeedConfiguredAdminAsync(app.Configuration);
