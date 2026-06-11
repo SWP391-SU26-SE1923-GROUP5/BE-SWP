@@ -6,6 +6,7 @@ using AspNet.Security.OAuth.GitHub;
 using MediatR;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Google;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AIStudyHub.API.Controllers;
@@ -62,6 +63,35 @@ public sealed class AuthController : ControllerBase
     {
         await _mediator.Send(new ResendEmailVerificationCommand(request), cancellationToken);
         return Ok(new { message = "If the account exists and is unverified, a verification email has been sent." });
+    }
+
+    [HttpPost("forgot-password")]
+    public async Task<IActionResult> ForgotPassword(ForgotPasswordRequestDto request, CancellationToken cancellationToken)
+    {
+        await _mediator.Send(new ForgotPasswordCommand(request), cancellationToken);
+        return Ok(new { message = "If the email exists, an OTP has been sent." });
+    }
+
+    [HttpPost("reset-password")]
+    public async Task<IActionResult> ResetPassword(ResetPasswordRequestDto request, CancellationToken cancellationToken)
+    {
+        await _mediator.Send(new ResetPasswordCommand(request), cancellationToken);
+        return Ok(new { message = "Password reset successfully." });
+    }
+
+    [Authorize]
+    [HttpPost("change-password")]
+    public async Task<IActionResult> ChangePassword(ChangePasswordRequestDto request, CancellationToken cancellationToken)
+    {
+        await _mediator.Send(new ChangePasswordCommand(request), cancellationToken);
+        return Ok(new { message = "Password changed successfully." });
+    }
+
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout(LogoutRequestDto request, CancellationToken cancellationToken)
+    {
+        await _mediator.Send(new LogoutCommand(request), cancellationToken);
+        return Ok(new { message = "Logged out successfully." });
     }
 
     [HttpGet("external-login/{provider}")]

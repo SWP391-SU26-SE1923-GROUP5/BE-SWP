@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using AIStudyHub.Business.DTOs.Authentication;
 
 namespace AIStudyHub.Business.Interfaces.Services;
@@ -10,4 +11,8 @@ public interface IAuthService
     Task<AuthResponseDto> LoginExternalAsync(ExternalLoginRequestDto request, CancellationToken cancellationToken = default);
     Task ConfirmEmailAsync(ConfirmEmailRequestDto request, CancellationToken cancellationToken = default);
     Task ResendEmailVerificationAsync(ResendEmailVerificationRequestDto request, CancellationToken cancellationToken = default);
+    Task ForgotPasswordAsync(ForgotPasswordRequestDto request, CancellationToken cancellationToken = default);
+    Task ResetPasswordAsync(ResetPasswordRequestDto request, CancellationToken cancellationToken = default);
+    Task ChangePasswordAsync(ClaimsPrincipal userPrincipal, ChangePasswordRequestDto request, CancellationToken cancellationToken = default);
+    Task LogoutAsync(LogoutRequestDto request, CancellationToken cancellationToken = default);
 }

@@ -1,6 +1,8 @@
+using System.Security.Claims;
 using AIStudyHub.Business.DTOs.Authentication;
 using AIStudyHub.Business.Interfaces.Services;
 using MediatR;
+using Microsoft.AspNetCore.Http;
 
 namespace AIStudyHub.Business.Features.Auth;
 
@@ -86,5 +88,76 @@ internal sealed class ResendEmailVerificationCommandHandler : IRequestHandler<Re
     public Task Handle(ResendEmailVerificationCommand request, CancellationToken cancellationToken)
     {
         return _authService.ResendEmailVerificationAsync(request.Request, cancellationToken);
+    }
+}
+
+public sealed record ForgotPasswordCommand(ForgotPasswordRequestDto Request) : IRequest;
+
+internal sealed class ForgotPasswordCommandHandler : IRequestHandler<ForgotPasswordCommand>
+{
+    private readonly IAuthService _authService;
+
+    public ForgotPasswordCommandHandler(IAuthService authService)
+    {
+        _authService = authService;
+    }
+
+    public Task Handle(ForgotPasswordCommand request, CancellationToken cancellationToken)
+    {
+        return _authService.ForgotPasswordAsync(request.Request, cancellationToken);
+    }
+}
+
+public sealed record ResetPasswordCommand(ResetPasswordRequestDto Request) : IRequest;
+
+internal sealed class ResetPasswordCommandHandler : IRequestHandler<ResetPasswordCommand>
+{
+    private readonly IAuthService _authService;
+
+    public ResetPasswordCommandHandler(IAuthService authService)
+    {
+        _authService = authService;
+    }
+
+    public Task Handle(ResetPasswordCommand request, CancellationToken cancellationToken)
+    {
+        return _authService.ResetPasswordAsync(request.Request, cancellationToken);
+    }
+}
+
+public sealed record ChangePasswordCommand(ChangePasswordRequestDto Request) : IRequest;
+
+internal sealed class ChangePasswordCommandHandler : IRequestHandler<ChangePasswordCommand>
+{
+    private readonly IAuthService _authService;
+    private readonly IHttpContextAccessor _httpContextAccessor;
+
+    public ChangePasswordCommandHandler(IAuthService authService, IHttpContextAccessor httpContextAccessor)
+    {
+        _authService = authService;
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    public async Task Handle(ChangePasswordCommand request, CancellationToken cancellationToken)
+    {
+        var user = _httpContextAccessor.HttpContext?.User;
+        await _authService.ChangePasswordAsync(user!, request.Request, cancellationToken);
+    }
+}
+
+public sealed record LogoutCommand(LogoutRequestDto Request) : IRequest;
+
+internal sealed class LogoutCommandHandler : IRequestHandler<LogoutCommand>
+{
+    private readonly IAuthService _authService;
+
+    public LogoutCommandHandler(IAuthService authService)
+    {
+        _authService = authService;
+    }
+
+    public Task Handle(LogoutCommand request, CancellationToken cancellationToken)
+    {
+        return _authService.LogoutAsync(request.Request, cancellationToken);
     }
 }

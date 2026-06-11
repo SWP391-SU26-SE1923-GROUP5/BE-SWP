@@ -30,6 +30,7 @@ public sealed class AuthService : IAuthService
     private readonly JwtOptions _jwtOptions;
     private readonly IEmailService _emailService;
     private readonly EmailVerificationOptions _emailVerificationOptions;
+    private readonly OtpOptions _otpOptions;
 
     public AuthService(
         UserManager<User> userManager,
@@ -42,7 +43,8 @@ public sealed class AuthService : IAuthService
         IValidator<ResendEmailVerificationRequestDto> resendEmailVerificationValidator,
         JwtOptions jwtOptions,
         IEmailService emailService,
-        EmailVerificationOptions emailVerificationOptions)
+        EmailVerificationOptions emailVerificationOptions,
+        OtpOptions otpOptions)
     {
         _userManager = userManager;
         _dbContext = dbContext;
@@ -55,6 +57,7 @@ public sealed class AuthService : IAuthService
         _jwtOptions = jwtOptions;
         _emailService = emailService;
         _emailVerificationOptions = emailVerificationOptions;
+        _otpOptions = otpOptions;
     }
 
     public async Task<RegisterResultDto> RegisterAsync(RegisterRequestDto request, CancellationToken cancellationToken = default)
@@ -214,6 +217,158 @@ public sealed class AuthService : IAuthService
         }
 
         await SendEmailVerificationAsync(user, cancellationToken);
+    }
+
+    public async Task ForgotPasswordAsync(ForgotPasswordRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var normalizedEmail = NormalizeEmail(request.Email);
+        var user = await _userManager.FindByEmailAsync(normalizedEmail);
+        if (user is null)
+        {
+            return;
+        }
+
+        var existingOtps = await _dbContext.OtpRecords
+            .Where(o => o.Email == normalizedEmail && o.Type == OtpType.PasswordReset && !o.IsExpired && !o.IsUsed)
+            .ToListAsync(cancellationToken);
+
+        var recentSendCount = existingOtps.Count(o => o.CreatedAt >= DateTime.UtcNow.AddMinutes(-_otpOptions.SendWindowMinutes));
+        if (recentSendCount >= _otpOptions.MaxSendAttemptsPerWindow)
+        {
+            throw new InvalidOperationException($"Too many OTP requests. Please wait {_otpOptions.SendWindowMinutes} minutes before trying again.");
+        }
+
+        if (existingOtps.Any(o => o.IsLocked))
+        {
+            throw new InvalidOperationException("Account is temporarily locked due to too many failed attempts. Please try again later.");
+        }
+
+        foreach (var old in existingOtps)
+        {
+            old.UsedAt = DateTime.UtcNow;
+        }
+
+        var otp = GenerateOtp();
+        var otpHash = HashOtp(otp);
+        var expiresAt = DateTime.UtcNow.AddMinutes(_otpOptions.ExpiryMinutes);
+
+        await _dbContext.OtpRecords.AddAsync(new OtpRecord
+        {
+            UserId = user.Id,
+            Email = normalizedEmail,
+            OtpHash = otpHash,
+            Type = OtpType.PasswordReset,
+            ExpiresAt = expiresAt
+        }, cancellationToken);
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        var htmlBody = $"<p>Hello {System.Net.WebUtility.HtmlEncode(user.FullName)},</p><p>Your password reset OTP is: <strong>{otp}</strong></p><p>This code expires in {_otpOptions.ExpiryMinutes} minutes.</p><p>If you did not request this, please ignore this email.</p>";
+        await _emailService.SendAsync(normalizedEmail, "AIStudyHub Password Reset OTP", htmlBody, cancellationToken);
+    }
+
+    public async Task ResetPasswordAsync(ResetPasswordRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var normalizedEmail = NormalizeEmail(request.Email);
+        var user = await _userManager.FindByEmailAsync(normalizedEmail);
+        if (user is null)
+        {
+            throw new InvalidOperationException("Invalid or expired OTP.");
+        }
+
+        var otpRecord = await _dbContext.OtpRecords
+            .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.PasswordReset && !o.IsUsed)
+            .OrderByDescending(o => o.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (otpRecord is null)
+        {
+            throw new InvalidOperationException("Invalid or expired OTP.");
+        }
+
+        if (otpRecord.IsLocked)
+        {
+            throw new InvalidOperationException($"Too many failed attempts. Please wait {OtpRecord.LockoutMinutes} minutes before trying again.");
+        }
+
+        if (otpRecord.IsExpired)
+        {
+            throw new InvalidOperationException("OTP has expired. Please request a new one.");
+        }
+
+        if (!VerifyOtp(request.Otp, otpRecord.OtpHash))
+        {
+            otpRecord.FailedAttempts++;
+            if (otpRecord.FailedAttempts >= OtpRecord.MaxFailedAttempts)
+            {
+                otpRecord.LockedUntil = DateTime.UtcNow.AddMinutes(OtpRecord.LockoutMinutes);
+            }
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            throw new InvalidOperationException("Invalid or expired OTP.");
+        }
+
+        otpRecord.UsedAt = DateTime.UtcNow;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        var token = await _userManager.GeneratePasswordResetTokenAsync(user);
+        var result = await _userManager.ResetPasswordAsync(user, token, request.NewPassword);
+        EnsureIdentitySucceeded(result);
+    }
+
+    public async Task ChangePasswordAsync(ClaimsPrincipal userPrincipal, ChangePasswordRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var userId = userPrincipal.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrEmpty(userId) || !Guid.TryParse(userId, out var userGuid))
+        {
+            throw new UnauthorizedAccessException("User not found.");
+        }
+
+        var user = await _userManager.FindByIdAsync(userGuid.ToString());
+        if (user is null)
+        {
+            throw new UnauthorizedAccessException("User not found.");
+        }
+
+        var isCurrentPasswordValid = await _userManager.CheckPasswordAsync(user, request.CurrentPassword);
+        if (!isCurrentPasswordValid)
+        {
+            throw new UnauthorizedAccessException("Current password is incorrect.");
+        }
+
+        var result = await _userManager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
+        EnsureIdentitySucceeded(result);
+    }
+
+    public async Task LogoutAsync(LogoutRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var tokenHash = HashRefreshToken(request.RefreshToken);
+        var storedToken = await _dbContext.RefreshTokens
+            .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, cancellationToken);
+
+        if (storedToken is not null)
+        {
+            storedToken.RevokedAt = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    private static string GenerateOtp()
+    {
+        return RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
+    }
+
+    private static string HashOtp(string otp)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(otp));
+        return Convert.ToHexString(bytes);
+    }
+
+    private static bool VerifyOtp(string input, string storedHash)
+    {
+        var inputHash = HashOtp(input);
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(inputHash),
+            Encoding.UTF8.GetBytes(storedHash));
     }
 
     private async Task<AuthResponseDto> CreateAuthResponseAsync(User user, CancellationToken cancellationToken)

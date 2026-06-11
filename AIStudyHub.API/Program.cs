@@ -22,6 +22,8 @@ builder.Services.AddJwtAuthentication(builder.Configuration);
 builder.Services.AddSingleton(builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new JwtOptions());
 builder.Services.AddSingleton(builder.Configuration.GetSection("Smtp").Get<SmtpOptions>() ?? new SmtpOptions());
 builder.Services.AddSingleton(builder.Configuration.GetSection("EmailVerification").Get<EmailVerificationOptions>() ?? new EmailVerificationOptions());
+builder.Services.AddSingleton(builder.Configuration.GetSection("Otp").Get<OtpOptions>() ?? new OtpOptions());
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddDataAccess(builder.Configuration);
 builder.Services.AddBusinessServices();
 builder.Services.AddAutoMapper(_ => { }, typeof(ApplicationMappingProfile).Assembly);
