@@ -25,5 +25,6 @@ public sealed class OtpRecord : BaseEntity
 
 public enum OtpType
 {
-    PasswordReset
+    PasswordReset,
+    EmailVerification
 }
