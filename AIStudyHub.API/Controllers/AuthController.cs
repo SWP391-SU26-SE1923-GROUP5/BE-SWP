@@ -51,18 +51,11 @@ public sealed class AuthController : ControllerBase
         return Ok(result);
     }
 
-    [HttpPost("confirm-email")]
-    public async Task<IActionResult> ConfirmEmail(ConfirmEmailRequestDto request, CancellationToken cancellationToken)
+    [HttpPost("verify-registration-otp")]
+    public async Task<IActionResult> VerifyRegistrationOtp(VerifyRegistrationOtpRequestDto request, CancellationToken cancellationToken)
     {
-        await _mediator.Send(new ConfirmEmailCommand(request), cancellationToken);
+        await _mediator.Send(new VerifyRegistrationOtpCommand(request), cancellationToken);
         return Ok(new { message = "Email verified successfully." });
-    }
-
-    [HttpPost("resend-email-verification")]
-    public async Task<IActionResult> ResendEmailVerification(ResendEmailVerificationRequestDto request, CancellationToken cancellationToken)
-    {
-        await _mediator.Send(new ResendEmailVerificationCommand(request), cancellationToken);
-        return Ok(new { message = "If the account exists and is unverified, a verification email has been sent." });
     }
 
     [HttpPost("forgot-password")]
