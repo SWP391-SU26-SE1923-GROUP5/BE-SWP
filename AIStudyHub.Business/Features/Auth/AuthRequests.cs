@@ -12,9 +12,7 @@ public sealed record LoginUserCommand(LoginRequestDto Request) : IRequest<AuthRe
 
 public sealed record RefreshTokenCommand(RefreshTokenRequestDto Request) : IRequest<AuthResponseDto>;
 
-public sealed record ConfirmEmailCommand(ConfirmEmailRequestDto Request) : IRequest;
-
-public sealed record ResendEmailVerificationCommand(ResendEmailVerificationRequestDto Request) : IRequest;
+public sealed record VerifyRegistrationOtpCommand(VerifyRegistrationOtpRequestDto Request) : IRequest;
 
 internal sealed class RegisterUserCommandHandler : IRequestHandler<RegisterUserCommand, RegisterResultDto>
 {
@@ -61,33 +59,18 @@ internal sealed class RefreshTokenCommandHandler : IRequestHandler<RefreshTokenC
     }
 }
 
-internal sealed class ConfirmEmailCommandHandler : IRequestHandler<ConfirmEmailCommand>
+internal sealed class VerifyRegistrationOtpCommandHandler : IRequestHandler<VerifyRegistrationOtpCommand>
 {
     private readonly IAuthService _authService;
 
-    public ConfirmEmailCommandHandler(IAuthService authService)
+    public VerifyRegistrationOtpCommandHandler(IAuthService authService)
     {
         _authService = authService;
     }
 
-    public Task Handle(ConfirmEmailCommand request, CancellationToken cancellationToken)
+    public Task Handle(VerifyRegistrationOtpCommand request, CancellationToken cancellationToken)
     {
-        return _authService.ConfirmEmailAsync(request.Request, cancellationToken);
-    }
-}
-
-internal sealed class ResendEmailVerificationCommandHandler : IRequestHandler<ResendEmailVerificationCommand>
-{
-    private readonly IAuthService _authService;
-
-    public ResendEmailVerificationCommandHandler(IAuthService authService)
-    {
-        _authService = authService;
-    }
-
-    public Task Handle(ResendEmailVerificationCommand request, CancellationToken cancellationToken)
-    {
-        return _authService.ResendEmailVerificationAsync(request.Request, cancellationToken);
+        return _authService.VerifyRegistrationOtpAsync(request.Request, cancellationToken);
     }
 }
 
