@@ -183,7 +183,7 @@ public sealed class AuthService : IAuthService
         }
 
         var otpRecord = await _dbContext.OtpRecords
-            .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.EmailVerification && !o.IsUsed)
+            .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.EmailVerification && o.UsedAt == null)
             .OrderByDescending(o => o.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -235,7 +235,7 @@ public sealed class AuthService : IAuthService
         }
 
         var existingOtps = await _dbContext.OtpRecords
-            .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.EmailVerification && !o.IsExpired && !o.IsUsed)
+            .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.EmailVerification && o.ExpiresAt > DateTime.UtcNow && o.UsedAt == null)
             .ToListAsync(cancellationToken);
 
         var recentSendCount = existingOtps.Count(o => o.CreatedAt >= DateTime.UtcNow.AddMinutes(-_otpOptions.SendWindowMinutes));
@@ -283,7 +283,7 @@ public sealed class AuthService : IAuthService
         }
 
         var existingOtps = await _dbContext.OtpRecords
-            .Where(o => o.Email == normalizedEmail && o.Type == OtpType.PasswordReset && !o.IsExpired && !o.IsUsed)
+            .Where(o => o.Email == normalizedEmail && o.Type == OtpType.PasswordReset && o.ExpiresAt > DateTime.UtcNow && o.UsedAt == null)
             .ToListAsync(cancellationToken);
 
         var recentSendCount = existingOtps.Count(o => o.CreatedAt >= DateTime.UtcNow.AddMinutes(-_otpOptions.SendWindowMinutes));
@@ -331,7 +331,7 @@ public sealed class AuthService : IAuthService
         }
 
         var otpRecord = await _dbContext.OtpRecords
-            .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.PasswordReset && !o.IsUsed)
+            .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.PasswordReset && o.UsedAt == null)
             .OrderByDescending(o => o.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
 
