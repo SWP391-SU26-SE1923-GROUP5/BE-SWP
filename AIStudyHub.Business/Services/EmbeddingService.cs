@@ -12,6 +12,7 @@ public sealed class EmbeddingService : IEmbeddingService
     private readonly HttpClient _httpClient;
     private readonly RagOptions _options;
     private readonly ILogger<EmbeddingService> _logger;
+    private int? _cachedDimension;
 
     public EmbeddingService(
         IHttpClientFactory httpClientFactory,
@@ -36,6 +37,12 @@ public sealed class EmbeddingService : IEmbeddingService
 
     public async Task<List<float[]>> GenerateEmbeddingsAsync(List<string> texts)
     {
+        // Priority: Ollama > Local > OpenAI > Simple fallback
+        if (!string.IsNullOrEmpty(_options.OllamaModel))
+        {
+            return await GenerateOllamaEmbeddingsAsync(texts);
+        }
+
         if (_options.UseLocalEmbeddings)
         {
             return await GenerateLocalEmbeddingsAsync(texts);
@@ -48,6 +55,69 @@ public sealed class EmbeddingService : IEmbeddingService
 
         _logger.LogWarning("No embedding provider configured, using simple hash-based fallback");
         return texts.Select(_ => GenerateSimpleEmbedding(_)).ToList();
+    }
+
+    public int GetEmbeddingDimension()
+    {
+        if (_cachedDimension.HasValue)
+            return _cachedDimension.Value;
+
+        return _options.OllamaEmbeddingDimension;
+    }
+
+    private async Task<List<float[]>> GenerateOllamaEmbeddingsAsync(List<string> texts)
+    {
+        try
+        {
+            var embeddings = new List<float[]>();
+
+            foreach (var text in texts)
+            {
+                var payload = new
+                {
+                    model = _options.OllamaModel,
+                    prompt = text
+                };
+
+                var content = new StringContent(
+                    JsonSerializer.Serialize(payload),
+                    Encoding.UTF8,
+                    "application/json");
+
+                var response = await _httpClient.PostAsync($"{_options.OllamaUrl}/api/embeddings", content);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("Ollama embedding failed: {StatusCode}, falling back to simple embeddings", response.StatusCode);
+                    return texts.Select(_ => GenerateSimpleEmbedding(_)).ToList();
+                }
+
+                var json = await response.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(json);
+
+                var embedding = doc.RootElement
+                    .GetProperty("embedding")
+                    .EnumerateArray()
+                    .Select(e => e.GetSingle())
+                    .ToArray();
+
+                // Auto-detect dimension from first response
+                if (!_cachedDimension.HasValue)
+                {
+                    _cachedDimension = embedding.Length;
+                    _logger.LogInformation("Detected Ollama embedding dimension: {Dimension}", _cachedDimension.Value);
+                }
+
+                embeddings.Add(embedding);
+            }
+
+            return embeddings;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Ollama embedding service unavailable, using simple embeddings");
+            return texts.Select(_ => GenerateSimpleEmbedding(_)).ToList();
+        }
     }
 
     private async Task<List<float[]>> GenerateLocalEmbeddingsAsync(List<string> texts)

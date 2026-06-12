@@ -14,6 +14,11 @@ public sealed class RagOptions
     public string LocalEmbeddingModel { get; set; } = "all-MiniLM-L6-v2";
     public string LocalEmbeddingUrl { get; set; } = "http://localhost:5000";
 
+    // Ollama Embedding Settings (local, no API key needed)
+    public string OllamaUrl { get; set; } = "http://localhost:11434";
+    public string OllamaModel { get; set; } = "nomic-embed-text";
+    public int OllamaEmbeddingDimension { get; set; } = 768;
+
     // Fallback: OpenAI for embeddings (if local not available)
     public string? OpenAiApiKey { get; set; }
     public string OpenAiEmbeddingModel { get; set; } = "text-embedding-3-small";
