@@ -1,3 +1,5 @@
+using AIStudyHub.API.DTOs;
+using AIStudyHub.API.Swagger;
 using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
@@ -9,6 +11,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Swashbuckle.AspNetCore.Annotations;
 
 namespace AIStudyHub.API.Controllers;
 
@@ -21,6 +24,7 @@ public sealed class DocumentUploadController : ControllerBase
     private readonly IDocumentProcessingService _documentProcessing;
     private readonly IEmbeddingService _embeddingService;
     private readonly IVectorStoreService _vectorStoreService;
+    private readonly IFileStorageService _fileStorage;
     private readonly RagOptions _options;
     private readonly ILogger<DocumentUploadController> _logger;
 
@@ -29,6 +33,7 @@ public sealed class DocumentUploadController : ControllerBase
         IDocumentProcessingService documentProcessing,
         IEmbeddingService embeddingService,
         IVectorStoreService vectorStoreService,
+        IFileStorageService fileStorage,
         IOptions<RagOptions> options,
         ILogger<DocumentUploadController> logger)
     {
@@ -36,6 +41,7 @@ public sealed class DocumentUploadController : ControllerBase
         _documentProcessing = documentProcessing;
         _embeddingService = embeddingService;
         _vectorStoreService = vectorStoreService;
+        _fileStorage = fileStorage;
         _options = options.Value;
         _logger = logger;
     }
@@ -52,13 +58,33 @@ public sealed class DocumentUploadController : ControllerBase
         if (userId == Guid.Empty)
             return Unauthorized();
 
+        // Validate SubjectId exists
+        var subject = await _unitOfWork.Subjects.GetByIdAsync(request.SubjectId, cancellationToken);
+        if (subject == null)
+            return BadRequest($"Subject with ID {request.SubjectId} not found");
+
         try
         {
             var fileContent = Convert.FromBase64String(request.FileBase64);
+
+            // Validate extension
+            if (!_fileStorage.IsValidExtension(request.FileExtension))
+            {
+                return BadRequest($"File extension '{request.FileExtension}' is not allowed. Allowed: .pdf, .docx, .txt, .md");
+            }
+
+            // Save file to disk
+            var filePath = await _fileStorage.SaveFileAsync(fileContent, request.FileName, request.FileExtension, cancellationToken);
+            var fileUrl = _fileStorage.GetFileUrl(filePath);
+
             var text = await _documentProcessing.ExtractTextAsync(fileContent, request.FileExtension);
 
             if (string.IsNullOrWhiteSpace(text))
+            {
+                // Clean up file if extraction fails
+                await _fileStorage.DeleteFileAsync(filePath, cancellationToken);
                 return BadRequest("Could not extract text from the document");
+            }
 
             var chunks = await _documentProcessing.ChunkTextAsync(
                 text,
@@ -66,7 +92,10 @@ public sealed class DocumentUploadController : ControllerBase
                 _options.ChunkOverlap);
 
             if (chunks.Count == 0)
+            {
+                await _fileStorage.DeleteFileAsync(filePath, cancellationToken);
                 return BadRequest("No content chunks could be created from the document");
+            }
 
             var document = new Document
             {
@@ -77,6 +106,7 @@ public sealed class DocumentUploadController : ControllerBase
                 FileName = request.FileName,
                 FileExtension = request.FileExtension,
                 FileType = GetFileType(request.FileExtension),
+                FileLink = fileUrl,
                 ShareStatus = "private",
                 Status = DocumentStatus.Published,
                 CreatedAt = DateTime.UtcNow,
@@ -84,6 +114,7 @@ public sealed class DocumentUploadController : ControllerBase
             };
 
             await _unitOfWork.Documents.AddAsync(document);
+            await _unitOfWork.SaveChangesAsync(cancellationToken); // Save Document first to get ID
 
             var embeddings = await _embeddingService.GenerateEmbeddingsAsync(chunks);
 
@@ -97,6 +128,8 @@ public sealed class DocumentUploadController : ControllerBase
                     DocumentId = document.Id,
                     ChunkJson = chunk,
                     EmbeddingJson = System.Text.Json.JsonSerializer.Serialize(embedding),
+                    Vector = ConvertToByteArray(embedding),
+                    OrderIndex = i,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
                 };
@@ -139,6 +172,141 @@ public sealed class DocumentUploadController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to upload document for user {UserId}", userId);
+            return StatusCode(500, "An error occurred while processing the document");
+        }
+    }
+
+    [HttpPost("upload/file")]
+    [Consumes("multipart/form-data")]
+    [ProducesResponseType(typeof(UploadDocumentResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
+    public async Task<ActionResult<UploadDocumentResponseDto>> UploadDocumentFile(
+        [FromForm] UploadDocumentFileRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        if (request.File == null || request.File.Length == 0)
+            return BadRequest("No file provided");
+
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest("Document title is required");
+
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty)
+            return Unauthorized();
+
+        // Validate SubjectId exists
+        var subject = await _unitOfWork.Subjects.GetByIdAsync(request.SubjectId, cancellationToken);
+        if (subject == null)
+            return BadRequest($"Subject with ID {request.SubjectId} not found");
+
+        try
+        {
+            var extension = Path.GetExtension(request.File.FileName).ToLowerInvariant();
+
+            if (!_fileStorage.IsValidExtension(extension))
+            {
+                return BadRequest($"File extension '{extension}' is not allowed. Allowed: .pdf, .docx, .txt, .md");
+            }
+
+            await using var memoryStream = new MemoryStream();
+            await request.File.CopyToAsync(memoryStream, cancellationToken);
+            var fileContent = memoryStream.ToArray();
+
+            var filePath = await _fileStorage.SaveFileAsync(fileContent, Path.GetFileNameWithoutExtension(request.File.FileName), extension, cancellationToken);
+            var fileUrl = _fileStorage.GetFileUrl(filePath);
+
+            var text = await _documentProcessing.ExtractTextAsync(fileContent, extension);
+
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                await _fileStorage.DeleteFileAsync(filePath, cancellationToken);
+                return BadRequest("Could not extract text from the document");
+            }
+
+            var chunks = await _documentProcessing.ChunkTextAsync(
+                text,
+                _options.ChunkSize,
+                _options.ChunkOverlap);
+
+            if (chunks.Count == 0)
+            {
+                await _fileStorage.DeleteFileAsync(filePath, cancellationToken);
+                return BadRequest("No content chunks could be created from the document");
+            }
+
+            var document = new Document
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                SubjectId = request.SubjectId,
+                Title = request.Title,
+                FileName = request.File.FileName,
+                FileExtension = extension,
+                FileType = request.File.ContentType,
+                FileLink = fileUrl,
+                ShareStatus = "private",
+                Status = DocumentStatus.Published,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            await _unitOfWork.Documents.AddAsync(document);
+            await _unitOfWork.SaveChangesAsync(cancellationToken); // Save Document first to get ID
+
+            var embeddings = await _embeddingService.GenerateEmbeddingsAsync(chunks);
+
+            for (var i = 0; i < chunks.Count; i++)
+            {
+                var chunk = chunks[i];
+                var embedding = embeddings[i];
+                var chunkEntity = new DocumentChunk
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentId = document.Id,
+                    ChunkJson = chunk,
+                    EmbeddingJson = System.Text.Json.JsonSerializer.Serialize(embedding),
+                    Vector = ConvertToByteArray(embedding),
+                    OrderIndex = i,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                await _unitOfWork.DocumentChunks.AddAsync(chunkEntity);
+
+                await _vectorStoreService.UpsertVectorAsync(
+                    chunkEntity.Id.ToString(),
+                    embedding,
+                    new Dictionary<string, string>
+                    {
+                        ["documentId"] = document.Id.ToString(),
+                        ["userId"] = userId.ToString(),
+                        ["chunkIndex"] = i.ToString(),
+                        ["documentTitle"] = document.Title
+                    });
+            }
+
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation(
+                "Document {DocumentId} uploaded (file) with {ChunkCount} chunks by user {UserId}",
+                document.Id, chunks.Count, userId);
+
+            return Ok(new UploadDocumentResponseDto(
+                document.Id,
+                "completed",
+                chunks.Count,
+                $"Successfully processed {chunks.Count} chunks"
+            ));
+        }
+        catch (NotSupportedException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to upload document file for user {UserId}", userId);
             return StatusCode(500, "An error occurred while processing the document");
         }
     }
@@ -195,6 +363,14 @@ public sealed class DocumentUploadController : ControllerBase
             await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
 
             _unitOfWork.Documents.Remove(document);
+
+            // Delete physical file
+            if (!string.IsNullOrEmpty(document.FileLink))
+            {
+                var relativePath = document.FileLink.Replace("/uploads/", "");
+                await _fileStorage.DeleteFileAsync(relativePath, cancellationToken);
+            }
+
             await _unitOfWork.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation("Document {DocumentId} deleted by user {UserId}", id, userId);
@@ -229,5 +405,12 @@ public sealed class DocumentUploadController : ControllerBase
             ".md" => "text/markdown",
             _ => "application/octet-stream"
         };
+    }
+
+    private static byte[] ConvertToByteArray(float[] floats)
+    {
+        var bytes = new byte[floats.Length * sizeof(float)];
+        Buffer.BlockCopy(floats, 0, bytes, 0, bytes.Length);
+        return bytes;
     }
 }
