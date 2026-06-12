@@ -2330,6 +2330,107 @@ Delete a document and dependent content according to cascade rules.
 
 ### API Name
 
+Upload Document (File)
+
+### Endpoint
+
+`POST /api/documentupload/upload/file`
+
+### HTTP Method
+
+POST
+
+### Authorization
+
+Authenticated
+
+### Content-Type
+
+`multipart/form-data`
+
+### Purpose
+
+Upload a document file with automatic text extraction, chunking, and embedding generation. The file is saved, text is extracted, content is split into chunks, and each chunk is embedded via AI.
+
+### Request
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file` | File | Yes | Document file to upload (PDF, DOCX, TXT, MD) |
+| `title` | string | Yes | Title of the document |
+| `subjectId` | GUID | Yes | ID of the subject to categorize the document |
+
+### Request Example
+
+```
+POST /api/documentupload/upload/file
+Content-Type: multipart/form-data
+Authorization: Bearer {token}
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="file"; filename="lecture-notes.pdf"
+Content-Type: application/pdf
+
+{binary content}
+------WebKitFormBoundary
+Content-Disposition: form-data; name="title"
+
+Introduction to Machine Learning
+------WebKitFormBoundary
+Content-Disposition: form-data; name="subjectId"
+
+3fa85f64-5717-4562-b3fc-2c963f66afa6
+------WebKitFormBoundary--
+```
+
+### Response
+
+```json
+{
+  "documentId": "guid",
+  "status": "completed",
+  "chunkCount": 15,
+  "message": "Successfully processed 15 chunks"
+}
+```
+
+### Supported File Types
+
+| Extension | MIME Type |
+|-----------|-----------|
+| `.pdf` | application/pdf |
+| `.docx` | application/vnd.openxmlformats-officedocument.wordprocessingml.document |
+| `.txt` | text/plain |
+| `.md` | text/markdown |
+
+### Business Rules
+
+- User ID is derived from JWT token, not request body
+- File extension is validated against allowed types
+- Empty or unreadable files return 400
+- Subject must exist
+
+### Possible Errors
+
+- `400` - Invalid file or missing required fields
+- `401` - Unauthorized
+- `404` - Subject not found
+- `500` - Processing error
+
+### cURL Example
+
+```bash
+curl -X POST "https://api.example.com/api/documentupload/upload/file" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -F "file=@document.pdf" \
+  -F "title=My Document" \
+  -F "subjectId=3fa85f64-5717-4562-b3fc-2c963f66afa6"
+```
+
+---
+
+### API Name
+
 Get My Documents
 
 ### Endpoint

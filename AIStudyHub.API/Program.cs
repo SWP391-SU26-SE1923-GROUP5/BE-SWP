@@ -27,6 +27,7 @@ builder.Services.AddSingleton(builder.Configuration.GetSection("EmailVerificatio
 builder.Services.AddSingleton(builder.Configuration.GetSection("Otp").Get<OtpOptions>() ?? new OtpOptions());
 builder.Services.AddSingleton(builder.Configuration.GetSection("Cleanup").Get<CleanupOptions>() ?? new CleanupOptions());
 builder.Services.AddSingleton(builder.Configuration.GetSection("Rag").Get<RagOptions>() ?? new RagOptions());
+builder.Services.AddSingleton(builder.Configuration.GetSection("DocumentStorage").Get<DocumentStorageOptions>() ?? new DocumentStorageOptions());
 builder.Services.AddHostedService<UnverifiedAccountCleanupService>();
 
 builder.Services.AddHttpClient("EmbeddingClient");
@@ -64,6 +65,12 @@ if (app.Environment.IsDevelopment())
 
 app.UseSerilogRequestLogging();
 app.UseHttpsRedirection();
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
+        Path.Combine(builder.Environment.ContentRootPath, "wwwroot")),
+    RequestPath = "/uploads"
+});
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();

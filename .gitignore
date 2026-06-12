@@ -108,7 +108,7 @@ efbundle*
 # IIS / publish output
 publish/
 Published/
-wwwroot/uploads/
+documents/
 
 # Node / frontend tooling if added later
 node_modules/

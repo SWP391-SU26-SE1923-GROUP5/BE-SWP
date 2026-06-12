@@ -1,3 +1,4 @@
+using AIStudyHub.API.Swagger;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.OpenApi.Models;
 
@@ -15,6 +16,8 @@ public static class SwaggerExtensions
                 Version = "v1",
                 Description = "AI Learning Document Management System"
             });
+
+            options.OperationFilter<FormFileOperationFilter>();
 
             var securityScheme = new OpenApiSecurityScheme
             {

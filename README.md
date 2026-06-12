@@ -170,29 +170,235 @@ Main API groups:
 - `/api/Chat`
 - `/api/Admin`
 
-## Entity Model
+## Database Entity Model (ER Diagram)
 
-Core entities:
+The database schema is based on Entity Framework Code First. The core tables and their relationships are represented below:
 
-- `User`
-- `Document`
-- `Vote`
-- `Report`
-- `Flashcard`
-- `Quiz`
-- `Question`
-- `Answer`
-- `QuizSubmission`
-- `Notification`
-- `Payment`
-- `ChatSession`
-- `ChatMessage`
-
-All entities inherit from `BaseEntity` and include:
-
-- `Id`
-- `CreatedAt`
-- `UpdatedAt`
+```mermaid
+erDiagram
+    User ||--o{ Document : "owns"
+    User ||--o{ Vote : "casts"
+    User ||--o{ Report : "creates"
+    User ||--o{ Notification : "receives"
+    User ||--o{ Payment : "makes"
+    User ||--o{ QuizSubmission : "submits"
+    User ||--o{ ChatSession : "initiates"
+    User ||--o{ RefreshToken : "has"
+    User ||--o{ TierUser : "belongs_to"
+    User ||--o{ OtpRecord : "has"
+    
+    Subject ||--o{ Document : "categorizes"
+    
+    TierMembership ||--o{ TierUser : "includes"
+    TierMembership ||--o{ Payment : "associated_with"
+    
+    Document ||--o{ Vote : "receives"
+    Document ||--o{ Report : "receives"
+    Document ||--o{ Flashcard : "has"
+    Document ||--o{ Quiz : "has"
+    Document ||--o{ DocumentChunk : "divided_into"
+    Document ||--o{ ChatSession : "discusses"
+    
+    Quiz ||--o{ Question : "contains"
+    Quiz ||--o{ QuizSubmission : "receives"
+    
+    Question ||--o{ Answer : "has"
+    
+    ChatSession ||--o{ ChatMessage : "contains"
+    
+    User {
+        Guid Id PK
+        string FullName
+        DateOnly DateOfBirth
+        int CurrentStorageCapacity
+        int CurrentAiTokenUsage
+        string Status
+        string Role
+        bool IsActive
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    Subject {
+        Guid Id PK
+        string SubjectCode
+        string SubjectName
+        string Description
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    Document {
+        Guid Id PK
+        Guid UserId FK
+        Guid SubjectId FK
+        string Title
+        string FileLink
+        string FileName
+        string FileExtension
+        string FileType
+        string SharedUsers
+        string ShareStatus
+        DocumentStatus Status
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    DocumentChunk {
+        Guid Id PK
+        Guid DocumentId FK
+        string ChunkJson
+        string EmbeddingJson
+        string VectorId
+        int OrderIndex
+        byte[] Vector
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    Vote {
+        Guid Id PK
+        Guid UserId FK
+        Guid DocumentId FK
+        VoteType Type
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    Report {
+        Guid Id PK
+        Guid UserId FK
+        Guid DocumentId FK
+        string Reason
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    Flashcard {
+        Guid Id PK
+        Guid DocumentId FK
+        string Front
+        string Back
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    Quiz {
+        Guid Id PK
+        Guid DocumentId FK
+        string Title
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    Question {
+        Guid Id PK
+        Guid QuizId FK
+        string Title
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    Answer {
+        Guid Id PK
+        Guid QuestionId FK
+        string SelectedOption
+        bool IsCorrect
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    QuizSubmission {
+        Guid Id PK
+        Guid UserId FK
+        Guid QuizId FK
+        string Answers
+        decimal Score
+        DateTime SubmittedAt
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    ChatSession {
+        Guid Id PK
+        Guid UserId FK
+        Guid DocumentId FK
+        string SessionTitle
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    ChatMessage {
+        Guid Id PK
+        Guid ChatSessionId FK
+        string Sender
+        string Content
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    Notification {
+        Guid Id PK
+        Guid UserId FK
+        string Message
+        bool IsRead
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    Payment {
+        Guid Id PK
+        Guid UserId FK
+        Guid TierId FK
+        string PaymentInfo
+        DateTime PaymentDate
+        PaymentStatus Status
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    TierMembership {
+        Guid Id PK
+        string TierName
+        int StorageLimitMb
+        int AiTokens
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    TierUser {
+        Guid Id PK
+        Guid UserId FK
+        Guid TierMembershipId FK
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    RefreshToken {
+        Guid Id PK
+        Guid UserId FK
+        string TokenHash
+        DateTime ExpiresAt
+        DateTime RevokedAt
+        string ReplacedByTokenHash
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+    
+    OtpRecord {
+        Guid Id PK
+        Guid UserId FK
+        string Email
+        string OtpHash
+        OtpType Type
+        DateTime ExpiresAt
+        DateTime UsedAt
+        int FailedAttempts
+        DateTime LockedUntil
+        DateTime CreatedAt
+        DateTime UpdatedAt
+    }
+```
 
 ## Security Notes
 
