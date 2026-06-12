@@ -1,4 +1,5 @@
 using AIStudyHub.Business.DTOs.AIChat;
+using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -11,10 +12,12 @@ namespace AIStudyHub.API.Controllers;
 public sealed class ChatController : ControllerBase
 {
     private readonly IAIChatService _chatService;
+    private readonly IRagChatService _ragChatService;
 
-    public ChatController(IAIChatService chatService)
+    public ChatController(IAIChatService chatService, IRagChatService ragChatService)
     {
         _chatService = chatService;
+        _ragChatService = ragChatService;
     }
 
     [HttpGet("sessions")]
@@ -43,5 +46,29 @@ public sealed class ChatController : ControllerBase
     {
         var result = await _chatService.CreateMessageAsync(request);
         return Ok(result);
+    }
+
+    [HttpPost("rag")]
+    public async Task<ActionResult<RagChatResponseDto>> RagChat(
+        [FromBody] RagChatRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty)
+            return Unauthorized();
+
+        var result = await _ragChatService.ChatAsync(request, userId);
+        return Ok(result);
+    }
+
+    private Guid GetCurrentUserId()
+    {
+        var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
+            ?? User.FindFirst("sub")
+            ?? User.FindFirst("userId");
+
+        return claim != null && Guid.TryParse(claim.Value, out var userId)
+            ? userId
+            : Guid.Empty;
     }
 }
