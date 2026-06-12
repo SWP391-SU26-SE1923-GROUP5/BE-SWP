@@ -37,6 +37,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<IVectorStoreService, VectorStoreService>();
         services.AddScoped<ICitationService, CitationService>();
         services.AddScoped<IRagChatService, RagChatService>();
+        services.AddScoped<IFileStorageService, LocalFileStorageService>();
 
         return services;
     }
