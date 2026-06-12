@@ -74,6 +74,23 @@ internal sealed class VerifyRegistrationOtpCommandHandler : IRequestHandler<Veri
     }
 }
 
+public sealed record ResendRegistrationOtpCommand(ResendOtpRequestDto Request) : IRequest;
+
+internal sealed class ResendRegistrationOtpCommandHandler : IRequestHandler<ResendRegistrationOtpCommand>
+{
+    private readonly IAuthService _authService;
+
+    public ResendRegistrationOtpCommandHandler(IAuthService authService)
+    {
+        _authService = authService;
+    }
+
+    public Task Handle(ResendRegistrationOtpCommand request, CancellationToken cancellationToken)
+    {
+        return _authService.ResendRegistrationOtpAsync(request.Request, cancellationToken);
+    }
+}
+
 public sealed record ForgotPasswordCommand(ForgotPasswordRequestDto Request) : IRequest;
 
 internal sealed class ForgotPasswordCommandHandler : IRequestHandler<ForgotPasswordCommand>

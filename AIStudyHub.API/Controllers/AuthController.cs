@@ -58,6 +58,13 @@ public sealed class AuthController : ControllerBase
         return Ok(new { message = "Email verified successfully." });
     }
 
+    [HttpPost("resend-registration-otp")]
+    public async Task<IActionResult> ResendRegistrationOtp(ResendOtpRequestDto request, CancellationToken cancellationToken)
+    {
+        await _mediator.Send(new ResendRegistrationOtpCommand(request), cancellationToken);
+        return Ok(new { message = "OTP sent successfully." });
+    }
+
     [HttpPost("forgot-password")]
     public async Task<IActionResult> ForgotPassword(ForgotPasswordRequestDto request, CancellationToken cancellationToken)
     {

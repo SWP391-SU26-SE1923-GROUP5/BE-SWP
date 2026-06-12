@@ -66,14 +66,14 @@ public sealed class AuthService : IAuthService
             throw new InvalidOperationException("Email is already registered.");
         }
 
-        var user = BuildStudentUser(normalizedEmail, request.FullName, request.DateOfBirth, emailConfirmed: true);
+        var user = BuildStudentUser(normalizedEmail, request.FullName, request.DateOfBirth);
         var createResult = await _userManager.CreateAsync(user, request.Password);
         EnsureIdentitySucceeded(createResult);
 
         await EnsureStudentRoleAsync(user);
         await SendEmailVerificationOtpAsync(user, cancellationToken);
 
-        return new RegisterResultDto("Registration successful. Please verify your email before logging in.", normalizedEmail);
+        return new RegisterResultDto("Registration successful. Please verify your email within 3 minutes.", normalizedEmail);
     }
 
     public async Task<AuthResponseDto> LoginAsync(LoginRequestDto request, CancellationToken cancellationToken = default)
@@ -86,6 +86,11 @@ public sealed class AuthService : IAuthService
         if (user is null || !await _userManager.CheckPasswordAsync(user, request.Password))
         {
             throw new UnauthorizedAccessException("Invalid email or password.");
+        }
+
+        if (!user.EmailConfirmed)
+        {
+            throw new InvalidOperationException("Please verify your email before logging in.");
         }
 
         EnsureUserIsActive(user);
@@ -146,7 +151,7 @@ public sealed class AuthService : IAuthService
                 ? normalizedEmail.Split('@')[0]
                 : request.FullName.Trim();
 
-            user = BuildStudentUser(normalizedEmail, fullName, null, emailConfirmed: true);
+            user = BuildStudentUser(normalizedEmail, fullName, null);
             var tempPassword = $"Ext#{Guid.NewGuid():N}aA1!";
             var createResult = await _userManager.CreateAsync(user, tempPassword);
             EnsureIdentitySucceeded(createResult);
@@ -213,6 +218,59 @@ public sealed class AuthService : IAuthService
 
         user.EmailConfirmed = true;
         await _userManager.UpdateAsync(user);
+    }
+
+    public async Task ResendRegistrationOtpAsync(ResendOtpRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var normalizedEmail = NormalizeEmail(request.Email);
+        var user = await _userManager.FindByEmailAsync(normalizedEmail);
+        if (user is null)
+        {
+            throw new InvalidOperationException("User not found.");
+        }
+
+        if (user.EmailConfirmed)
+        {
+            throw new InvalidOperationException("Email is already verified.");
+        }
+
+        var existingOtps = await _dbContext.OtpRecords
+            .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.EmailVerification && !o.IsExpired && !o.IsUsed)
+            .ToListAsync(cancellationToken);
+
+        var recentSendCount = existingOtps.Count(o => o.CreatedAt >= DateTime.UtcNow.AddMinutes(-_otpOptions.SendWindowMinutes));
+        if (recentSendCount >= _otpOptions.MaxSendAttemptsPerWindow)
+        {
+            throw new InvalidOperationException($"Too many OTP requests. Please wait {_otpOptions.SendWindowMinutes} minutes before trying again.");
+        }
+
+        if (existingOtps.Any(o => o.IsLocked))
+        {
+            throw new InvalidOperationException("Account is temporarily locked due to too many failed attempts. Please try again later.");
+        }
+
+        foreach (var old in existingOtps)
+        {
+            old.UsedAt = DateTime.UtcNow;
+        }
+
+        var otp = GenerateOtp();
+        var otpHash = HashOtp(otp);
+        var expiresAt = DateTime.UtcNow.AddMinutes(_otpOptions.ExpiryMinutes);
+
+        await _dbContext.OtpRecords.AddAsync(new OtpRecord
+        {
+            UserId = user.Id,
+            Email = normalizedEmail,
+            OtpHash = otpHash,
+            Type = OtpType.EmailVerification,
+            ExpiresAt = expiresAt
+        }, cancellationToken);
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        var htmlBody = $"<p>Hello {System.Net.WebUtility.HtmlEncode(user.FullName)},</p><p>Your email verification OTP is: <strong>{otp}</strong></p><p>This code expires in {_otpOptions.ExpiryMinutes} minutes.</p><p>If you did not request this, you can ignore this email.</p>";
+        await _emailService.SendAsync(normalizedEmail, "Verify your AIStudyHub email", htmlBody, cancellationToken);
     }
 
     public async Task ForgotPasswordAsync(ForgotPasswordRequestDto request, CancellationToken cancellationToken = default)
@@ -395,7 +453,7 @@ public sealed class AuthService : IAuthService
         return new AuthResponseDto(response, accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt);
     }
 
-    private static User BuildStudentUser(string normalizedEmail, string fullName, DateOnly? dateOfBirth, bool emailConfirmed)
+    private static User BuildStudentUser(string normalizedEmail, string fullName, DateOnly? dateOfBirth)
     {
         return new User
         {
@@ -409,7 +467,7 @@ public sealed class AuthService : IAuthService
             Status = "active",
             Role = "student",
             IsActive = true,
-            EmailConfirmed = emailConfirmed
+            EmailConfirmed = false
         };
     }
 

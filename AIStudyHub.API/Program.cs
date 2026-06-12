@@ -25,6 +25,8 @@ builder.Services.AddSingleton(builder.Configuration.GetSection("Jwt").Get<JwtOpt
 builder.Services.AddSingleton(builder.Configuration.GetSection("Smtp").Get<SmtpOptions>() ?? new SmtpOptions());
 builder.Services.AddSingleton(builder.Configuration.GetSection("EmailVerification").Get<EmailVerificationOptions>() ?? new EmailVerificationOptions());
 builder.Services.AddSingleton(builder.Configuration.GetSection("Otp").Get<OtpOptions>() ?? new OtpOptions());
+builder.Services.AddSingleton(builder.Configuration.GetSection("Cleanup").Get<CleanupOptions>() ?? new CleanupOptions());
+builder.Services.AddHostedService<UnverifiedAccountCleanupService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddDataAccess(builder.Configuration);
 builder.Services.AddBusinessServices();
