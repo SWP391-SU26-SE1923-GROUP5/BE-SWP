@@ -1,8 +1,11 @@
 using AIStudyHub.Business.Features.Documents;
+using AIStudyHub.Business.Options;
 using AIStudyHub.Business.ultis;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
+using System.Net.Http.Json;
 using System.Text.Json;
 
 namespace AIStudyHub.API.Controllers;
@@ -13,11 +16,17 @@ namespace AIStudyHub.API.Controllers;
 public sealed class DocumentChunkingController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly RagOptions _ragOptions;
 
-    public DocumentChunkingController(IMediator mediator)
+    public DocumentChunkingController(
+        IMediator mediator,
+        IHttpClientFactory httpClientFactory,
+        IOptions<RagOptions> ragOptions)
     {
         _mediator = mediator;
-        
+        _httpClientFactory = httpClientFactory;
+        _ragOptions = ragOptions.Value;
     }
 
     [HttpGet("document/{id:guid}")]
@@ -59,12 +68,10 @@ public sealed class DocumentChunkingController : ControllerBase
         if (string.IsNullOrWhiteSpace(request?.Question))
             return BadRequest("Question is required in request body");
 
-        // Retrieve top chunks via MediatR. Handler should return IEnumerable<ChunkingFile.RetrievedChunk> or compatible type.
-        var topChunksObj = await _mediator.Send(new SearchDocumentChunksQuery(id, request.Question, 5), cancellationToken);
+        var topChunksObj = await _mediator.Send(new SearchDocumentChunksQuery(id, request.Question, _ragOptions.TopKChunks), cancellationToken);
 
         if (topChunksObj is not IEnumerable<ChunkingFile.RetrievedChunk> topChunks)
         {
-            // try to handle when handler returns a raw object (best-effort)
             return BadRequest("Failed to retrieve document chunks from handler");
         }
 
@@ -88,90 +95,54 @@ QUESTION:
 
 ANSWER:
 """;
-        using var client = new System.Net.Http.HttpClient();
-        var baseUrl = Environment.GetEnvironmentVariable("LOCAL_LLM_URL") ?? "http://localhost:6768/";
-        client.BaseAddress = new Uri(baseUrl);
 
-        var model = "Llama 3.2 1B Instruct";
+        var answer = await CallLlmAsync(prompt, cancellationToken);
+        return Ok(new { answer });
+    }
+
+    [HttpPost("chat")]
+    public async Task<IActionResult> Chat(
+        [FromBody] ChatRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request?.Question))
+            return BadRequest("Question is required");
+
+        var answer = await CallLlmAsync(request.Question, cancellationToken);
+        return Ok(new { answer });
+    }
+
+    private async Task<string> CallLlmAsync(string prompt, CancellationToken cancellationToken)
+    {
+        var client = _httpClientFactory.CreateClient("LlmClient");
+        
+        var baseUrl = _ragOptions.Gpt4AllUrl.TrimEnd('/');
+        client.BaseAddress = new Uri(baseUrl);
 
         var payload = new
         {
-            model = model,
+            model = _ragOptions.Gpt4AllModel,
             messages = new[] { new { role = "user", content = prompt } },
-            max_tokens = 1000,
-            temperature = 0.29
+            max_tokens = _ragOptions.MaxTokens,
+            temperature = _ragOptions.Temperature
         };
 
         var resp = await client.PostAsJsonAsync("v1/chat/completions", payload, cancellationToken);
         var raw = await resp.Content.ReadAsStringAsync(cancellationToken);
 
         if (!resp.IsSuccessStatusCode)
-            return StatusCode((int)resp.StatusCode, raw);
+            throw new HttpRequestException($"LLM request failed: {raw}");
 
-        using var doc = System.Text.Json.JsonDocument.Parse(raw);
+        using var doc = JsonDocument.Parse(raw);
         if (doc.RootElement.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
         {
             var message = choices[0].GetProperty("message");
             if (message.TryGetProperty("content", out var content))
             {
-                return Ok(new { answer = content.GetString() });
+                return content.GetString() ?? string.Empty;
             }
         }
 
-        return Ok(new { raw });
-    }
-    [HttpPost("chat")]
-    public async Task<IActionResult> Chat(
-    [FromBody] ChatRequest request,
-    CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(request?.Question))
-            return BadRequest("Question is required");
-
-        using var client = new HttpClient();
-
-        var baseUrl =
-            Environment.GetEnvironmentVariable("LOCAL_LLM_URL")
-            ?? "http://localhost:6768/";
-
-        client.BaseAddress = new Uri(baseUrl);
-
-        var model ="Llama 3.2 1B Instruct";
-
-        var payload = new
-        {
-            model,
-            messages = new[]
-            {
-            new
-            {
-                role = "user",
-                content = request.Question
-            }
-        },
-            max_tokens = 1000,
-            temperature = 0.29
-        };
-
-        var resp = await client.PostAsJsonAsync(
-            "v1/chat/completions",
-            payload,
-            cancellationToken);
-
-        var raw = await resp.Content.ReadAsStringAsync(cancellationToken);
-
-        if (!resp.IsSuccessStatusCode)
-            return StatusCode((int)resp.StatusCode, raw);
-
-        using var doc = JsonDocument.Parse(raw);
-
-        var answer =
-            doc.RootElement
-               .GetProperty("choices")[0]
-               .GetProperty("message")
-               .GetProperty("content")
-               .GetString();
-
-        return Ok(new { answer });
+        throw new InvalidOperationException("Failed to parse LLM response");
     }
 }

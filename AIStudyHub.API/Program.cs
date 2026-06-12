@@ -26,7 +26,12 @@ builder.Services.AddSingleton(builder.Configuration.GetSection("Smtp").Get<SmtpO
 builder.Services.AddSingleton(builder.Configuration.GetSection("EmailVerification").Get<EmailVerificationOptions>() ?? new EmailVerificationOptions());
 builder.Services.AddSingleton(builder.Configuration.GetSection("Otp").Get<OtpOptions>() ?? new OtpOptions());
 builder.Services.AddSingleton(builder.Configuration.GetSection("Cleanup").Get<CleanupOptions>() ?? new CleanupOptions());
+builder.Services.AddSingleton(builder.Configuration.GetSection("Rag").Get<RagOptions>() ?? new RagOptions());
 builder.Services.AddHostedService<UnverifiedAccountCleanupService>();
+
+builder.Services.AddHttpClient("EmbeddingClient");
+builder.Services.AddHttpClient("VectorStoreClient");
+builder.Services.AddHttpClient("LlmClient");
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddDataAccess(builder.Configuration);
 builder.Services.AddBusinessServices();
