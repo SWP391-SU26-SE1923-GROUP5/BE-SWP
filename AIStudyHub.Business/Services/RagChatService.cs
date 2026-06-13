@@ -209,13 +209,13 @@ public sealed class RagChatService : IRagChatService
                 Encoding.UTF8,
                 "application/json");
 
-            var response = await _llmClient.PostAsync("/chat/completions", content);
+            var response = await _llmClient.PostAsync("/v1/chat/completions", content);
 
             if (!response.IsSuccessStatusCode)
             {
                 var error = await response.Content.ReadAsStringAsync();
-                _logger.LogWarning("LLM request failed: {Error}", error);
-                return "I encountered an error generating a response. Please try again.";
+                _logger.LogError("LLM request failed with status {StatusCode}: {Error}", response.StatusCode, error);
+                return $"I encountered an error generating a response (status: {response.StatusCode}). Please try again.";
             }
 
             var json = await response.Content.ReadAsStringAsync();
