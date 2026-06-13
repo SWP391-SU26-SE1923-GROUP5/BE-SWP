@@ -232,9 +232,19 @@ public sealed class RagChatService : IRagChatService
 
             return "I couldn't generate a response.";
         }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "LLM server connection failed. URL: {Url}", _options.Gpt4AllUrl);
+            return $"I couldn't connect to the AI server at {_options.Gpt4AllUrl}. Please ensure the local AI server is running.";
+        }
+        catch (TaskCanceledException ex) when (ex.CancellationToken != CancellationToken.None)
+        {
+            _logger.LogWarning("LLM request timed out");
+            return "The request timed out. Please try with a shorter question.";
+        }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "LLM request failed");
+            _logger.LogError(ex, "Unexpected error during LLM request");
             return "I'm sorry, but I'm having trouble generating a response right now. Please try again.";
         }
     }
