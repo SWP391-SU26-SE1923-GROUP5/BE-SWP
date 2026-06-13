@@ -384,6 +384,91 @@ public sealed class DocumentUploadController : ControllerBase
         }
     }
 
+    [HttpGet("{id:guid}/chunks/search")]
+    [SwaggerOperation(OperationId = "SearchDocumentChunks")]
+    public async Task<ActionResult<List<ChunkDto>>> SearchDocumentChunks(
+        Guid id,
+        [FromQuery] string q,
+        [FromQuery] int top = 5,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(q))
+            return BadRequest("Query parameter 'q' is required");
+
+        var document = await _unitOfWork.Documents.GetByIdAsync(id);
+        if (document == null)
+            return NotFound("Document not found");
+
+        var chunks = await _unitOfWork.DocumentChunks
+            .Query()
+            .Where(c => c.DocumentId == id)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        if (chunks.Count == 0)
+            return Ok(Enumerable.Empty<ChunkDto>());
+
+        var queryEmbedding = await _embeddingService.GenerateEmbeddingAsync(q);
+
+        var scored = chunks
+            .Select(c =>
+            {
+                var embedding = DeserializeEmbedding(c.EmbeddingJson);
+                var score = embedding != null ? CosineSimilarity(queryEmbedding, embedding) : 0f;
+                return (Chunk: c, Score: score);
+            })
+            .OrderByDescending(x => x.Score)
+            .Take(top)
+            .ToList();
+
+        var result = scored
+            .Select(x => new ChunkDto(
+                x.Chunk.Id,
+                x.Chunk.DocumentId,
+                x.Chunk.ChunkJson ?? "",
+                x.Chunk.OrderIndex,
+                Math.Round(x.Score, 4)))
+            .ToList();
+
+        return Ok(result);
+    }
+
+    private static float[]? DeserializeEmbedding(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            return doc.RootElement
+                .EnumerateArray()
+                .Select(e => e.GetSingle())
+                .ToArray();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static float CosineSimilarity(float[] a, float[] b)
+    {
+        if (a.Length != b.Length || a.Length == 0)
+            return 0;
+
+        double dot = 0, normA = 0, normB = 0;
+        for (var i = 0; i < a.Length; i++)
+        {
+            dot += a[i] * b[i];
+            normA += a[i] * a[i];
+            normB += b[i] * b[i];
+        }
+
+        var denominator = Math.Sqrt(normA) * Math.Sqrt(normB);
+        return denominator == 0 ? 0 : (float)(dot / denominator);
+    }
+
     private Guid GetCurrentUserId()
     {
         var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
