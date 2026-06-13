@@ -430,7 +430,7 @@ public sealed class DocumentUploadController : ControllerBase
                 x.Chunk.DocumentId,
                 x.Chunk.ChunkJson ?? "",
                 x.Chunk.OrderIndex,
-                Math.Round(x.Score, 4)))
+                null))
             .ToList();
 
         return Ok(result);
