@@ -328,7 +328,7 @@ public sealed class DocumentUploadController : ControllerBase
             c.Id,
             c.DocumentId,
             c.ChunkJson ?? "",
-            0,
+            c.OrderIndex,
             null
         )).ToList());
     }
