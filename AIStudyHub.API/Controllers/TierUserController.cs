@@ -21,34 +21,25 @@ public sealed class TierUserController : ControllerBase
         _userManager = userManager;
     }
 
+    /// <summary>Lấy tất cả tier assignment (Admin only).</summary>
     [HttpGet]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<IReadOnlyList<TierUserResponseDto>>> GetAll(CancellationToken cancellationToken)
     {
         var result = await _service.GetAllAsync(cancellationToken);
         return Ok(result);
     }
 
+    /// <summary>Lấy tier assignment theo ID (Admin only).</summary>
     [HttpGet("{id:guid}")]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<TierUserResponseDto>> GetById(Guid id, CancellationToken cancellationToken)
     {
         var result = await _service.GetByIdAsync(id, cancellationToken);
         return result is null ? NotFound() : Ok(result);
     }
 
-    [HttpPost]
-    public async Task<ActionResult<TierUserResponseDto>> Create([FromBody] CreateTierUserRequestDto request, CancellationToken cancellationToken)
-    {
-        var result = await _service.CreateAsync(request, cancellationToken);
-        return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
-    }
-
-    [HttpDelete("{id:guid}")]
-    public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
-    {
-        await _service.DeleteAsync(id, cancellationToken);
-        return NoContent();
-    }
-
+    /// <summary>Lấy tier hiện tại của người dùng đang đăng nhập.</summary>
     [HttpGet("my")]
     public async Task<ActionResult<TierUserResponseDto>> GetMyTier(CancellationToken cancellationToken)
     {
@@ -61,4 +52,7 @@ public sealed class TierUserController : ControllerBase
         var result = await _service.GetActiveByUserIdAsync(user.Id, cancellationToken);
         return result is null ? NotFound() : Ok(result);
     }
+
+    // POST   /api/TierUser  - Đã xóa. Việc gán tier phải đi qua luồng thanh toán (Payment).
+    // DELETE /api/TierUser/{id} - Đã xóa. Hủy tier phải đi qua luồng nghiệp vụ riêng.
 }
