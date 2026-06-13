@@ -759,23 +759,33 @@ namespace AIStudyHub.Data.Migrations
                 oldMaxLength: 20,
                 oldDefaultValue: "Student");
 
-            migrationBuilder.AlterColumn<int>(
-                name: "current_storage_capacity",
-                table: "Users",
-                type: "int",
-                nullable: false,
-                defaultValue: 0,
-                oldClrType: typeof(int),
-                oldType: "int");
+            migrationBuilder.Sql(@"
+IF COL_LENGTH('Users', 'current_storage_capacity') IS NOT NULL
+BEGIN
+    DECLARE @storageDefault sysname;
+    SELECT @storageDefault = [d].[name]
+    FROM [sys].[default_constraints] [d]
+    INNER JOIN [sys].[columns] [c] ON [d].[parent_column_id] = [c].[column_id] AND [d].[parent_object_id] = [c].[object_id]
+    WHERE [d].[parent_object_id] = OBJECT_ID(N'[Users]') AND [c].[name] = N'current_storage_capacity';
 
-            migrationBuilder.AlterColumn<int>(
-                name: "current_ai_token_usage",
-                table: "Users",
-                type: "int",
-                nullable: false,
-                defaultValue: 0,
-                oldClrType: typeof(int),
-                oldType: "int");
+    IF @storageDefault IS NOT NULL EXEC(N'ALTER TABLE [Users] DROP CONSTRAINT [' + @storageDefault + ']');
+    ALTER TABLE [Users] ADD DEFAULT 0 FOR [current_storage_capacity];
+END
+");
+
+            migrationBuilder.Sql(@"
+IF COL_LENGTH('Users', 'current_ai_token_usage') IS NOT NULL
+BEGIN
+    DECLARE @tokenUsageDefault sysname;
+    SELECT @tokenUsageDefault = [d].[name]
+    FROM [sys].[default_constraints] [d]
+    INNER JOIN [sys].[columns] [c] ON [d].[parent_column_id] = [c].[column_id] AND [d].[parent_object_id] = [c].[object_id]
+    WHERE [d].[parent_object_id] = OBJECT_ID(N'[Users]') AND [c].[name] = N'current_ai_token_usage';
+
+    IF @tokenUsageDefault IS NOT NULL EXEC(N'ALTER TABLE [Users] DROP CONSTRAINT [' + @tokenUsageDefault + ']');
+    ALTER TABLE [Users] ADD DEFAULT 0 FOR [current_ai_token_usage];
+END
+");
 
             migrationBuilder.AlterColumn<string>(
                 name: "reason",
@@ -2143,23 +2153,25 @@ namespace AIStudyHub.Data.Migrations
                 oldType: "nvarchar(20)",
                 oldMaxLength: 20);
 
-            migrationBuilder.AlterColumn<int>(
-                name: "current_storage_capacity",
-                table: "Users",
-                type: "int",
-                nullable: false,
-                oldClrType: typeof(int),
-                oldType: "int",
-                oldDefaultValue: 0);
+            migrationBuilder.Sql(@"
+DECLARE @storageDefault sysname;
+SELECT @storageDefault = [d].[name]
+FROM [sys].[default_constraints] [d]
+INNER JOIN [sys].[columns] [c] ON [d].[parent_column_id] = [c].[column_id] AND [d].[parent_object_id] = [c].[object_id]
+WHERE [d].[parent_object_id] = OBJECT_ID(N'[Users]') AND [c].[name] = N'current_storage_capacity';
 
-            migrationBuilder.AlterColumn<int>(
-                name: "current_ai_token_usage",
-                table: "Users",
-                type: "int",
-                nullable: false,
-                oldClrType: typeof(int),
-                oldType: "int",
-                oldDefaultValue: 0);
+IF @storageDefault IS NOT NULL EXEC(N'ALTER TABLE [Users] DROP CONSTRAINT [' + @storageDefault + ']');
+");
+
+            migrationBuilder.Sql(@"
+DECLARE @tokenUsageDefault sysname;
+SELECT @tokenUsageDefault = [d].[name]
+FROM [sys].[default_constraints] [d]
+INNER JOIN [sys].[columns] [c] ON [d].[parent_column_id] = [c].[column_id] AND [d].[parent_object_id] = [c].[object_id]
+WHERE [d].[parent_object_id] = OBJECT_ID(N'[Users]') AND [c].[name] = N'current_ai_token_usage';
+
+IF @tokenUsageDefault IS NOT NULL EXEC(N'ALTER TABLE [Users] DROP CONSTRAINT [' + @tokenUsageDefault + ']');
+");
 
             migrationBuilder.AddColumn<Guid>(
                 name: "tier_id",

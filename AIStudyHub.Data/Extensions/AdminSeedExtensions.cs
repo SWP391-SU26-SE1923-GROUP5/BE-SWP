@@ -1,6 +1,7 @@
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Options;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -36,15 +37,14 @@ public static class AdminSeedExtensions
         }
 
         var normalizedEmail = options.Email.Trim().ToLowerInvariant();
-        var existingAdmin = await userManager.FindByEmailAsync(normalizedEmail);
+        var existingAdmin = await userManager.Users
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Select(user => new { user.Id, user.Email })
+            .SingleOrDefaultAsync(user => user.Email == normalizedEmail);
 
         if (existingAdmin is not null)
         {
-            if (!await userManager.IsInRoleAsync(existingAdmin, adminRole))
-            {
-                await userManager.AddToRoleAsync(existingAdmin, adminRole);
-            }
-
             return;
         }
 
@@ -66,8 +66,20 @@ public static class AdminSeedExtensions
 
         if (!createResult.Succeeded)
         {
-            var errors = string.Join("; ", createResult.Errors.Select(error => error.Description));
-            throw new InvalidOperationException($"Failed to seed admin account: {errors}");
+            var errorMessages = createResult.Errors.Select(error =>
+            {
+                return error.Code switch
+                {
+                    "PasswordTooShort" => $"Password must be at least {options.Password.Length} characters (minimum: 12)",
+                    "PasswordRequiresDigit" => "Password must contain at least one digit (0-9)",
+                    "PasswordRequiresUpper" => "Password must contain at least one uppercase letter (A-Z)",
+                    "PasswordRequiresLower" => "Password must contain at least one lowercase letter (a-z)",
+                    "PasswordRequiresNonAlphanumeric" => "Password must contain at least one special character (!@#$%^&*)",
+                    "PasswordRequiresUniqueChars" => $"Password must have at least {6} unique characters",
+                    _ => error.Description
+                };
+            });
+            throw new InvalidOperationException($"Failed to seed admin account: {string.Join("; ", errorMessages)}");
         }
 
         var roleResult = await userManager.AddToRoleAsync(admin, adminRole);

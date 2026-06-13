@@ -1,5 +1,6 @@
 using AIStudyHub.Business.DTOs.Authentication;
 using FluentValidation;
+using System.Net.Mail;
 
 namespace AIStudyHub.Business.Validators.Authentication;
 
@@ -7,9 +8,48 @@ public sealed class RegisterRequestDtoValidator : AbstractValidator<RegisterRequ
 {
     public RegisterRequestDtoValidator()
     {
-        RuleFor(x => x.FullName).NotEmpty().MaximumLength(255);
-        RuleFor(x => x.Email).NotEmpty().EmailAddress().MaximumLength(255);
-        RuleFor(x => x.Password).NotEmpty().MinimumLength(8).MaximumLength(100);
+        RuleFor(x => x.FullName)
+            .NotEmpty()
+            .MaximumLength(255);
+
+        RuleFor(x => x.Email)
+            .NotEmpty()
+            .MaximumLength(255)
+            .Must(BeValidEmailAddress)
+            .WithMessage("Email must be a valid email address.");
+
+        RuleFor(x => x.Password)
+            .NotEmpty()
+            .MinimumLength(12)
+            .MaximumLength(128)
+            .Matches("[A-Z]").WithMessage("Password must contain at least one uppercase letter.")
+            .Matches("[a-z]").WithMessage("Password must contain at least one lowercase letter.")
+            .Matches("[0-9]").WithMessage("Password must contain at least one number.")
+            .Matches("[^a-zA-Z0-9]").WithMessage("Password must contain at least one special character.")
+            .Must(NotContainWhitespace).WithMessage("Password must not contain whitespace.");
+    }
+
+    private static bool BeValidEmailAddress(string email)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return false;
+        }
+
+        try
+        {
+            var address = new MailAddress(email.Trim());
+            return string.Equals(address.Address, email.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool NotContainWhitespace(string password)
+    {
+        return !password.Any(char.IsWhiteSpace);
     }
 }
 
@@ -27,5 +67,41 @@ public sealed class RefreshTokenRequestDtoValidator : AbstractValidator<RefreshT
     public RefreshTokenRequestDtoValidator()
     {
         RuleFor(x => x.RefreshToken).NotEmpty();
+    }
+}
+
+public sealed class VerifyRegistrationOtpRequestDtoValidator : AbstractValidator<VerifyRegistrationOtpRequestDto>
+{
+    public VerifyRegistrationOtpRequestDtoValidator()
+    {
+        RuleFor(x => x.Email)
+            .NotEmpty()
+            .MaximumLength(255)
+            .Must(BeValidEmailAddress)
+            .WithMessage("Email must be a valid email address.");
+
+        RuleFor(x => x.Otp)
+            .NotEmpty()
+            .Length(6)
+            .Matches("^[0-9]+$")
+            .WithMessage("OTP must be a 6-digit number.");
+    }
+
+    private static bool BeValidEmailAddress(string email)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return false;
+        }
+
+        try
+        {
+            var address = new System.Net.Mail.MailAddress(email.Trim());
+            return string.Equals(address.Address, email.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

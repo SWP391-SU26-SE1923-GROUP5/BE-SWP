@@ -23,11 +23,13 @@ public static class DataAccessExtensions
             .AddIdentityCore<User>(options =>
             {
                 options.User.RequireUniqueEmail = true;
-                options.Password.RequiredLength = 8;
-                options.Password.RequireDigit = true;
-                options.Password.RequireLowercase = true;
+                options.Password.RequiredLength = 12;
                 options.Password.RequireUppercase = true;
+                options.Password.RequireLowercase = true;
+                options.Password.RequireDigit = true;
                 options.Password.RequireNonAlphanumeric = false;
+                options.Password.RequiredUniqueChars = 0;
+                options.SignIn.RequireConfirmedEmail = true;
             })
             .AddRoles<IdentityRole<Guid>>()
             .AddEntityFrameworkStores<ApplicationDbContext>();

@@ -18,3 +18,7 @@ public sealed record AuthResponseDto(
     DateTime AccessTokenExpiresAt,
     string RefreshToken,
     DateTime RefreshTokenExpiresAt);
+
+public sealed record VerifyRegistrationOtpRequestDto(
+    string Email,
+    string Otp);

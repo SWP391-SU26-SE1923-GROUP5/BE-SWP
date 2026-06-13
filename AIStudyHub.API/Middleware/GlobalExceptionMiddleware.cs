@@ -39,8 +39,14 @@ public sealed class GlobalExceptionMiddleware
         }
         catch (Exception exception)
         {
-            _logger.LogError(exception, "Unhandled exception occurred.");
-            await WriteErrorResponseAsync(context, HttpStatusCode.InternalServerError, "An unexpected error occurred.");
+            _logger.LogError(exception, "Unhandled exception: {Message}\nStackTrace: {StackTrace}", exception.Message, exception.StackTrace);
+
+            var isDevelopment = context.RequestServices.GetService<IHostEnvironment>()?.IsDevelopment() ?? false;
+            var message = isDevelopment
+                ? $"{exception.GetType().Name}: {exception.Message}"
+                : "An unexpected error occurred.";
+
+            await WriteErrorResponseAsync(context, HttpStatusCode.InternalServerError, message);
         }
     }
 

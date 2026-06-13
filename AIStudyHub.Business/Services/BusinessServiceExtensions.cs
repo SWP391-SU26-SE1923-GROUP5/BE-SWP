@@ -16,8 +16,10 @@ public static class BusinessServiceExtensions
         services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
         services.AddScoped<IAuthService, AuthService>();
+        services.AddScoped<IEmailService, EmailService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IDocumentService, DocumentService>();
+        services.AddScoped<ISubjectService, SubjectService>();
         services.AddScoped<IVoteService, VoteService>();
         services.AddScoped<IReportService, ReportService>();
         services.AddScoped<IFlashcardService, FlashcardService>();
@@ -27,7 +29,15 @@ public static class BusinessServiceExtensions
         services.AddScoped<IQuizSubmissionService, QuizSubmissionService>();
         services.AddScoped<INotificationService, NotificationService>();
         services.AddScoped<IPaymentService, PaymentService>();
+        services.AddScoped<ITierMembershipService, TierMembershipService>();
+        services.AddScoped<ITierUserService, TierUserService>();
         services.AddScoped<IAIChatService, AIChatService>();
+        services.AddScoped<IDocumentProcessingService, DocumentProcessingService>();
+        services.AddScoped<IEmbeddingService, EmbeddingService>();
+        services.AddScoped<IVectorStoreService, VectorStoreService>();
+        services.AddScoped<ICitationService, CitationService>();
+        services.AddScoped<IRagChatService, RagChatService>();
+        services.AddScoped<IFileStorageService, LocalFileStorageService>();
 
         return services;
     }

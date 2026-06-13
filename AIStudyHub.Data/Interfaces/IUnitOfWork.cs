@@ -9,7 +9,7 @@ public interface IUnitOfWork : IDisposable
     IRepository<TierMembership> TierMemberships { get; }
     IRepository<TierUser> TierUsers { get; }
     IRepository<Document> Documents { get; }
-    IRepository<DocumentChunk> DocumentChunks { get; }
+    IDocumentChunkRepository DocumentChunks { get; }
     IRepository<Vote> Votes { get; }
     IRepository<Report> Reports { get; }
     IRepository<Flashcard> Flashcards { get; }

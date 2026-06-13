@@ -229,9 +229,21 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("nvarchar(max)")
                         .HasColumnName("embedding_json");
 
+                    b.Property<int>("OrderIndex")
+                        .HasColumnType("int")
+                        .HasColumnName("order_index");
+
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime")
                         .HasColumnName("update_at");
+
+                    b.Property<byte[]>("Vector")
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<string>("VectorId")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("vector_id");
 
                     b.HasKey("Id");
 
@@ -311,6 +323,51 @@ namespace AIStudyHub.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("Notification", (string)null);
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.OtpRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("FailedAttempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("LockedUntil")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("OtpHash")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("UsedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("OtpRecords");
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.Payment", b =>
@@ -1053,6 +1110,17 @@ namespace AIStudyHub.Data.Migrations
                 {
                     b.HasOne("AIStudyHub.Data.Entities.User", "User")
                         .WithMany("Notifications")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.OtpRecord", b =>
+                {
+                    b.HasOne("AIStudyHub.Data.Entities.User", "User")
+                        .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();

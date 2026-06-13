@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -12,10 +12,14 @@
     <PackageReference Include="MediatR" Version="12.4.1" />
     <PackageReference Include="Microsoft.Extensions.Identity.Core" Version="8.0.27" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.0.2" />
+      <PackageReference Include="PdfPig" Version="0.1.14" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\AIStudyHub.Data\AIStudyHub.Data.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
 </Project>
