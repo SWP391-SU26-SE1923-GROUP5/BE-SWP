@@ -1,36 +1,23 @@
 using AIStudyHub.Data.Entities;
+using AIStudyHub.Business.Interfaces.Services;
 using System.Text;
 using System.IO;
 using UglyToad.PdfPig;
 using System.Text.Json;
-using System.Net.Http.Headers;
 using System.Net.Http;
 using System.Linq;
-using Microsoft.Extensions.Configuration;
 
 namespace AIStudyHub.Business.ultis;
 
 public class ChunkingFile
 {
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly string? _nomicApiKey;
-    private readonly string _nomicModel;
-    private readonly string _nomicEmbeddingsUrl = "https://api-atlas.nomic.ai/v1/embedding/text";
+    private readonly IEmbeddingService _embeddingService;
 
-    public ChunkingFile(IHttpClientFactory httpClientFactory, IConfiguration configuration)
+    public ChunkingFile(IHttpClientFactory httpClientFactory, IEmbeddingService embeddingService)
     {
         _httpClientFactory = httpClientFactory;
-        // Read from configuration first (appsettings.json), fall back to environment variables for compatibility
-        _nomicApiKey = configuration["Nomic:ApiKey"] ?? Environment.GetEnvironmentVariable("NOMIC_API_KEY");
-        _nomicModel = configuration["Nomic:EmbedModel"] ?? Environment.GetEnvironmentVariable("NOMIC_EMBED_MODEL") ?? "nomic-embed-text-v1";
-    }
-
-    // Backwards-compatible constructor: read values from environment variables only
-    public ChunkingFile(IHttpClientFactory httpClientFactory)
-    {
-        _httpClientFactory = httpClientFactory;
-        _nomicApiKey = Environment.GetEnvironmentVariable("NOMIC_API_KEY");
-        _nomicModel = Environment.GetEnvironmentVariable("NOMIC_EMBED_MODEL") ?? "nomic-embed-text-v1";
+        _embeddingService = embeddingService;
     }
 
     public class RetrievedChunk
@@ -72,9 +59,7 @@ public class ChunkingFile
         if (string.IsNullOrWhiteSpace(query))
             throw new ArgumentNullException(nameof(query));
 
-        var queryEmbedding = await CreateNomicEmbeddingAsync(query);
-        if (queryEmbedding == null)
-            throw new Exception("Failed to create embedding for query");
+        var queryEmbedding = await _embeddingService.GenerateEmbeddingAsync(query);
 
         var results = new List<RetrievedChunk>();
 
@@ -182,17 +167,14 @@ public class ChunkingFile
         {
             string? embeddingJson = null;
 
-            if (!string.IsNullOrWhiteSpace(_nomicApiKey))
+            try
             {
-                try
-                {
-                    var embedding = await CreateNomicEmbeddingAsync(chunk);
-                    embeddingJson = JsonSerializer.Serialize(embedding);
-                }
-                catch
-                {
-                    embeddingJson = null;
-                }
+                var embedding = await _embeddingService.GenerateEmbeddingAsync(chunk);
+                embeddingJson = JsonSerializer.Serialize(embedding);
+            }
+            catch
+            {
+                embeddingJson = null;
             }
 
             var entity = new DocumentChunk
@@ -284,41 +266,4 @@ public class ChunkingFile
         // Non-PDF local files: read as plain text
         return await File.ReadAllTextAsync(path);
     }
-
-    private async Task<float[]?> CreateNomicEmbeddingAsync(string input)
-    {
-        if (string.IsNullOrWhiteSpace(_nomicApiKey))
-            return null;
-
-        var payload = new { model = _nomicModel, texts = new[] { input } };
-        var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-
-        using var httpClient = _httpClientFactory.CreateClient();
-        using var request = new HttpRequestMessage(HttpMethod.Post, _nomicEmbeddingsUrl) { Content = content };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _nomicApiKey);
-
-        using var response = await httpClient.SendAsync(request);
-        var responseString = await response.Content.ReadAsStringAsync();
-
-        if (!response.IsSuccessStatusCode)
-            throw new Exception($"Nomic embedding request failed: {response.StatusCode} - {responseString}");
-
-        using var doc = JsonDocument.Parse(responseString);
-        if (!doc.RootElement.TryGetProperty("embeddings", out var embeddings))
-            return null;
-
-        if (embeddings.GetArrayLength() == 0)
-            return null;
-
-        var first = embeddings[0];
-        var list = new List<float>(first.GetArrayLength());
-        foreach (var item in first.EnumerateArray())
-        {
-            list.Add((float)item.GetDouble());
-        }
-
-        return list.ToArray();
-    }
-
-    // Removed specialized PDF extraction; GetStringAsync / ReadAllTextAsync used instead.
 }

@@ -203,7 +203,7 @@ public sealed class EmbeddingService : IEmbeddingService
 
     private static float[] GenerateSimpleEmbedding(string text)
     {
-        var dimension = 384;
+        var dimension = 768;  // Match Ollama/Nomic dimension
         var embedding = new float[dimension];
         var words = text.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
