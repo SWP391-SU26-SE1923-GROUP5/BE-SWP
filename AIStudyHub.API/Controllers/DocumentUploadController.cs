@@ -25,7 +25,6 @@ public sealed class DocumentUploadController : ControllerBase
     private readonly IEmbeddingService _embeddingService;
     private readonly IVectorStoreService _vectorStoreService;
     private readonly IFileStorageService _fileStorage;
-    private readonly IRagChatService _ragChatService;
     private readonly RagOptions _options;
     private readonly ILogger<DocumentUploadController> _logger;
 
@@ -35,7 +34,6 @@ public sealed class DocumentUploadController : ControllerBase
         IEmbeddingService embeddingService,
         IVectorStoreService vectorStoreService,
         IFileStorageService fileStorage,
-        IRagChatService ragChatService,
         IOptions<RagOptions> options,
         ILogger<DocumentUploadController> logger)
     {
@@ -44,7 +42,6 @@ public sealed class DocumentUploadController : ControllerBase
         _embeddingService = embeddingService;
         _vectorStoreService = vectorStoreService;
         _fileStorage = fileStorage;
-        _ragChatService = ragChatService;
         _options = options.Value;
         _logger = logger;
     }
@@ -433,35 +430,6 @@ public sealed class DocumentUploadController : ControllerBase
                 null))
             .ToList();
 
-        return Ok(result);
-    }
-
-    [HttpPost("{id:guid}/chat")]
-    [SwaggerOperation(OperationId = "ChatWithDocument")]
-    [ProducesResponseType(typeof(RagChatResponseDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<RagChatResponseDto>> ChatWithDocument(
-        Guid id,
-        [FromBody] RagChatRequestDto request,
-        CancellationToken cancellationToken)
-    {
-        var userId = GetCurrentUserId();
-        if (userId == Guid.Empty)
-            return Unauthorized();
-
-        var document = await _unitOfWork.Documents.GetByIdAsync(id);
-        if (document == null)
-            return NotFound("Document not found");
-
-        var scopedRequest = new RagChatRequestDto(
-            Message: request.Message,
-            SessionId: request.SessionId,
-            IncludeDocuments: true,
-            DocumentIds: new List<Guid> { id });
-
-        var result = await _ragChatService.ChatAsync(scopedRequest, userId);
         return Ok(result);
     }
 
