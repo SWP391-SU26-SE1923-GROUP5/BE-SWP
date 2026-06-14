@@ -33,6 +33,27 @@ public sealed class FlashcardController : ControllerBase
         return result is null ? NotFound() : Ok(result);
     }
 
+    [HttpPost]
+    public async Task<ActionResult<FlashcardResponseDto>> Create([FromBody] CreateFlashcardRequestDto request, CancellationToken cancellationToken)
+    {
+        var result = await _service.CreateAsync(request, cancellationToken);
+        return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
+    }
+
+    [HttpPut("{id:guid}")]
+    public async Task<ActionResult<FlashcardResponseDto>> Update(Guid id, [FromBody] UpdateFlashcardRequestDto request, CancellationToken cancellationToken)
+    {
+        var result = await _service.UpdateAsync(id, request, cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
+    {
+        await _service.DeleteAsync(id, cancellationToken);
+        return NoContent();
+    }
+
     // POST   /api/Flashcard  - Đã xóa. Flashcard phải được tạo từ Document qua AI.
     // PUT    /api/Flashcard/{id} - Đã xóa.
     // DELETE /api/Flashcard/{id} - Đã xóa.
