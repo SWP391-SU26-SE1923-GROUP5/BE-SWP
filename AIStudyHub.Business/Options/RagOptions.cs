@@ -21,6 +21,13 @@ public sealed class RagOptions
     public string NomicApiUrl { get; set; } = "https://api-atlas.nomic.ai/v1";
     */
 
+    //OpenAI 
+    
+    public string? OpenAIApiKey { get; set; }
+    public string OpenAIEmbeddingModel { get; set; } = "";
+
+    public string OpenAIChatModel { get; set; } = "";
+
     // Pinecone Vector DB Settings
     public string? PineconeApiKey { get; set; }
     public string? PineconeEnvironment { get; set; }

@@ -19,6 +19,7 @@ public sealed class RagChatService : IRagChatService
     private readonly HttpClient _llmClient;
     private readonly RagOptions _options;
     private readonly ILogger<RagChatService> _logger;
+    private readonly IOpenAIService _openAiService;
 
     public RagChatService(
         IUnitOfWork unitOfWork,
@@ -26,10 +27,12 @@ public sealed class RagChatService : IRagChatService
         IVectorStoreService vectorStoreService,
         ICitationService citationService,
         IHttpClientFactory httpClientFactory,
+        IOpenAIService openAIService,
         IOptions<RagOptions> options,
         ILogger<RagChatService> logger)
     {
         _unitOfWork = unitOfWork;
+        _openAiService = openAIService;
         _embeddingService = embeddingService;
         _vectorStoreService = vectorStoreService;
         _citationService = citationService;
@@ -192,45 +195,11 @@ public sealed class RagChatService : IRagChatService
                 ANSWER (with citations like [1], [2], [3]):
                 """;
 
-            var payload = new
-            {
-                model = _options.Gpt4AllModel,
-                messages = new[]
-                {
-                    new { role = "system", content = systemPrompt },
-                    new { role = "user", content = userPrompt }
-                },
-                max_tokens = _options.MaxTokens,
-                temperature = _options.Temperature
-            };
+            var response= await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
 
-            var content = new StringContent(
-                JsonSerializer.Serialize(payload),
-                Encoding.UTF8,
-                "application/json");
 
-            var response = await _llmClient.PostAsync("/v1/chat/completions", content);
 
-            if (!response.IsSuccessStatusCode)
-            {
-                var error = await response.Content.ReadAsStringAsync();
-                _logger.LogError("LLM request failed with status {StatusCode}: {Error}", response.StatusCode, error);
-                return $"I encountered an error generating a response (status: {response.StatusCode}). Please try again.";
-            }
-
-            var json = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(json);
-
-            if (doc.RootElement.TryGetProperty("choices", out var choices) &&
-                choices.GetArrayLength() > 0)
-            {
-                return choices[0]
-                    .GetProperty("message")
-                    .GetProperty("content")
-                    .GetString() ?? "I couldn't generate a response.";
-            }
-
-            return "I couldn't generate a response.";
+            return response;
         }
         catch (HttpRequestException ex)
         {
