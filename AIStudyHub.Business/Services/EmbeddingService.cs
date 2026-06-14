@@ -10,7 +10,7 @@ namespace AIStudyHub.Business.Services;
 public sealed class EmbeddingService : IEmbeddingService
 {
     private readonly HttpClient _httpClient;
-    private readonly IOpenAIService _openAIService;
+    private readonly ILocalAIService _localAIService;
     private readonly RagOptions _options;
     private readonly ILogger<EmbeddingService> _logger;
     private int? _cachedDimension;
@@ -18,11 +18,11 @@ public sealed class EmbeddingService : IEmbeddingService
     public EmbeddingService(
         IHttpClientFactory httpClientFactory,
         IOptions<RagOptions> options,
-        IOpenAIService openAIService,
+        ILocalAIService openAIService,
         ILogger<EmbeddingService> logger)
     {
         _httpClient = httpClientFactory.CreateClient("EmbeddingClient");
-        _openAIService = openAIService;
+        _localAIService = openAIService;
         _options = options.Value;
         _logger = logger;
     }
@@ -39,7 +39,7 @@ public sealed class EmbeddingService : IEmbeddingService
 
         foreach (string text in texts)
         {
-            var embedding = await _openAIService.CreateEmbeddingFromText(text);
+            var embedding = await _localAIService.CreateEmbeddingFromText(text);
             embeddings.Add(embedding.ToArray());
         }
 
@@ -48,7 +48,7 @@ public sealed class EmbeddingService : IEmbeddingService
 
     public int GetEmbeddingDimension()
     {
-        return _cachedDimension ?? _options.OllamaEmbeddingDimension;
+        return 10;
     }
 
     private async Task<List<float[]>> GenerateOllamaEmbeddingsAsync(List<string> texts)

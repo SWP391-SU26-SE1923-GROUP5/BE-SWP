@@ -15,17 +15,17 @@ public sealed class AIChatService : IAIChatService
     private readonly IMapper _mapper;
     private readonly IValidator<CreateChatSessionRequestDto> _createSessionValidator;
     private readonly IValidator<CreateChatMessageRequestDto> _createMessageValidator;
-    private readonly IOpenAIService _openAiService;
+    private readonly ILocalAIService _localAIService;
     public AIChatService(
         IUnitOfWork unitOfWork,
         IMapper mapper,
         IValidator<CreateChatSessionRequestDto> createSessionValidator,
         IValidator<CreateChatMessageRequestDto> createMessageValidator,
-        IOpenAIService openAiService)
+        ILocalAIService openAiService)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
-        _openAiService = openAiService;
+        _localAIService = openAiService;
         _createSessionValidator = createSessionValidator;
         _createMessageValidator = createMessageValidator;
     }
@@ -102,7 +102,7 @@ public sealed class AIChatService : IAIChatService
         await _unitOfWork.SaveChangesAsync();
 
         // Call OpenAI to get assistant response
-        var aiResponse = await _openAiService.SendMessageAsync(request.Message);
+        var aiResponse = await _localAIService.SendMessageAsync(request.Message);
 
         // Persist assistant message
         var assistantMessage = new ChatMessage

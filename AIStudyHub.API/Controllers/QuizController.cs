@@ -14,7 +14,6 @@ namespace AIStudyHub.API.Controllers;
 [Route("api/[controller]")]
 public sealed class QuizController : ControllerBase
 {
-    public sealed record GenerateQuizRequestDto(int Count = 10);
     private readonly IQuizService _service;
 
     public QuizController(IQuizService service)
@@ -64,7 +63,31 @@ public sealed class QuizController : ControllerBase
         // Build prompt instructing model to return strict JSON
         var constraintText = string.Empty; // CreateQuizRequestViaAIDto only contains Message; constraints must be expressed inside the message if needed
 
-        var instruction = "Return ONLY a single JSON object exactly matching this schema: {\"quizTitle\":string, \"questions\":[{\"questionTitle\":string, \"questionType\":\"SingleChoice|MultipleChoice|TrueFalse\", \"position\":int, \"answers\":[{\"selectedOption\":string, \"isCorrect\":boolean}]}]} with no additional text.";
+        var instruction = $"""
+You are a JSON generation engine.
+
+ABSOLUTE RULES:
+- Output ONLY valid JSON.
+- No markdown, no backticks, no explanations, no text outside JSON.
+- If you output anything else, it is invalid.
+
+HARD JSON SCHEMA (must match exactly):
+{"{\r\n  \"quizTitle\": string,\r\n  \"questions\": [\r\n    {\r\n      \"questionTitle\": string,\r\n      \"questionType\": \"SingleChoice\",\r\n      \"position\": number,\r\n      \"answers\": [\r\n        {\r\n          \"selectedOption\": string,\r\n          \"isCorrect\": boolean\r\n        }\r\n      ]\r\n    }\r\n  ]\r\n}"}
+
+
+STRICT REQUIREMENTS:
+- You MUST generate exactly {dto.numberOfQuestions} questions.
+- Each question MUST have EXACTLY 4 answers.
+- Exactly ONE answer must have isCorrect = true.
+- All other answers must be false.
+- questionType MUST always be "SingleChoice".
+- position starts from 1 and increments by 1.
+- No extra fields allowed anywhere.
+- No null values.
+- No empty arrays.
+
+FAILURE = INVALID OUTPUT.
+""";
 
         var promptBuilder = new System.Text.StringBuilder();
         promptBuilder.AppendLine(instruction);

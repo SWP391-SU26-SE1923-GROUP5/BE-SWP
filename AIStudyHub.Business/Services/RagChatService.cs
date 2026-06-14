@@ -19,7 +19,7 @@ public sealed class RagChatService : IRagChatService
     private readonly HttpClient _llmClient;
     private readonly RagOptions _options;
     private readonly ILogger<RagChatService> _logger;
-    private readonly IOpenAIService _openAiService;
+    private readonly ILocalAIService _openAiService;
 
     public RagChatService(
         IUnitOfWork unitOfWork,
@@ -27,7 +27,7 @@ public sealed class RagChatService : IRagChatService
         IVectorStoreService vectorStoreService,
         ICitationService citationService,
         IHttpClientFactory httpClientFactory,
-        IOpenAIService openAIService,
+        ILocalAIService openAIService,
         IOptions<RagOptions> options,
         ILogger<RagChatService> logger)
     {
@@ -40,7 +40,7 @@ public sealed class RagChatService : IRagChatService
         _options = options.Value;
         _logger = logger;
 
-        _llmClient.BaseAddress = new Uri(_options.Gpt4AllUrl);
+        _llmClient.BaseAddress = new Uri(_options.OllamaUrl);
     }
 
     public async Task<RagChatResponseDto> ChatAsync(RagChatRequestDto request, Guid userId)
@@ -203,8 +203,8 @@ public sealed class RagChatService : IRagChatService
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "LLM server connection failed. URL: {Url}", _options.Gpt4AllUrl);
-            return $"I couldn't connect to the AI server at {_options.Gpt4AllUrl}. Please ensure the local AI server is running.";
+            _logger.LogError(ex, "LLM server connection failed. URL: {Url}", _options.OllamaUrl);
+            return $"I couldn't connect to the AI server at {_options.OllamaUrl}. Please ensure the local AI server is running.";
         }
         catch (TaskCanceledException ex) when (ex.CancellationToken != CancellationToken.None)
         {
