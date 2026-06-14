@@ -4,6 +4,7 @@ using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
 using FluentValidation;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 
 namespace AIStudyHub.Business.Services;
@@ -14,15 +15,17 @@ public sealed class AIChatService : IAIChatService
     private readonly IMapper _mapper;
     private readonly IValidator<CreateChatSessionRequestDto> _createSessionValidator;
     private readonly IValidator<CreateChatMessageRequestDto> _createMessageValidator;
-
+    private readonly ILocalAIService _localAIService;
     public AIChatService(
         IUnitOfWork unitOfWork,
         IMapper mapper,
         IValidator<CreateChatSessionRequestDto> createSessionValidator,
-        IValidator<CreateChatMessageRequestDto> createMessageValidator)
+        IValidator<CreateChatMessageRequestDto> createMessageValidator,
+        ILocalAIService openAiService)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _localAIService = openAiService;
         _createSessionValidator = createSessionValidator;
         _createMessageValidator = createMessageValidator;
     }
@@ -92,14 +95,30 @@ public sealed class AIChatService : IAIChatService
             throw new KeyNotFoundException($"Chat session with ID {request.SessionId} not found.");
         }
 
-        var message = _mapper.Map<ChatMessage>(request);
-        await _unitOfWork.ChatMessages.AddAsync(message);
+        // Save user message
+        var userMessage = _mapper.Map<ChatMessage>(request);
+        userMessage.Sender = userMessage.Sender ?? "user";
+        await _unitOfWork.ChatMessages.AddAsync(userMessage);
+        await _unitOfWork.SaveChangesAsync();
+
+        // Call OpenAI to get assistant response
+        var aiResponse = await _localAIService.SendMessageAsync(request.Message);
+
+        // Persist assistant message
+        var assistantMessage = new ChatMessage
+        {
+            ChatSessionId = request.SessionId,
+            Sender = "assistant",
+            Content = aiResponse
+        };
+
+        await _unitOfWork.ChatMessages.AddAsync(assistantMessage);
         await _unitOfWork.SaveChangesAsync();
 
         var created = await _unitOfWork.ChatMessages
             .Query()
             .AsNoTracking()
-            .FirstAsync(chatMessage => chatMessage.Id == message.Id);
+            .FirstAsync(chatMessage => chatMessage.Id == assistantMessage.Id);
 
         return _mapper.Map<ChatMessageResponseDto>(created);
     }

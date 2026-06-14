@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Linq;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 
 namespace AIStudyHub.API.Controllers;
 
@@ -31,7 +32,7 @@ public sealed class QuizController : ControllerBase
     [HttpPost("/api/quiz/document/{docId:guid}/ai-gen")]
     public async Task<ActionResult<AiGeneratedQuizResponseDto>> GenerateFromDocument(
         Guid docId,
-        [FromBody] AIStudyHub.Business.DTOs.Quizzes.CreateQuizRequestViaAIDto request,
+        [FromBody] CreateQuizRequestViaAIDto dto,
         [FromServices] AIStudyHub.Data.Interfaces.IUnitOfWork unitOfWork,
         [FromServices] AIStudyHub.Business.Interfaces.Services.IRagChatService ragChatService,
         CancellationToken cancellationToken)
@@ -41,19 +42,11 @@ public sealed class QuizController : ControllerBase
         if (!Guid.TryParse(userIdClaim, out var userId))
             return Forbid();
 
-        // Use the message from the simple DTO
-        var message = request.Message ?? string.Empty;
 
-        // Try to extract requested number of questions from the message (e.g., "give me 20 questions").
-        // Default to 10 if not specified, enforce max 20.
-        var numberOfQuestions = 10;
-        try
-        {
-            var m = System.Text.RegularExpressions.Regex.Match(message, "\\b(\\d{1,2})\\b");
-            if (m.Success && int.TryParse(m.Groups[1].Value, out var parsed))
-                numberOfQuestions = Math.Clamp(parsed, 1, 20);
-        }
-        catch { /* ignore regex errors and use default */ }
+        // Validate requested number of questions
+        var numberOfQuestions = dto.numberOfQuestions;
+        if (numberOfQuestions <= 0 || numberOfQuestions > 20)
+            return BadRequest("Number of questions must be between 1 and 20.");
 
         // Load document
         var document = await unitOfWork.Documents.GetByIdAsync(docId, cancellationToken);
@@ -70,7 +63,31 @@ public sealed class QuizController : ControllerBase
         // Build prompt instructing model to return strict JSON
         var constraintText = string.Empty; // CreateQuizRequestViaAIDto only contains Message; constraints must be expressed inside the message if needed
 
-        var instruction = "Return ONLY a single JSON object exactly matching this schema: {\"quizTitle\":string, \"questions\":[{\"questionTitle\":string, \"questionType\":\"SingleChoice|MultipleChoice|TrueFalse\", \"position\":int, \"answers\":[{\"selectedOption\":string, \"isCorrect\":boolean}]}]} with no additional text.";
+        var instruction = $"""
+You are a JSON generation engine.
+
+ABSOLUTE RULES:
+- Output ONLY valid JSON.
+- No markdown, no backticks, no explanations, no text outside JSON.
+- If you output anything else, it is invalid.
+
+HARD JSON SCHEMA (must match exactly):
+{"{\r\n  \"quizTitle\": string,\r\n  \"questions\": [\r\n    {\r\n      \"questionTitle\": string,\r\n      \"questionType\": \"SingleChoice\",\r\n      \"position\": number,\r\n      \"answers\": [\r\n        {\r\n          \"selectedOption\": string,\r\n          \"isCorrect\": boolean\r\n        }\r\n      ]\r\n    }\r\n  ]\r\n}"}
+
+
+STRICT REQUIREMENTS:
+- You MUST generate exactly {dto.numberOfQuestions} questions.
+- Each question MUST have EXACTLY 4 answers.
+- Exactly ONE answer must have isCorrect = true.
+- All other answers must be false.
+- questionType MUST always be "SingleChoice".
+- position starts from 1 and increments by 1.
+- No extra fields allowed anywhere.
+- No null values.
+- No empty arrays.
+
+FAILURE = INVALID OUTPUT.
+""";
 
         var promptBuilder = new System.Text.StringBuilder();
         promptBuilder.AppendLine(instruction);
@@ -78,7 +95,7 @@ public sealed class QuizController : ControllerBase
             promptBuilder.AppendLine($"Constraints: {constraintText}");
         promptBuilder.AppendLine();
         promptBuilder.AppendLine("User message:");
-        promptBuilder.AppendLine(message);
+        promptBuilder.AppendLine($"Generate {numberOfQuestions} quiz questions based on the provided document context, each question should have at most 4 answers. Return only the JSON described above.");
         promptBuilder.AppendLine();
         promptBuilder.AppendLine("Context:");
         foreach (var c in chunks)
@@ -112,6 +129,33 @@ public sealed class QuizController : ControllerBase
         if (aiResult is null || aiResult.Questions is null || aiResult.Questions.Count == 0)
             return BadRequest("AI did not return any questions.");
 
+        // Clean AI-generated text: remove inline citation markers like [1], [2], etc.
+        var cleanedQuestions = aiResult.Questions
+            .Select(q =>
+            {
+                var cleanedTitle = string.IsNullOrWhiteSpace(q.QuestionTitle)
+                    ? string.Empty
+                    : Regex.Replace(q.QuestionTitle, "\\s*\\[\\d+\\]", string.Empty).Trim();
+
+                var cleanedAnswers = q.Answers?.Select(a =>
+                {
+                    var cleanedOption = string.IsNullOrWhiteSpace(a.SelectedOption)
+                        ? string.Empty
+                        : Regex.Replace(a.SelectedOption, "\\s*\\[\\d+\\]", string.Empty).Trim();
+                    return new AIStudyHub.Business.DTOs.Quizzes.AiGeneratedAnswerDto(cleanedOption, a.IsCorrect);
+                }).ToList() ?? new List<AIStudyHub.Business.DTOs.Quizzes.AiGeneratedAnswerDto>();
+
+                return new AIStudyHub.Business.DTOs.Quizzes.AiGeneratedQuestionDto(
+                    cleanedTitle,
+                    q.QuestionType,
+                    q.Position,
+                    cleanedAnswers);
+            }).ToList();
+
+        aiResult = new AIStudyHub.Business.DTOs.Quizzes.AiGeneratedQuizResponseDto(
+            Regex.Replace(aiResult.QuizTitle ?? string.Empty, "\\s*\\[\\d+\\]", string.Empty).Trim(),
+            cleanedQuestions);
+
         // Persist quiz
         var quiz = new AIStudyHub.Data.Entities.Quiz { DocumentId = docId, Title = aiResult.QuizTitle ?? document.Title ?? "Generated Quiz" };
         await unitOfWork.Quizzes.AddAsync(quiz, cancellationToken);
@@ -122,10 +166,15 @@ public sealed class QuizController : ControllerBase
             // QuestionType is already an enum on the DTO; use it directly.
             var qt = q.QuestionType;
 
+            // Clean AI-generated titles to remove inline citation markers like [1], [2], [3]
+            var cleanedTitle = string.IsNullOrWhiteSpace(q.QuestionTitle)
+                ? string.Empty
+                : Regex.Replace(q.QuestionTitle, "\\s*\\[\\d+\\]", string.Empty).Trim();
+
             var question = new AIStudyHub.Data.Entities.Question
             {
                 QuizId = quiz.Id,
-                Title = q.QuestionTitle,
+                Title = cleanedTitle,
                 Type = qt,
                 Position = q.Position > 0 ? q.Position : 0
             };
@@ -137,10 +186,14 @@ public sealed class QuizController : ControllerBase
             {
                 foreach (var a in q.Answers)
                 {
+                    var cleanedOption = string.IsNullOrWhiteSpace(a.SelectedOption)
+                        ? string.Empty
+                        : Regex.Replace(a.SelectedOption, "\\s*\\[\\d+\\]", string.Empty).Trim();
+
                     var answer = new AIStudyHub.Data.Entities.Answer
                     {
                         QuestionId = question.Id,
-                        SelectedOption = a.SelectedOption,
+                        SelectedOption = cleanedOption,
                         IsCorrect = a.IsCorrect
                     };
                     await unitOfWork.Answers.AddAsync(answer, cancellationToken);
@@ -157,6 +210,27 @@ public sealed class QuizController : ControllerBase
     {
         var result = await _service.GetByIdAsync(id, cancellationToken);
         return result is null ? NotFound() : Ok(result);
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<QuizResponseDto>> Create([FromBody] CreateQuizRequestDto request, CancellationToken cancellationToken)
+    {
+        var result = await _service.CreateAsync(request, cancellationToken);
+        return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
+    }
+
+    [HttpPut("{id:guid}")]
+    public async Task<ActionResult<QuizResponseDto>> Update(Guid id, [FromBody] UpdateQuizRequestDto request, CancellationToken cancellationToken)
+    {
+        var result = await _service.UpdateAsync(id, request, cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
+    {
+        await _service.DeleteAsync(id, cancellationToken);
+        return NoContent();
     }
 
     // POST   /api/Quiz  - Đã xóa. Quiz phải được AI sinh ra từ Document.

@@ -19,6 +19,7 @@ public sealed class RagChatService : IRagChatService
     private readonly HttpClient _llmClient;
     private readonly RagOptions _options;
     private readonly ILogger<RagChatService> _logger;
+    private readonly ILocalAIService _openAiService;
 
     public RagChatService(
         IUnitOfWork unitOfWork,
@@ -26,10 +27,12 @@ public sealed class RagChatService : IRagChatService
         IVectorStoreService vectorStoreService,
         ICitationService citationService,
         IHttpClientFactory httpClientFactory,
+        ILocalAIService openAIService,
         IOptions<RagOptions> options,
         ILogger<RagChatService> logger)
     {
         _unitOfWork = unitOfWork;
+        _openAiService = openAIService;
         _embeddingService = embeddingService;
         _vectorStoreService = vectorStoreService;
         _citationService = citationService;
@@ -37,7 +40,7 @@ public sealed class RagChatService : IRagChatService
         _options = options.Value;
         _logger = logger;
 
-        _llmClient.BaseAddress = new Uri(_options.Gpt4AllUrl);
+        _llmClient.BaseAddress = new Uri(_options.OllamaUrl);
     }
 
     public async Task<RagChatResponseDto> ChatAsync(RagChatRequestDto request, Guid userId)
@@ -192,50 +195,16 @@ public sealed class RagChatService : IRagChatService
                 ANSWER (with citations like [1], [2], [3]):
                 """;
 
-            var payload = new
-            {
-                model = _options.Gpt4AllModel,
-                messages = new[]
-                {
-                    new { role = "system", content = systemPrompt },
-                    new { role = "user", content = userPrompt }
-                },
-                max_tokens = _options.MaxTokens,
-                temperature = _options.Temperature
-            };
+            var response= await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
 
-            var content = new StringContent(
-                JsonSerializer.Serialize(payload),
-                Encoding.UTF8,
-                "application/json");
 
-            var response = await _llmClient.PostAsync("/v1/chat/completions", content);
 
-            if (!response.IsSuccessStatusCode)
-            {
-                var error = await response.Content.ReadAsStringAsync();
-                _logger.LogError("LLM request failed with status {StatusCode}: {Error}", response.StatusCode, error);
-                return $"I encountered an error generating a response (status: {response.StatusCode}). Please try again.";
-            }
-
-            var json = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(json);
-
-            if (doc.RootElement.TryGetProperty("choices", out var choices) &&
-                choices.GetArrayLength() > 0)
-            {
-                return choices[0]
-                    .GetProperty("message")
-                    .GetProperty("content")
-                    .GetString() ?? "I couldn't generate a response.";
-            }
-
-            return "I couldn't generate a response.";
+            return response;
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "LLM server connection failed. URL: {Url}", _options.Gpt4AllUrl);
-            return $"I couldn't connect to the AI server at {_options.Gpt4AllUrl}. Please ensure the local AI server is running.";
+            _logger.LogError(ex, "LLM server connection failed. URL: {Url}", _options.OllamaUrl);
+            return $"I couldn't connect to the AI server at {_options.OllamaUrl}. Please ensure the local AI server is running.";
         }
         catch (TaskCanceledException ex) when (ex.CancellationToken != CancellationToken.None)
         {
