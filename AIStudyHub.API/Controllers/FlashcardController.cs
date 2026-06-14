@@ -11,10 +11,23 @@ namespace AIStudyHub.API.Controllers;
 public sealed class FlashcardController : ControllerBase
 {
     private readonly IFlashcardService _service;
+        private readonly AIStudyHub.Business.Interfaces.Services.IFlashcardAiService _flashcardAiService;
 
-    public FlashcardController(IFlashcardService service)
+    public FlashcardController(IFlashcardService service, AIStudyHub.Business.Interfaces.Services.IFlashcardAiService flashcardAiService)
     {
         _service = service;
+        _flashcardAiService = flashcardAiService;
+    }
+
+    [HttpPost("/api/flashcard/document/{docId:guid}/ai-gen")]
+    public async Task<ActionResult<AIStudyHub.Business.DTOs.Flashcards.FlashcardsAiResponseDto>> GenerateFromDocument(Guid docId, [FromBody] CreateFlashcardsViaAiRequestDto request, CancellationToken cancellationToken)
+    {
+        var userIdClaim = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier || c.Type == "sub" || c.Type == "userId")?.Value;
+        if (!Guid.TryParse(userIdClaim, out var userId))
+            return Forbid();
+
+        var result = await _flashcardAiService.GenerateFlashcardsAsync(docId, request, userId, cancellationToken);
+        return Ok(result);
     }
 
     /// <summary>Lấy danh sách tất cả flashcard.</summary>
