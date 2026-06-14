@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using AIStudyHub.Data.Enums;
 
 namespace AIStudyHub.Business.DTOs.Quizzes;
-public sealed record CreateQuizRequestViaAIDto(string Message);
+public sealed record CreateQuizRequestViaAIDto(int numberOfQuestions);
 public sealed record AiGeneratedAnswerDto(string SelectedOption, bool IsCorrect);
 
 public sealed record AiGeneratedQuestionDto(

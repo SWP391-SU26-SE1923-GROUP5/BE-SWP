@@ -36,7 +36,10 @@ public static class BusinessServiceExtensions
         services.AddScoped<IEmbeddingService, EmbeddingService>();
         services.AddScoped<IVectorStoreService, VectorStoreService>();
         services.AddScoped<ICitationService, CitationService>();
+        services.AddScoped<ILocalAIService,LocalAIService>();
+       // services.AddScoped<IOpenAIService, OpenAIService>();
         services.AddScoped<IRagChatService, RagChatService>();
+        services.AddScoped<AIStudyHub.Business.Interfaces.Services.IFlashcardAiService, AIStudyHub.Business.Services.FlashcardAiService>();
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
 
         return services;

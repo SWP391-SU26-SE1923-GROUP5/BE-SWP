@@ -65,6 +65,7 @@ builder.Services.AddSingleton(sp =>
 
     return cloudinary;
 });
+
 var app = builder.Build();
 
 await app.Services.SeedConfiguredAdminAsync(app.Configuration);

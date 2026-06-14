@@ -3,16 +3,15 @@ namespace AIStudyHub.Business.Options;
 public sealed class RagOptions
 {
     // GPT4All Local LLM Settings
-    public string Gpt4AllUrl { get; set; } = "http://localhost:6768";
-    public string Gpt4AllModel { get; set; } = "llama-3.2-1b-instruct.Q4_0.gguf";
+
     public bool UseLocalLlm { get; set; } = true;
     public int MaxTokens { get; set; } = 1000;
     public float Temperature { get; set; } = 0.3f;
 
     // Ollama Local Embedding Settings
-    public string? OllamaUrl { get; set; } = "http://localhost:11434";
-    public string OllamaModel { get; set; } = "nomic-embed-text";
-    public int OllamaEmbeddingDimension { get; set; } = 768;
+    public string? OllamaUrl { get; set; }
+    public string? OllamaModel { get; set; }
+    public string? OllamaEmbeddingModel { get; set; }
 
     // Nomic Embedding Settings (cloud API) - Commented out for now
     /*
@@ -20,6 +19,13 @@ public sealed class RagOptions
     public string NomicEmbedModel { get; set; } = "nomic-embed-text-v1";
     public string NomicApiUrl { get; set; } = "https://api-atlas.nomic.ai/v1";
     */
+
+    //OpenAI 
+
+    public string? OpenAIApiKey { get; set; }
+    public string OpenAIEmbeddingModel { get; set; } = "";
+
+    public string OpenAIChatModel { get; set; } = "";
 
     // Pinecone Vector DB Settings
     public string? PineconeApiKey { get; set; }
