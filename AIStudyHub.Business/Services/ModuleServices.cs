@@ -483,11 +483,13 @@ public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQue
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
+    private readonly ICitationService _citationService;
 
-    public QuestionService(IUnitOfWork unitOfWork, IMapper mapper)
+    public QuestionService(IUnitOfWork unitOfWork, IMapper mapper, ICitationService citationService)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _citationService = citationService;
     }
 
     public override async Task<IReadOnlyList<QuestionResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
