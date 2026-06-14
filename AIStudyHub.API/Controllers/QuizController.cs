@@ -14,6 +14,7 @@ namespace AIStudyHub.API.Controllers;
 [Route("api/[controller]")]
 public sealed class QuizController : ControllerBase
 {
+    public sealed record GenerateQuizRequestDto(int Count = 10);
     private readonly IQuizService _service;
 
     public QuizController(IQuizService service)
@@ -32,6 +33,7 @@ public sealed class QuizController : ControllerBase
     [HttpPost("/api/quiz/document/{docId:guid}/ai-gen")]
     public async Task<ActionResult<AiGeneratedQuizResponseDto>> GenerateFromDocument(
         Guid docId,
+        [FromBody] CreateQuizRequestViaAIDto dto,
         [FromServices] AIStudyHub.Data.Interfaces.IUnitOfWork unitOfWork,
         [FromServices] AIStudyHub.Business.Interfaces.Services.IRagChatService ragChatService,
         CancellationToken cancellationToken)
@@ -42,8 +44,10 @@ public sealed class QuizController : ControllerBase
             return Forbid();
 
 
-        // Generate a fixed number of questions (10) automatically — no user input required
-        var numberOfQuestions = 10;
+        // Validate requested number of questions
+        var numberOfQuestions = dto.numberOfQuestions;
+        if (numberOfQuestions <= 0 || numberOfQuestions > 20)
+            return BadRequest("Number of questions must be between 1 and 20.");
 
         // Load document
         var document = await unitOfWork.Documents.GetByIdAsync(docId, cancellationToken);
@@ -68,7 +72,7 @@ public sealed class QuizController : ControllerBase
             promptBuilder.AppendLine($"Constraints: {constraintText}");
         promptBuilder.AppendLine();
         promptBuilder.AppendLine("User message:");
-        promptBuilder.AppendLine("Generate 10 quiz questions based on the provided document context. Return only the JSON described above.");
+        promptBuilder.AppendLine($"Generate {numberOfQuestions} quiz questions based on the provided document context, each question should have at most 4 answers. Return only the JSON described above.");
         promptBuilder.AppendLine();
         promptBuilder.AppendLine("Context:");
         foreach (var c in chunks)
