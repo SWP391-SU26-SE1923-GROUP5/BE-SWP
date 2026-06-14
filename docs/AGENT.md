@@ -78,6 +78,7 @@ Admin:
 - Use `CancellationToken` in public async APIs.
 - Avoid business logic in controllers.
 - Keep controllers thin: validate request, call service, return response.
+- **NEVER use generic base controllers (like `CrudControllerBase`)**. Controllers must explicitly define only the endpoints required by business rules (e.g., Vote only needs POST and DELETE, no PUT).
 - Do not introduce additional projects without explicit instruction.
 
 # Naming Conventions
@@ -198,6 +199,8 @@ Core entities:
 
 - Services live in `AIStudyHub.Business/Services`.
 - Service contracts live in `AIStudyHub.Business/Interfaces/Services`.
+- For complex domains (like Auth and Users), use the **CQRS pattern with MediatR** (located in `AIStudyHub.Business/Features`).
+- For standard CRUD domains, use standard Service classes.
 - Services contain business rules and orchestration.
 - Services should depend on abstractions, not concrete data access classes.
 - Services should return DTOs.
@@ -266,16 +269,13 @@ Core entities:
 - Services should throw meaningful exceptions for business failures.
 - Controllers should not contain broad try/catch blocks.
 
-# Future Development Notes
+# Current Implementations & Future Development Notes
 
-- Replace skeleton `NotImplementedException` service methods with real business logic.
-- Implement password hashing and JWT token generation in authentication service.
-- Add ownership and role-based authorization checks.
-- Implement document upload/storage strategy.
-- Add document search indexing strategy.
-- Add AI provider abstraction for chat, quiz generation, and flashcard generation.
-- Add payment provider abstraction and webhook handling.
-- Generate real EF Core migration from the current model.
+- Authentication is implemented using ASP.NET Core Identity with JWT and Refresh Tokens.
+- AI features use a local LLM stack (Ollama + `nomic-embed-text`) for embeddings, with Pinecone for vector storage.
+- Document uploading uses `multipart/form-data` with explicit local chunking and vectorization (`DocumentUploadController`).
+- Replace remaining skeleton `NotImplementedException` service methods with real business logic.
+- Implement payment provider webhook handling.
 - Add integration tests for controllers and service workflows.
 - Add unit tests for validators, business rules, and repository behavior.
 - Review `appsettings.json` before production deployment and move secrets out of source control.

@@ -9,21 +9,19 @@ public sealed class RagOptions
     public int MaxTokens { get; set; } = 1000;
     public float Temperature { get; set; } = 0.3f;
 
-    // Embedding Settings
-    public bool UseLocalEmbeddings { get; set; } = true;
-    public string LocalEmbeddingModel { get; set; } = "all-MiniLM-L6-v2";
-    public string LocalEmbeddingUrl { get; set; } = "http://localhost:5000";
-
-    // Ollama Embedding Settings (local, no API key needed)
-    public string OllamaUrl { get; set; } = "http://localhost:11434";
+    // Ollama Local Embedding Settings
+    public string? OllamaUrl { get; set; } = "http://localhost:11434";
     public string OllamaModel { get; set; } = "nomic-embed-text";
     public int OllamaEmbeddingDimension { get; set; } = 768;
 
-    // Fallback: OpenAI for embeddings (if local not available)
-    public string? OpenAiApiKey { get; set; }
-    public string OpenAiEmbeddingModel { get; set; } = "text-embedding-3-small";
+    // Nomic Embedding Settings (cloud API) - Commented out for now
+    /*
+    public string? NomicApiKey { get; set; }
+    public string NomicEmbedModel { get; set; } = "nomic-embed-text-v1";
+    public string NomicApiUrl { get; set; } = "https://api-atlas.nomic.ai/v1";
+    */
 
-    // Pinecone (optional - can skip if using local vector DB)
+    // Pinecone Vector DB Settings
     public string? PineconeApiKey { get; set; }
     public string? PineconeEnvironment { get; set; }
     public string PineconeIndexName { get; set; } = "aistudyhub-docs";
