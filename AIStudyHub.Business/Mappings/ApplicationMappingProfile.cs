@@ -51,6 +51,7 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<Question, QuestionResponseDto>();
         CreateMap<CreateQuestionRequestDto, Question>();
         CreateMap<UpdateQuestionRequestDto, Question>();
+        CreateMap<Answer, AnswerResponseDto>();
 
         CreateMap<Answer, AnswerResponseDto>();
         CreateMap<CreateAnswerRequestDto, Answer>();
