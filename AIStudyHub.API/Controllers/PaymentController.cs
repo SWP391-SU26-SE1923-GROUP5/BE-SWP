@@ -38,4 +38,38 @@ public sealed class PaymentController : ControllerBase
     // POST   /api/Payment  - Đã xóa. Giao dịch thanh toán phải đi qua cổng thanh toán (Webhook).
     // PUT    /api/Payment/{id} - Đã xóa. Cập nhật giao dịch phải đi qua cổng thanh toán.
     // DELETE /api/Payment/{id} - Đã xóa. Không cho phép xóa giao dịch.
+
+    [HttpPost("create-checkout-url")]
+    public async Task<ActionResult<PaymentLinkResponseDto>> CreatePaymentUrl([FromBody] CreatePaymentLinkRequestDto request, CancellationToken cancellationToken)
+    {
+        var response = await _service.CreatePaymentUrlAsync(request, HttpContext, cancellationToken);
+        return Ok(response);
+    }
+
+    [HttpGet("vnpay-return")]
+    [AllowAnonymous]
+    public IActionResult PaymentReturn()
+    {
+        // Giao diện web hiển thị kết quả cho user sau khi thanh toán trên cổng VNPay
+        var responseCode = Request.Query["vnp_ResponseCode"];
+        if (responseCode == "00")
+        {
+            return Ok("Thanh toán thành công. Cảm ơn bạn!");
+        }
+        return BadRequest("Thanh toán thất bại hoặc đã bị hủy.");
+    }
+
+    [HttpGet("vnpay-ipn")]
+    [AllowAnonymous]
+    public async Task<IActionResult> PaymentIpn(CancellationToken cancellationToken)
+    {
+        // VNPay gọi ngầm API này để cập nhật trạng thái đơn hàng
+        var success = await _service.ProcessVnPayWebhookAsync(Request.Query, cancellationToken);
+        if (success)
+        {
+            return Ok(new { RspCode = "00", Message = "Confirm Success" });
+        }
+        
+        return Ok(new { RspCode = "97", Message = "Invalid Signature or Payment failed" });
+    }
 }

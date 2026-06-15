@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using AIStudyHub.Business.DTOs.Answers;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Flashcards;
@@ -9,7 +10,6 @@ using AIStudyHub.Business.DTOs.QuizSubmissions;
 using AIStudyHub.Business.DTOs.Reports;
 using AIStudyHub.Business.DTOs.Subjects;
 using AIStudyHub.Business.DTOs.TierMemberships;
-using AIStudyHub.Business.DTOs.TierUsers;
 using AIStudyHub.Business.DTOs.Votes;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Data.Interfaces;
@@ -836,11 +836,13 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
+    private readonly IVnPayService _vnPayService;
 
-    public PaymentService(IUnitOfWork unitOfWork, IMapper mapper)
+    public PaymentService(IUnitOfWork unitOfWork, IMapper mapper, IVnPayService vnPayService)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _vnPayService = vnPayService;
     }
 
     public override async Task<IReadOnlyList<PaymentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -880,6 +882,18 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
 
         var payment = _mapper.Map<Data.Entities.Payment>(request);
         await _unitOfWork.Payments.AddAsync(payment, cancellationToken);
+
+        if (request.TierId.HasValue)
+        {
+            var user = await _unitOfWork.Users.GetByIdAsync(request.UserId, cancellationToken);
+            if (user is not null)
+            {
+                user.TierId = request.TierId.Value;
+                user.TierExpireAt = DateTime.UtcNow.AddDays(30);
+                _unitOfWork.Users.Update(user);
+            }
+        }
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         var created = await _unitOfWork.Payments
@@ -924,6 +938,88 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
 
         _unitOfWork.Payments.Remove(payment);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<PaymentLinkResponseDto> CreatePaymentUrlAsync(CreatePaymentLinkRequestDto request, HttpContext context, CancellationToken cancellationToken = default)
+    {
+        var userIdString = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userIdString) || !Guid.TryParse(userIdString, out var userId))
+        {
+            throw new UnauthorizedAccessException("User not authenticated or invalid ID.");
+        }
+
+        var tier = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierId, cancellationToken);
+        if (tier is null)
+        {
+            throw new KeyNotFoundException($"Tier with ID {request.TierId} not found.");
+        }
+
+        var amount = 100000m; // Default amount for premium tier if not specified in tier entity. Assuming 100k VND
+        var payment = new Data.Entities.Payment
+        {
+            UserId = userId,
+            TierId = request.TierId,
+            Amount = amount,
+            Status = Data.Enums.PaymentStatus.Pending,
+            PaymentInfo = $"Upgrade to {tier.TierName} tier",
+            PaymentDate = DateTime.UtcNow
+        };
+
+        await _unitOfWork.Payments.AddAsync(payment, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var url = _vnPayService.CreatePaymentUrl(context, payment.Id, payment.Amount, payment.PaymentInfo);
+        return new PaymentLinkResponseDto(url);
+    }
+
+    public async Task<bool> ProcessVnPayWebhookAsync(IQueryCollection query, CancellationToken cancellationToken = default)
+    {
+        if (!_vnPayService.ValidateSignature(query))
+        {
+            return false;
+        }
+
+        var paymentIdString = query["vnp_TxnRef"].ToString();
+        var responseCode = query["vnp_ResponseCode"].ToString();
+        var transactionId = query["vnp_TransactionNo"].ToString();
+
+        if (string.IsNullOrEmpty(paymentIdString) || !Guid.TryParse(paymentIdString, out var paymentId))
+        {
+            return false;
+        }
+
+        var payment = await _unitOfWork.Payments.GetByIdAsync(paymentId, cancellationToken);
+        if (payment is null)
+        {
+            return false;
+        }
+
+        payment.TransactionId = transactionId;
+
+        if (responseCode == "00") // Success
+        {
+            payment.Status = Data.Enums.PaymentStatus.Completed;
+
+            if (payment.TierId.HasValue)
+            {
+                var user = await _unitOfWork.Users.GetByIdAsync(payment.UserId, cancellationToken);
+                if (user is not null)
+                {
+                    user.TierId = payment.TierId.Value;
+                    user.TierExpireAt = DateTime.UtcNow.AddDays(30);
+                    _unitOfWork.Users.Update(user);
+                }
+            }
+        }
+        else
+        {
+            payment.Status = Data.Enums.PaymentStatus.Failed;
+        }
+
+        _unitOfWork.Payments.Update(payment);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return true;
     }
 }
 
@@ -1083,99 +1179,4 @@ public sealed class TierMembershipService : CrudService<TierMembershipResponseDt
     }
 }
 
-public sealed class TierUserService : ITierUserService
-{
-    private readonly IUnitOfWork _unitOfWork;
-    private readonly IMapper _mapper;
 
-    public TierUserService(IUnitOfWork unitOfWork, IMapper mapper)
-    {
-        _unitOfWork = unitOfWork;
-        _mapper = mapper;
-    }
-
-    public async Task<IReadOnlyList<TierUserResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
-    {
-        var assignments = await _unitOfWork.TierUsers
-            .Query()
-            .Include(tu => tu.User)
-            .Include(tu => tu.TierMembership)
-            .AsNoTracking()
-            .ToListAsync(cancellationToken);
-
-        return assignments.Select(_mapper.Map<TierUserResponseDto>).ToList();
-    }
-
-    public async Task<TierUserResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
-    {
-        var assignment = await _unitOfWork.TierUsers
-            .Query()
-            .Include(tu => tu.User)
-            .Include(tu => tu.TierMembership)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(tu => tu.Id == id, cancellationToken);
-
-        return assignment is null ? null : _mapper.Map<TierUserResponseDto>(assignment);
-    }
-
-    public async Task<TierUserResponseDto> CreateAsync(CreateTierUserRequestDto request, CancellationToken cancellationToken = default)
-    {
-        var userExists = await _unitOfWork.Users.GetByIdAsync(request.UserId, cancellationToken) is not null;
-        if (!userExists)
-        {
-            throw new KeyNotFoundException($"User with ID {request.UserId} not found.");
-        }
-
-        var tierExists = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierMembershipId, cancellationToken) is not null;
-        if (!tierExists)
-        {
-            throw new KeyNotFoundException($"Tier membership with ID {request.TierMembershipId} not found.");
-        }
-
-        var existing = await _unitOfWork.TierUsers
-            .Query()
-            .FirstOrDefaultAsync(tu => tu.UserId == request.UserId && tu.TierMembershipId == request.TierMembershipId, cancellationToken);
-
-        if (existing is not null)
-        {
-            throw new InvalidOperationException($"User is already assigned to this tier.");
-        }
-
-        var assignment = _mapper.Map<Data.Entities.TierUser>(request);
-        await _unitOfWork.TierUsers.AddAsync(assignment, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var created = await _unitOfWork.TierUsers
-            .Query()
-            .Include(tu => tu.User)
-            .Include(tu => tu.TierMembership)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(tu => tu.Id == assignment.Id, cancellationToken);
-
-        return _mapper.Map<TierUserResponseDto>(created);
-    }
-
-    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
-    {
-        var assignment = await _unitOfWork.TierUsers.GetByIdAsync(id, cancellationToken);
-        if (assignment is null)
-        {
-            throw new KeyNotFoundException($"Tier user assignment with ID {id} not found.");
-        }
-
-        _unitOfWork.TierUsers.Remove(assignment);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-    }
-
-    public async Task<TierUserResponseDto?> GetActiveByUserIdAsync(Guid userId, CancellationToken cancellationToken = default)
-    {
-        var assignment = await _unitOfWork.TierUsers
-            .Query()
-            .Include(tu => tu.User)
-            .Include(tu => tu.TierMembership)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(tu => tu.UserId == userId, cancellationToken);
-
-        return assignment is null ? null : _mapper.Map<TierUserResponseDto>(assignment);
-    }
-}

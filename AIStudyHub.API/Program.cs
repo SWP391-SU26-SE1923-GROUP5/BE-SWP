@@ -48,7 +48,7 @@ builder.Services.AddHttpClient("VectorStoreClient");
 builder.Services.AddHttpClient("LlmClient");
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddDataAccess(builder.Configuration);
-builder.Services.AddBusinessServices();
+builder.Services.AddBusinessServices(builder.Configuration);
 builder.Services.AddAutoMapper(_ => { }, typeof(ApplicationMappingProfile).Assembly);
 builder.Services.AddValidatorsFromAssemblyContaining<LoginRequestDtoValidator>();
 builder.Services.AddSingleton(sp =>
