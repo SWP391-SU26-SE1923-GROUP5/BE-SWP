@@ -1,4 +1,4 @@
-﻿using AIStudyHub.Business.DTOs.AIChat;
+using AIStudyHub.Business.DTOs.AIChat;
 using AIStudyHub.Business.DTOs.Answers;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Flashcards;
@@ -10,7 +10,6 @@ using AIStudyHub.Business.DTOs.QuizSubmissions;
 using AIStudyHub.Business.DTOs.Reports;
 using AIStudyHub.Business.DTOs.Subjects;
 using AIStudyHub.Business.DTOs.TierMemberships;
-using AIStudyHub.Business.DTOs.TierUsers;
 using AIStudyHub.Business.DTOs.Users;
 using AIStudyHub.Business.DTOs.Votes;
 using AIStudyHub.Data.Entities;
@@ -73,9 +72,6 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<TierMembership, TierMembershipResponseDto>();
         CreateMap<CreateTierMembershipRequestDto, TierMembership>();
         CreateMap<UpdateTierMembershipRequestDto, TierMembership>();
-
-        CreateMap<TierUser, TierUserResponseDto>();
-        CreateMap<CreateTierUserRequestDto, TierUser>();
 
         CreateMap<Subject, SubjectResponseDto>();
         CreateMap<CreateSubjectRequestDto, Subject>();

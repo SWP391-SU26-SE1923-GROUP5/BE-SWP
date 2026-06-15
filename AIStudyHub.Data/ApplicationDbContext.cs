@@ -15,7 +15,6 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
 
     public DbSet<Subject> Subjects => Set<Subject>();
     public DbSet<TierMembership> TierMemberships => Set<TierMembership>();
-    public DbSet<TierUser> TierUsers => Set<TierUser>();
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
     public DbSet<Vote> Votes => Set<Vote>();
@@ -37,6 +36,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
         base.OnModelCreating(modelBuilder);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
         SeedRoles(modelBuilder);
+        SeedTiers(modelBuilder);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
@@ -101,5 +101,26 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
             NormalizedName = name.ToUpperInvariant(),
             ConcurrencyStamp = id.ToString()
         };
+    }
+
+    private static void SeedTiers(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<TierMembership>().HasData(
+            new TierMembership
+            {
+                Id = Guid.Parse("11111111-1111-1111-1111-111111111111"),
+                TierName = "Free",
+                StorageLimitMb = 1024,
+                AiTokens = 10000,
+                CreatedAt = DateTime.UtcNow
+            },
+            new TierMembership
+            {
+                Id = Guid.Parse("55555555-5555-5555-5555-555555555555"),
+                TierName = "Premium",
+                StorageLimitMb = 3072,
+                AiTokens = 30000,
+                CreatedAt = DateTime.UtcNow
+            });
     }
 }

@@ -21,9 +21,9 @@ public sealed class TierMembership : BaseEntity
     public int AiTokens { get; set; }
 
     /// <summary>
-    /// Gets or sets the users assigned to this tier through membership history.
+    /// Gets or sets the users assigned to this tier.
     /// </summary>
-    public ICollection<TierUser> TierUsers { get; set; } = [];
+    public ICollection<User> Users { get; set; } = [];
 
     /// <summary>
     /// Gets or sets the payments associated with this tier.
