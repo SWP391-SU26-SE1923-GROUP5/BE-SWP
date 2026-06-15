@@ -14,6 +14,10 @@ public sealed class User : IdentityUser<Guid>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 
+    public Guid TierId { get; set; }
+    public DateTime? TierExpireAt { get; set; }
+    public TierMembership TierMembership { get; set; } = null!;
+
     public ICollection<Document> Documents { get; set; } = new List<Document>();
     public ICollection<Vote> Votes { get; set; } = new List<Vote>();
     public ICollection<Report> Reports { get; set; } = new List<Report>();
@@ -22,5 +26,4 @@ public sealed class User : IdentityUser<Guid>
     public ICollection<QuizSubmission> QuizSubmissions { get; set; } = new List<QuizSubmission>();
     public ICollection<ChatSession> ChatSessions { get; set; } = new List<ChatSession>();
     public ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
-    public ICollection<TierUser> TierUsers { get; set; } = new List<TierUser>();
 }
