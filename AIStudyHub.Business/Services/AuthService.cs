@@ -462,6 +462,7 @@ public sealed class AuthService : IAuthService
             UserName = normalizedEmail,
             Email = normalizedEmail,
             DateOfBirth = dateOfBirth,
+            TierId = Guid.Parse("11111111-1111-1111-1111-111111111111"), // Free Tier
             CurrentStorageCapacity = 0,
             CurrentAiTokenUsage = 0,
             Status = "active",
