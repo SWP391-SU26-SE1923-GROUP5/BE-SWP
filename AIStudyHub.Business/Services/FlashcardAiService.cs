@@ -51,154 +51,39 @@ public sealed class FlashcardAiService : IFlashcardAiService
         var context = string.Join(
             "\n\n",
             chunks.Select(c => c.ChunkJson ?? ""));
-        Console.Write("Context: "+context);
+        Console.Write("Context: " + context);
         var flashcards = new List<FlashcardResponseAiDto>();
-        var maxBatchRetries = 5;
-        FlashcardResponseAiDto[]? parsed = null;
+        var seenFronts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var maxRetriesPerCard = 3;
+        var maxConsecutiveFailures = 5;
+        var consecutiveFailures = 0;
 
-        for (int attempt = 0; attempt < maxBatchRetries && parsed is null; attempt++)
+        for (int i = 0; i < request.NumberOfFlashcards; i++)
         {
-            var existingCards = flashcards.Count == 0
-                ? "None"
-                : string.Join(
-                    "\n",
-                    flashcards.Select(x => $"- {x.Front}"));
+            var card = await TryGenerateSingleFlashcardAsync(
+                context,
+                flashcards,
+                i + 1,
+                request.NumberOfFlashcards,
+                seenFronts,
+                maxRetriesPerCard,
+                cancellationToken);
 
-            var prompt = $$"""
-You are a JSON API.
-
-Return ONLY valid JSON. No markdown, no explanations, no code fences.
-
-Generate EXACTLY {{request.NumberOfFlashcards}} flashcards as a JSON array.
-
-Use ONLY information from the CONTEXT.
-
-Do not generate a flashcard similar to:
-
-{{existingCards}}
-
-Response format (array of exactly {{request.NumberOfFlashcards}} objects):
-
-[
-  { "front": "string", "back": "string" },
-  { "front": "string", "back": "string" }
-]
-
-Rules:
-- Return exactly {{request.NumberOfFlashcards}} objects in the array.
-- Each "front" and "back" must be a non-empty string.
-- All "front" values must be unique.
-- Stay strictly within the CONTEXT below.
-
-CONTEXT:
-{{context}}
-""";
-
-            try
+            if (card is null)
             {
-                var aiText = await _localAIService.SendMessageAsync(prompt);
-                _logger.LogDebug("AI raw response length={Length}", aiText.Length);
-                _logger.LogTrace("AI raw response: {Raw}", aiText);
-
-                var cleaned = ExtractFirstJsonArray(aiText);
-                _logger.LogDebug("AI cleaned payload length={Length}", cleaned.Length);
-                _logger.LogTrace("AI cleaned payload: {Cleaned}", cleaned);
-
-                using var docJson = JsonDocument.Parse(cleaned);
-                var root = docJson.RootElement;
-
-                if (root.ValueKind != JsonValueKind.Array)
+                consecutiveFailures++;
+                if (consecutiveFailures >= maxConsecutiveFailures)
                 {
-                    _logger.LogWarning(
-                        "AI response is not a JSON array (attempt {Attempt})",
-                        attempt + 1);
-                    continue;
+                    _logger.LogError(
+                        "Aborting flashcard generation after {Consecutive} consecutive failures",
+                        consecutiveFailures);
+                    break;
                 }
-
-                var batch = new List<FlashcardResponseAiDto>();
-                var seenFronts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                var skipped = 0;
-
-                foreach (var element in root.EnumerateArray())
-                {
-                    if (element.ValueKind != JsonValueKind.Object)
-                    {
-                        skipped++;
-                        continue;
-                    }
-
-                    if (!element.TryGetProperty("front", out var frontProp) ||
-                        !element.TryGetProperty("back", out var backProp))
-                    {
-                        skipped++;
-                        continue;
-                    }
-
-                    var front = frontProp.ValueKind == JsonValueKind.String
-                        ? frontProp.GetString()?.Trim()
-                        : null;
-                    var back = backProp.ValueKind == JsonValueKind.String
-                        ? backProp.GetString()?.Trim()
-                        : null;
-
-                    if (string.IsNullOrWhiteSpace(front) ||
-                        string.IsNullOrWhiteSpace(back))
-                    {
-                        skipped++;
-                        continue;
-                    }
-
-                    front = Regex.Replace(front, @"\s*\[[^\]]+\]", string.Empty).Trim();
-                    back = Regex.Replace(back, @"\s*\[[^\]]+\]", string.Empty).Trim();
-
-                    if (string.IsNullOrWhiteSpace(front) ||
-                        !seenFronts.Add(front))
-                    {
-                        skipped++;
-                        continue;
-                    }
-
-                    batch.Add(new FlashcardResponseAiDto(front, back));
-
-                    if (batch.Count >= request.NumberOfFlashcards)
-                        break;
-                }
-
-                _logger.LogDebug(
-                    "AI batch: parsed={Got} skipped={Skipped} requested={Requested}",
-                    batch.Count, skipped, request.NumberOfFlashcards);
-
-                if (batch.Count == request.NumberOfFlashcards)
-                {
-                    parsed = batch.ToArray();
-                }
-            }
-            catch (JsonException ex)
-            {
-                _logger.LogWarning(
-                    ex,
-                    "Failed to parse AI JSON response (attempt {Attempt})",
-                    attempt + 1);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(
-                    ex,
-                    "AI call failed (attempt {Attempt})",
-                    attempt + 1);
+                continue;
             }
 
-        }
-
-        if (parsed is not null)
-        {
-            flashcards.AddRange(parsed);
-        }
-        else
-        {
-            _logger.LogError(
-                "Could not generate a valid batch of {Requested} flashcards after {Max} attempts",
-                request.NumberOfFlashcards, maxBatchRetries);
+            consecutiveFailures = 0;
+            flashcards.Add(card);
         }
 
         if (flashcards.Count < request.NumberOfFlashcards)
@@ -211,7 +96,166 @@ CONTEXT:
         return new FlashcardsAiResponseDto(flashcards);
     }
 
-    private static string ExtractFirstJsonArray(string text)
+    private async Task<FlashcardResponseAiDto?> TryGenerateSingleFlashcardAsync(
+        string context,
+        List<FlashcardResponseAiDto> alreadyGenerated,
+        int currentIndex,
+        int totalRequested,
+        HashSet<string> seenFronts,
+        int maxRetries,
+        CancellationToken cancellationToken)
+    {
+        var existingCards = alreadyGenerated.Count == 0
+            ? "None"
+            : string.Join("\n", alreadyGenerated.Select(x => $"- {x.Front}"));
+
+        for (int attempt = 0; attempt < maxRetries; attempt++)
+        {
+            var prompt = $$"""
+You are a JSON API.
+
+Return ONLY valid JSON. No markdown, no explanations, no code fences.
+
+Generate EXACTLY ONE flashcard as a single JSON object (not an array).
+
+Use ONLY information from the CONTEXT.
+
+Do not generate a flashcard similar to:
+
+|{{existingCards}}
+
+Response format (a single object):
+
+{ "front": "string", "back": "string" }
+
+Rules:
+- Return exactly one object (NOT an array, NOT a list).
+- "front" and "back" must be non-empty strings.
+- "front" must be unique compared to the existing cards listed above.
+- "front" should be a clear question, term, or prompt.
+- "back" should be a concise answer or explanation (1-3 sentences).
+- Stay strictly within the CONTEXT below.
+- Do not repeat a "front" value from the existing cards list.
+
+This is card {{currentIndex}} of {{totalRequested}}.
+
+CONTEXT:
+{{context}}
+""";
+
+            try
+            {
+                var aiText = await _localAIService.SendMessageAsync(prompt);
+                _logger.LogDebug(
+                    "AI raw response length={Length} (card {Index}/{Total}, attempt {Attempt})",
+                    aiText.Length, currentIndex, totalRequested, attempt + 1);
+                _logger.LogTrace("AI raw response: {Raw}", aiText);
+
+                var cleaned = ExtractFirstJsonObject(aiText);
+                _logger.LogDebug(
+                    "AI cleaned payload length={Length} (card {Index}/{Total}, attempt {Attempt})",
+                    cleaned.Length, currentIndex, totalRequested, attempt + 1);
+                _logger.LogTrace("AI cleaned payload: {Cleaned}", cleaned);
+
+                using var docJson = JsonDocument.Parse(cleaned);
+                var root = docJson.RootElement;
+                _logger.LogWarning(docJson.RootElement.ToString());
+                JsonElement obj;
+                if (root.ValueKind == JsonValueKind.Array)
+                {
+                    if (root.GetArrayLength() == 0)
+                    {
+                        _logger.LogWarning(
+                            "AI returned empty array (card {Index}, attempt {Attempt})",
+                            currentIndex, attempt + 1);
+                        continue;
+                    }
+                    obj = root[0];
+                }
+                else if (root.ValueKind == JsonValueKind.Object)
+                {
+                    obj = root;
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "AI response is not a JSON object (card {Index}, attempt {Attempt})",
+                        currentIndex, attempt + 1);
+                    continue;
+                }
+
+                if (!obj.TryGetProperty("front", out var frontProp) ||
+                    !obj.TryGetProperty("back", out var backProp))
+                {
+                    _logger.LogWarning(
+                        "AI response missing front/back (card {Index}, attempt {Attempt})",
+                        currentIndex, attempt + 1);
+                    continue;
+                }
+
+                var front = frontProp.ValueKind == JsonValueKind.String
+                    ? frontProp.GetString()?.Trim()
+                    : null;
+                var back = backProp.ValueKind == JsonValueKind.String
+                    ? backProp.GetString()?.Trim()
+                    : null;
+
+                if (string.IsNullOrWhiteSpace(front) ||
+                    string.IsNullOrWhiteSpace(back))
+                {
+                    _logger.LogWarning(
+                        "AI returned empty front/back (card {Index}, attempt {Attempt})",
+                        currentIndex, attempt + 1);
+                    continue;
+                }
+
+                front = Regex.Replace(front, @"\s*\[[^\]]+\]", string.Empty).Trim();
+                back = Regex.Replace(back, @"\s*\[[^\]]+\]", string.Empty).Trim();
+
+                if (string.IsNullOrWhiteSpace(front))
+                {
+                    _logger.LogWarning(
+                        "AI front became empty after cleanup (card {Index}, attempt {Attempt})",
+                        currentIndex, attempt + 1);
+                    continue;
+                }
+
+                if (!seenFronts.Add(front))
+                {
+                    _logger.LogWarning(
+                        "AI returned duplicate front '{Front}' (card {Index}, attempt {Attempt})",
+                        front, currentIndex, attempt + 1);
+                    continue;
+                }
+
+                _logger.LogDebug(
+                    "Generated flashcard {Index}/{Total}: {Front}",
+                    currentIndex, totalRequested, front);
+                return new FlashcardResponseAiDto(front, back);
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to parse AI JSON response (card {Index}, attempt {Attempt})",
+                    currentIndex, attempt + 1);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "AI call failed (card {Index}, attempt {Attempt})",
+                    currentIndex, attempt + 1);
+            }
+        }
+
+        _logger.LogError(
+            "Could not generate flashcard {Index}/{Total} after {Max} attempts",
+            currentIndex, totalRequested, maxRetries);
+        return null;
+    }
+
+    private static string ExtractFirstJsonObject(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
             return text;
@@ -221,24 +265,24 @@ CONTEXT:
 
         var fenced = Regex.Match(
             text,
-            @"```(?:json)?\s*(\[[\s\S]*?\])\s*```",
+            @"```(?:json)?\s*(\{[\s\S]*?\})\s*```",
             RegexOptions.IgnoreCase);
 
-        var candidate = fenced.Success ? fenced.Groups[1].Value : FindBalancedArray(text);
+        var candidate = fenced.Success ? fenced.Groups[1].Value : FindBalancedObject(text);
 
         if (string.IsNullOrEmpty(candidate))
             return text;
 
-        var lastClose = candidate.LastIndexOf(']');
+        var lastClose = candidate.LastIndexOf('}');
         if (lastClose >= 0)
             candidate = candidate[..(lastClose + 1)];
 
         return candidate;
     }
 
-    private static string FindBalancedArray(string text)
+    private static string FindBalancedObject(string text)
     {
-        var start = text.IndexOf('[');
+        var start = text.IndexOf('{');
         if (start < 0)
             return string.Empty;
 
@@ -264,8 +308,8 @@ CONTEXT:
             }
 
             if (c == '"') inString = true;
-            else if (c == '[') depth++;
-            else if (c == ']')
+            else if (c == '{') depth++;
+            else if (c == '}')
             {
                 depth--;
                 if (depth == 0)
@@ -277,4 +321,3 @@ CONTEXT:
     }
 
 }
-
