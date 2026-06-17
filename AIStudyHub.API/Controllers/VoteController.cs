@@ -29,7 +29,11 @@ public sealed class VoteController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<VoteResponseDto>> Create([FromBody] CreateVoteRequestDto request, CancellationToken cancellationToken)
     {
-        var result = await _service.CreateAsync(request, cancellationToken);
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty)
+            return Unauthorized();
+
+        var result = await _service.CreateVoteAsync(userId, request.DocumentId, request.Type, cancellationToken);
         return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
     }
 
@@ -43,4 +47,15 @@ public sealed class VoteController : ControllerBase
 
     // GET    /api/Vote  (GetAll) - Đã xóa. Vote là dữ liệu riêng tư, không liệt kê tất cả.
     // PUT    /api/Vote/{id} - Đã xóa. Vote không có khái niệm cập nhật, chỉ có thả hoặc rút.
+
+    private Guid GetCurrentUserId()
+    {
+        var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
+            ?? User.FindFirst("sub")
+            ?? User.FindFirst("userId");
+
+        return claim != null && Guid.TryParse(claim.Value, out var userId)
+            ? userId
+            : Guid.Empty;
+    }
 }

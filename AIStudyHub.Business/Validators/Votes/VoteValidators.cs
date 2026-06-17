@@ -7,7 +7,6 @@ public sealed class CreateVoteRequestDtoValidator : AbstractValidator<CreateVote
 {
     public CreateVoteRequestDtoValidator()
     {
-        RuleFor(x => x.UserId).NotEmpty();
         RuleFor(x => x.DocumentId).NotEmpty();
         RuleFor(x => x.Type).IsInEnum();
     }
