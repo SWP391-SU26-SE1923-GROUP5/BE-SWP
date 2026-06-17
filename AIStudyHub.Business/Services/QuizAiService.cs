@@ -1,33 +1,29 @@
-<<<<<<< HEAD
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Data.Entities;
-=======
 using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
+
 using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-<<<<<<< HEAD
-=======
+
 using Microsoft.Extensions.Options;
 using System.Text.Json;
 using System.Text.RegularExpressions;
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
+
 
 namespace AIStudyHub.Business.Services;
 
 public sealed class QuizAiService : IQuizAiService
 {
     private readonly IUnitOfWork _unitOfWork;
-<<<<<<< HEAD
     private readonly IRagChatService _ragChatService;
     private readonly ILogger<QuizAiService> _logger;
 
@@ -42,7 +38,6 @@ public sealed class QuizAiService : IQuizAiService
     }
 
     public async Task<AiGeneratedQuizResponseDto> GenerateAndPersistQuizAsync(
-=======
     private readonly ILocalAIService _localAIService;
     private readonly RagOptions _options;
     private readonly ILogger<QuizAiService> _logger;
@@ -61,13 +56,12 @@ public sealed class QuizAiService : IQuizAiService
     }
 
     public async Task<AiGeneratedQuizResponseDto> GenerateQuizAsync(
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
+
         Guid documentId,
         CreateQuizRequestViaAIDto request,
         Guid userId,
         CancellationToken cancellationToken = default)
     {
-<<<<<<< HEAD
         if (request.numberOfQuestions <= 0 || request.numberOfQuestions > 20)
             throw new ArgumentOutOfRangeException(
                 nameof(request.numberOfQuestions),
@@ -76,16 +70,15 @@ public sealed class QuizAiService : IQuizAiService
         var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken);
         if (document is null)
             throw new KeyNotFoundException("Document not found");
-=======
+
         var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken)
             ?? throw new KeyNotFoundException("Document not found");
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
+
 
         var chunks = await _unitOfWork.DocumentChunks
             .Query()
             .Where(c => c.DocumentId == documentId)
             .OrderBy(c => c.OrderIndex)
-<<<<<<< HEAD
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
@@ -621,7 +614,6 @@ CONTEXT:
             }
             await _unitOfWork.SaveChangesAsync(cancellationToken);
         }
-=======
             .ToListAsync(cancellationToken);
 
         var context = string.Join("\n\n",
@@ -1078,6 +1070,5 @@ CONTEXT:
             "This is not the right answer",
         };
         return falseAnswers[_rng.Next(falseAnswers.Length)];
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
     }
 }

@@ -57,22 +57,9 @@ public sealed class FlashcardAiService : IFlashcardAiService
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
-<<<<<<< HEAD
         var context = BuildContext(chunks);
         var flashcards = new List<FlashcardResponseAiDto>(request.NumberOfFlashcards);
         var seenFronts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-=======
-        var context = string.Join(
-            "\n\n",
-            chunks.Select(c => ExtractChunkContent(c.ChunkJson)));
-        _logger.LogDebug("Flashcard context length={Length} for document {DocumentId}", context.Length, documentId);
-
-        var persistedCards = await _unitOfWork.Flashcards
-            .Query()
-            .Where(f => f.DocumentId == documentId)
-            .OrderBy(f => f.CreatedAt)
-            .AsNoTracking()
-            .ToListAsync(cancellationToken);
 
         _logger.LogDebug(
             "Loaded {Count} persisted flashcards for document {DocumentId} into history",
@@ -89,8 +76,6 @@ public sealed class FlashcardAiService : IFlashcardAiService
         var maxRetriesPerCard = 3;
         var maxConsecutiveFailures = 5;
         var consecutiveFailures = 0;
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
-
         var totalAttempts = 0;
         var consecutiveFailures = 0;
 
@@ -99,7 +84,6 @@ public sealed class FlashcardAiService : IFlashcardAiService
         while (flashcards.Count < request.NumberOfFlashcards
                && totalAttempts < MaxTotalAttempts)
         {
-<<<<<<< HEAD
             cancellationToken.ThrowIfCancellationRequested();
             totalAttempts++;
 
@@ -137,51 +121,6 @@ public sealed class FlashcardAiService : IFlashcardAiService
             _logger.LogInformation(
                 "Flashcard {Got}/{Requested} generated (attempt {Attempt})",
                 flashcards.Count, request.NumberOfFlashcards, totalAttempts);
-=======
-            var recentRejections = new List<string>(maxRetriesPerCard);
-            var card = await TryGenerateSingleFlashcardAsync(
-                context,
-                flashcards,
-                i + 1 + persistedCards.Count,
-                request.NumberOfFlashcards + persistedCards.Count,
-                seenFronts,
-                seenBacks,
-                recentRejections,
-                maxRetriesPerCard,
-                cancellationToken);
-
-            if (card is null)
-            {
-                consecutiveFailures++;
-                if (consecutiveFailures >= maxConsecutiveFailures)
-                {
-                    _logger.LogError(
-                        "Aborting flashcard generation after {Consecutive} consecutive failures",
-                        consecutiveFailures);
-                    break;
-                }
-                continue;
-            }
-
-            if (card.Front.StartsWith("__SKIP__:", StringComparison.Ordinal))
-            {
-                _logger.LogInformation(
-                    "Stopping flashcard generation at card {Index}: AI reported no more distinct topics in CONTEXT",
-                    i + 1);
-                break;
-            }
-
-            consecutiveFailures = 0;
-            flashcards.Add(card);
-        }
-
-        var newlyGenerated = flashcards.Count - persistedCards.Count;
-        if (newlyGenerated < request.NumberOfFlashcards)
-        {
-            _logger.LogWarning(
-                "Only generated {Got}/{Requested} NEW flashcards ({Total} total persisted+new for document)",
-                newlyGenerated, request.NumberOfFlashcards, flashcards.Count);
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
         }
 
         _logger.LogInformation(
@@ -191,7 +130,6 @@ public sealed class FlashcardAiService : IFlashcardAiService
         return new FlashcardsAiResponseDto(flashcards);
     }
 
-<<<<<<< HEAD
     private async Task<FlashcardResponseAiDto?> TryGenerateOneCardAsync(
         string context,
         IReadOnlyList<FlashcardResponseAiDto> existing,
@@ -324,75 +262,6 @@ CONTEXT:
     {
         var startIdx = text.IndexOf(open);
         if (startIdx < 0) return null;
-=======
-    private async Task<FlashcardResponseAiDto?> TryGenerateSingleFlashcardAsync(
-        string context,
-        List<FlashcardResponseAiDto> alreadyGenerated,
-        int currentIndex,
-        int totalRequested,
-        HashSet<string> seenFronts,
-        HashSet<string> seenBacks,
-        List<string> recentRejections,
-        int maxRetries,
-        CancellationToken cancellationToken)
-    {
-        const int existingCardsLimit = 8;
-        var tailCards = alreadyGenerated
-            .TakeLast(existingCardsLimit)
-            .Select(x => $"- front: \"{x.Front}\"  back: \"{x.Back}\"");
-        var existingCards = alreadyGenerated.Count == 0
-            ? "None"
-            : (alreadyGenerated.Count > existingCardsLimit
-                ? $"[showing last {existingCardsLimit} of {alreadyGenerated.Count}]\n" + string.Join("\n", tailCards)
-                : string.Join("\n", tailCards));
-
-        for (int attempt = 0; attempt < maxRetries; attempt++)
-        {
-            string previousRejection;
-                if (recentRejections.Count == 0)
-                {
-                    previousRejection = string.Empty;
-                }
-                else
-                {
-                    var rejectedList = string.Join("\n", recentRejections.Select(r => $"- \"{r}\""));
-                    previousRejection =
-                        "\nATTENTION — your previous attempts for this card were rejected. " +
-                        "You must NOT produce any of these fronts (or any close paraphrase of them):\n\n"
-                        + rejectedList
-                        + "\n\nPick a front about a clearly different concept. " +
-                        "If the CONTEXT does not contain enough distinct concepts, " +
-                        "return an object with both \"front\" and \"back\" set to the literal string \"SKIP\".\n\n";
-                }
-
-            var prompt = $$"""
-You are a JSON API.
-
-Return ONLY valid JSON. No markdown, no explanations, no code fences.
-
-Generate EXACTLY ONE flashcard as a single JSON object (not an array).
-
-Use ONLY information from the CONTEXT.
-
-Already generated cards (do NOT repeat or paraphrase any front OR back):
-
-{{existingCards}}
-{{previousRejection}}
-Response format (a single object):
-
-{ "front": "string", "back": "string" }
-
-Rules:
-- Return exactly one object (NOT an array, NOT a list). To skip this card (no more distinct topics left), return an object with both "front" and "back" set to the literal string "SKIP".
-- "front" and "back" must be non-empty strings.
-- "front" must be lexically unique against every "front" above.
-- "back" must be lexically unique against every "back" above.
-- "front" must cover a clearly different concept than every front above. Do not paraphrase, reword, or reformulate any existing front.
-- "front" should be a clear question, term, or prompt.
-- "back" should be a concise answer or explanation (1-3 sentences).
-- Stay strictly within the CONTEXT below.
-- Do not repeat, paraphrase, or overlap any existing card's front or back.
-
 This is card {{currentIndex}} of {{totalRequested}}.
 
 CONTEXT:
@@ -637,12 +506,11 @@ CONTEXT:
         var start = text.IndexOf('{');
         if (start < 0)
             return string.Empty;
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
+
 
         var depth = 0;
         var inString = false;
         var escape = false;
-<<<<<<< HEAD
         for (var i = startIdx; i < text.Length; i++)
         {
             var c = text[i];
@@ -682,7 +550,6 @@ CONTEXT:
         if (string.IsNullOrWhiteSpace(s)) return string.Empty;
         return Regex.Replace(s, @"\s*\[[^\]]+\]", "").Trim();
     }
-=======
 
         for (var i = start; i < text.Length; i++)
         {
@@ -714,5 +581,4 @@ CONTEXT:
         return string.Empty;
     }
 
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
 }

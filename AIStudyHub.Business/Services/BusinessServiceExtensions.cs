@@ -43,11 +43,10 @@ public static class BusinessServiceExtensions
        // services.AddScoped<IOpenAIService, OpenAIService>();
         services.AddScoped<IRagChatService, RagChatService>();
         services.AddScoped<AIStudyHub.Business.Interfaces.Services.IFlashcardAiService, AIStudyHub.Business.Services.FlashcardAiService>();
-<<<<<<< HEAD
-        services.AddScoped<AIStudyHub.Business.Interfaces.Services.IQuizAiService, AIStudyHub.Business.Services.QuizAiService>();
-=======
         services.AddScoped<IQuizAiService, QuizAiService>();
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
+
+        services.AddScoped<IQuizAiService, QuizAiService>();
+
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
 
         return services;

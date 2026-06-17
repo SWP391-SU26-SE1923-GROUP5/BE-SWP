@@ -25,12 +25,10 @@ namespace AIStudyHub.Business.Services
                 _httpClient.Timeout = TimeSpan.FromSeconds(120);
             }
         }
-<<<<<<< HEAD
         public Task<string> SendMessageAsync(string message)
             => SendMessageAsync(message, 0.2f);
 
         public async Task<string> SendMessageAsync(string message, float temperature)
-=======
 
         public Task<string> SendMessageAsync(string message)
         {
@@ -41,23 +39,20 @@ namespace AIStudyHub.Business.Services
             string message,
             float? temperature,
             int? numPredict = null,
-            CancellationToken cancellationToken = default)
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
+
         {
             var payload = new
             {
                 model = _options.OllamaModel,
                 stream = false,
-<<<<<<< HEAD
                 temperature = temperature,
-=======
                 format = "json",
                 options = new
                 {
                     temperature = temperature ?? _options.Temperature,
                     num_predict = numPredict ?? _options.MaxTokens
                 },
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
+
                 messages = new[]
                 {
                     new

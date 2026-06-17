@@ -32,27 +32,21 @@ public sealed class QuizController : ControllerBase
     public async Task<ActionResult<AiGeneratedQuizResponseDto>> GenerateFromDocument(
         Guid docId,
         [FromBody] CreateQuizRequestViaAIDto dto,
-<<<<<<< HEAD
         [FromServices] AIStudyHub.Business.Interfaces.Services.IQuizAiService quizAiService,
         CancellationToken cancellationToken)
     {
         var userIdClaim = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier || c.Type == "sub" || c.Type == "userId")?.Value;
-=======
-        [FromServices] AIStudyHub.Data.Interfaces.IUnitOfWork unitOfWork,
-        CancellationToken cancellationToken)
-    {
         var userIdClaim = User.Claims.FirstOrDefault(c =>
             c.Type == System.Security.Claims.ClaimTypes.NameIdentifier
             || c.Type == "sub"
             || c.Type == "userId")?.Value;
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
+
         if (!Guid.TryParse(userIdClaim, out var userId))
             return Forbid();
 
         if (dto.numberOfQuestions <= 0 || dto.numberOfQuestions > 20)
             return BadRequest("Number of questions must be between 1 and 20.");
 
-<<<<<<< HEAD
         try
         {
             var result = await quizAiService.GenerateAndPersistQuizAsync(
@@ -71,18 +65,6 @@ public sealed class QuizController : ControllerBase
         {
             return BadRequest(ex.Message);
         }
-=======
-        AiGeneratedQuizResponseDto aiResult;
-        try
-        {
-            aiResult = await _quizAiService.GenerateQuizAsync(docId, dto, userId, cancellationToken);
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound("Document not found.");
-        }
-        catch (InvalidOperationException ex)
-        {
             return BadRequest(ex.Message);
         }
 
@@ -156,7 +138,7 @@ public sealed class QuizController : ControllerBase
 
         var response = new AiGeneratedQuizResponseDto(cleanedTitle, cleanedQuestions);
         return Ok(response);
->>>>>>> b2820b1166319b4413a27b83e4366c51cf8c1b80
+
     }
 
     [HttpGet("{id:guid}")]
