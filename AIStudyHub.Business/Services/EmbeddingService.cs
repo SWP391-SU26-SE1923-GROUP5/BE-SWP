@@ -69,7 +69,7 @@ public sealed class EmbeddingService : IEmbeddingService
                 "application/json");
 
             _httpClient.DefaultRequestHeaders.Clear();
-            var requestUrl = $"{_options.OllamaUrl.TrimEnd('/')}/api/embeddings";
+            var requestUrl = $"{_options.OllamaUrl!.TrimEnd('/')}/api/embeddings";
             var response = await _httpClient.PostAsync(requestUrl, content);
 
             if (!response.IsSuccessStatusCode)
