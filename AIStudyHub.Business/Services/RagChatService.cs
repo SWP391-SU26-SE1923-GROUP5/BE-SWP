@@ -40,7 +40,7 @@ public sealed class RagChatService : IRagChatService
         _options = options.Value;
         _logger = logger;
 
-        _llmClient.BaseAddress = new Uri(_options.OllamaUrl!);
+        _llmClient.BaseAddress = new Uri(_options.OllamaUrl);
     }
 
     public async Task<RagChatResponseDto> ChatAsync(RagChatRequestDto request, Guid userId)
@@ -169,6 +169,19 @@ public sealed class RagChatService : IRagChatService
         return context.ToString();
     }
 
+    public async Task<string> SendRawPromptAsync(string prompt, float temperature = 0.2f)
+    {
+        try
+        {
+            return await _openAiService.SendMessageAsync(prompt, temperature);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "LLM server connection failed. URL: {Url}", _options.OllamaUrl);
+            throw;
+        }
+    }
+
     private async Task<string> GenerateAnswerAsync(string question, string context)
     {
         try
@@ -195,7 +208,10 @@ public sealed class RagChatService : IRagChatService
                 ANSWER (with citations like [1], [2], [3]):
                 """;
 
-            var response = await _openAiService.SendChatAsync(systemPrompt, new List<ChatTurn>(), userPrompt);
+            var response = await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
+
+
+
             return response;
         }
         catch (HttpRequestException ex)
