@@ -507,6 +507,41 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
 
         return saved.Select(_mapper.Map<FlashcardResponseDto>).ToList();
     }
+
+    public async Task<IReadOnlyList<FlashcardResponseDto>> CreateBulkAsync(
+        IReadOnlyList<CreateFlashcardRequestDto> requests,
+        CancellationToken cancellationToken = default)
+    {
+        if (requests is null || requests.Count == 0)
+            return Array.Empty<FlashcardResponseDto>();
+
+        var documentIds = requests.Select(r => r.DocumentId).Distinct().ToList();
+        var allDocumentsExist = await _unitOfWork.Documents
+            .Query()
+            .Where(d => documentIds.Contains(d.Id))
+            .Select(d => d.Id)
+            .CountAsync(cancellationToken) == documentIds.Count;
+
+        if (!allDocumentsExist)
+            throw new KeyNotFoundException("One or more documents not found.");
+
+        var flashcards = requests
+            .Select(r => _mapper.Map<Data.Entities.Flashcard>(r))
+            .ToList();
+
+        foreach (var flashcard in flashcards)
+            await _unitOfWork.Flashcards.AddAsync(flashcard, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var ids = flashcards.Select(f => f.Id).ToList();
+        var saved = await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => ids.Contains(f.Id))
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return saved.Select(_mapper.Map<FlashcardResponseDto>).ToList();
+    }
 }
 
 public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequestDto, UpdateQuizRequestDto>, IQuizService

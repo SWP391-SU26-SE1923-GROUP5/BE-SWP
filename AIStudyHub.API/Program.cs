@@ -64,6 +64,7 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.O
 
 builder.Services.Configure<DocumentStorageOptions>(builder.Configuration.GetSection("DocumentStorage"));
 builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<DocumentStorageOptions>>().Value);
+
 builder.Services.AddHostedService<UnverifiedAccountCleanupService>();
 builder.Services.AddHostedService<TierExpirationCleanupService>();
 
