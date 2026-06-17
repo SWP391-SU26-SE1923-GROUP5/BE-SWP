@@ -84,22 +84,24 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
 
     private UserResponseDto MapToDto(User user)
     {
-        return new UserResponseDto(
-            user.Id,
-            user.FullName,
-            user.Email ?? string.Empty,
-            user.DateOfBirth,
-            user.CurrentStorageCapacity,
-            user.CurrentAiTokenUsage,
-            user.Status,
-            user.Role,
-            user.TierId,
-            user.TierMembership?.TierName ?? "Unknown",
-            user.TierMembership?.StorageLimitMb ?? 0,
-            user.TierMembership?.AiTokens ?? 0,
-            user.TierExpireAt,
-            user.CreatedAt,
-            user.UpdatedAt);
+        return new UserResponseDto
+        {
+            Id = user.Id,
+            FullName = user.FullName,
+            Email = user.Email ?? string.Empty,
+            DateOfBirth = user.DateOfBirth,
+            CurrentStorageCapacity = user.CurrentStorageCapacity,
+            CurrentAiTokenUsage = user.CurrentAiTokenUsage,
+            Status = user.Status,
+            Role = user.Role,
+            TierId = user.TierId,
+            TierName = user.TierMembership?.TierName ?? "Unknown",
+            TierStorageLimitMb = user.TierMembership?.StorageLimitMb ?? 0,
+            TierAiTokens = user.TierMembership?.AiTokens ?? 0,
+            TierExpireAt = user.TierExpireAt,
+            CreatedAt = user.CreatedAt,
+            UpdatedAt = user.UpdatedAt
+        };
     }
 
     public override async Task<UserResponseDto> CreateAsync(CreateUserRequestDto request, CancellationToken cancellationToken = default)
