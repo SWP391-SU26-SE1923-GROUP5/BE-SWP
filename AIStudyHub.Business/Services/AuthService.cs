@@ -152,19 +152,17 @@ public sealed class AuthService : IAuthService
                 : request.FullName.Trim();
 
             user = BuildStudentUser(normalizedEmail, fullName, null);
+            user.EmailConfirmed = true; // OAuth provider verified email
             var tempPassword = $"Ext#{Guid.NewGuid():N}aA1!";
             var createResult = await _userManager.CreateAsync(user, tempPassword);
             EnsureIdentitySucceeded(createResult);
             await EnsureStudentRoleAsync(user);
         }
-        else if (!user.EmailConfirmed)
+        else
         {
-            user.EmailConfirmed = true;
-            var updateResult = await _userManager.UpdateAsync(user);
-            EnsureIdentitySucceeded(updateResult);
+            EnsureUserIsActive(user);
         }
 
-        EnsureUserIsActive(user);
         return await CreateAuthResponseAsync(user, cancellationToken);
     }
 
