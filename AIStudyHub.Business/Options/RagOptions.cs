@@ -5,8 +5,8 @@ public sealed class RagOptions
     // GPT4All Local LLM Settings
 
     public bool UseLocalLlm { get; set; } = true;
-    public int MaxTokens { get; set; } = 1000;
-    public float Temperature { get; set; } = 0.3f;
+    public int MaxTokens { get; set; } = 4000;
+    public float Temperature { get; set; } = 0.2f;
 
     // Ollama Local Embedding Settings
     public string? OllamaUrl { get; set; }
