@@ -2,10 +2,7 @@ using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using System.Linq;
-using System.Collections.Generic;
-using System.Text.RegularExpressions;
 
 namespace AIStudyHub.API.Controllers;
 
@@ -33,176 +30,34 @@ public sealed class QuizController : ControllerBase
     public async Task<ActionResult<AiGeneratedQuizResponseDto>> GenerateFromDocument(
         Guid docId,
         [FromBody] CreateQuizRequestViaAIDto dto,
-        [FromServices] AIStudyHub.Data.Interfaces.IUnitOfWork unitOfWork,
-        [FromServices] AIStudyHub.Business.Interfaces.Services.IRagChatService ragChatService,
+        [FromServices] AIStudyHub.Business.Interfaces.Services.IQuizAiService quizAiService,
         CancellationToken cancellationToken)
     {
-        // Basic auth check
         var userIdClaim = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier || c.Type == "sub" || c.Type == "userId")?.Value;
         if (!Guid.TryParse(userIdClaim, out var userId))
             return Forbid();
 
-
-        // Validate requested number of questions
-        var numberOfQuestions = dto.numberOfQuestions;
-        if (numberOfQuestions <= 0 || numberOfQuestions > 20)
+        if (dto.numberOfQuestions <= 0 || dto.numberOfQuestions > 20)
             return BadRequest("Number of questions must be between 1 and 20.");
 
-        // Load document
-        var document = await unitOfWork.Documents.GetByIdAsync(docId, cancellationToken);
-        if (document is null)
-            return NotFound("Document not found.");
-
-        // Load chunks (if available)
-        var chunks = await unitOfWork.DocumentChunks.Query()
-            .Where(c => c.DocumentId == docId)
-            .OrderBy(c => c.OrderIndex)
-            .AsNoTracking()
-            .ToListAsync(cancellationToken);
-
-        // Build prompt instructing model to return strict JSON
-        var constraintText = string.Empty; // CreateQuizRequestViaAIDto only contains Message; constraints must be expressed inside the message if needed
-
-        var instruction = $"""
-You are a JSON generation engine.
-
-ABSOLUTE RULES:
-- Output ONLY valid JSON.
-- No markdown, no backticks, no explanations, no text outside JSON.
-- If you output anything else, it is invalid.
-
-HARD JSON SCHEMA (must match exactly):
-{"{\r\n  \"quizTitle\": string,\r\n  \"questions\": [\r\n    {\r\n      \"questionTitle\": string,\r\n      \"questionType\": \"SingleChoice\",\r\n      \"position\": number,\r\n      \"answers\": [\r\n        {\r\n          \"selectedOption\": string,\r\n          \"isCorrect\": boolean\r\n        }\r\n      ]\r\n    }\r\n  ]\r\n}"}
-
-
-STRICT REQUIREMENTS:
-- You MUST generate exactly {dto.numberOfQuestions} questions.
-- Each question MUST have EXACTLY 4 answers.
-- Exactly ONE answer must have isCorrect = true.
-- All other answers must be false.
-- questionType MUST always be "SingleChoice".
-- position starts from 1 and increments by 1.
-- No extra fields allowed anywhere.
-- No null values.
-- No empty arrays.
-
-FAILURE = INVALID OUTPUT.
-""";
-
-        var promptBuilder = new System.Text.StringBuilder();
-        promptBuilder.AppendLine(instruction);
-        if (!string.IsNullOrWhiteSpace(constraintText))
-            promptBuilder.AppendLine($"Constraints: {constraintText}");
-        promptBuilder.AppendLine();
-        promptBuilder.AppendLine("User message:");
-        promptBuilder.AppendLine($"Generate {numberOfQuestions} quiz questions based on the provided document context, each question should have at most 4 answers. Return only the JSON described above.");
-        promptBuilder.AppendLine();
-        promptBuilder.AppendLine("Context:");
-        foreach (var c in chunks)
-        {
-            if (!string.IsNullOrWhiteSpace(c.ChunkJson))
-            {
-                promptBuilder.AppendLine(c.ChunkJson);
-                promptBuilder.AppendLine();
-            }
-            if (promptBuilder.Length > 30_000) break;
-        }
-
-        // RagChatRequestDto overload accepts optional single document id
-        var ragRequest = new AIStudyHub.Business.DTOs.Rag.RagChatRequestDto(promptBuilder.ToString(), docId);
-        var ragResponse = await ragChatService.ChatAsync(ragRequest, userId);
-        var aiText = ragResponse.Answer ?? string.Empty;
-        
-        // Try parse JSON
-        AIStudyHub.Business.DTOs.Quizzes.AiGeneratedQuizResponseDto? aiResult = null;
         try
         {
-            var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-            options.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
-            aiResult = System.Text.Json.JsonSerializer.Deserialize<AIStudyHub.Business.DTOs.Quizzes.AiGeneratedQuizResponseDto>(aiText, options);
+            var result = await quizAiService.GenerateAndPersistQuizAsync(
+                docId, dto, userId, cancellationToken);
+
+            if (result.Questions is null || result.Questions.Count == 0)
+                return BadRequest("AI did not return any valid questions.");
+
+            return Ok(result);
         }
-        catch (System.Text.Json.JsonException)
+        catch (KeyNotFoundException ex)
         {
-            return BadRequest("AI returned invalid JSON. Please ensure the prompt requests JSON output.");
+            return NotFound(ex.Message);
         }
-
-        if (aiResult is null || aiResult.Questions is null || aiResult.Questions.Count == 0)
-            return BadRequest("AI did not return any questions.");
-
-        // Clean AI-generated text: remove inline citation markers like [1], [2], etc.
-        var cleanedQuestions = aiResult.Questions
-            .Select(q =>
-            {
-                var cleanedTitle = string.IsNullOrWhiteSpace(q.QuestionTitle)
-                    ? string.Empty
-                    : Regex.Replace(q.QuestionTitle, "\\s*\\[\\d+\\]", string.Empty).Trim();
-
-                var cleanedAnswers = q.Answers?.Select(a =>
-                {
-                    var cleanedOption = string.IsNullOrWhiteSpace(a.SelectedOption)
-                        ? string.Empty
-                        : Regex.Replace(a.SelectedOption, "\\s*\\[\\d+\\]", string.Empty).Trim();
-                    return new AIStudyHub.Business.DTOs.Quizzes.AiGeneratedAnswerDto(cleanedOption, a.IsCorrect);
-                }).ToList() ?? new List<AIStudyHub.Business.DTOs.Quizzes.AiGeneratedAnswerDto>();
-
-                return new AIStudyHub.Business.DTOs.Quizzes.AiGeneratedQuestionDto(
-                    cleanedTitle,
-                    q.QuestionType,
-                    q.Position,
-                    cleanedAnswers);
-            }).ToList();
-
-        aiResult = new AIStudyHub.Business.DTOs.Quizzes.AiGeneratedQuizResponseDto(
-            Regex.Replace(aiResult.QuizTitle ?? string.Empty, "\\s*\\[\\d+\\]", string.Empty).Trim(),
-            cleanedQuestions);
-
-        // Persist quiz
-        var quiz = new AIStudyHub.Data.Entities.Quiz { DocumentId = docId, Title = aiResult.QuizTitle ?? document.Title ?? "Generated Quiz" };
-        await unitOfWork.Quizzes.AddAsync(quiz, cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-
-        foreach (var q in aiResult.Questions.Take(numberOfQuestions))
+        catch (ArgumentOutOfRangeException ex)
         {
-            // QuestionType is already an enum on the DTO; use it directly.
-            var qt = q.QuestionType;
-
-            // Clean AI-generated titles to remove inline citation markers like [1], [2], [3]
-            var cleanedTitle = string.IsNullOrWhiteSpace(q.QuestionTitle)
-                ? string.Empty
-                : Regex.Replace(q.QuestionTitle, "\\s*\\[\\d+\\]", string.Empty).Trim();
-
-            var question = new AIStudyHub.Data.Entities.Question
-            {
-                QuizId = quiz.Id,
-                Title = cleanedTitle,
-                Type = qt,
-                Position = q.Position > 0 ? q.Position : 0
-            };
-
-            await unitOfWork.Questions.AddAsync(question, cancellationToken);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-
-            if (q.Answers != null)
-            {
-                foreach (var a in q.Answers)
-                {
-                    var cleanedOption = string.IsNullOrWhiteSpace(a.SelectedOption)
-                        ? string.Empty
-                        : Regex.Replace(a.SelectedOption, "\\s*\\[\\d+\\]", string.Empty).Trim();
-
-                    var answer = new AIStudyHub.Data.Entities.Answer
-                    {
-                        QuestionId = question.Id,
-                        SelectedOption = cleanedOption,
-                        IsCorrect = a.IsCorrect
-                    };
-                    await unitOfWork.Answers.AddAsync(answer, cancellationToken);
-                }
-                await unitOfWork.SaveChangesAsync(cancellationToken);
-            }
+            return BadRequest(ex.Message);
         }
-
-        return Ok(aiResult);
     }
     /// <summary>Lấy thông tin quiz theo ID.</summary>
     [HttpGet("{id:guid}")]

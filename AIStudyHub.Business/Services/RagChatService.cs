@@ -169,6 +169,19 @@ public sealed class RagChatService : IRagChatService
         return context.ToString();
     }
 
+    public async Task<string> SendRawPromptAsync(string prompt, float temperature = 0.2f)
+    {
+        try
+        {
+            return await _openAiService.SendMessageAsync(prompt, temperature);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "LLM server connection failed. URL: {Url}", _options.OllamaUrl);
+            throw;
+        }
+    }
+
     private async Task<string> GenerateAnswerAsync(string question, string context)
     {
         try

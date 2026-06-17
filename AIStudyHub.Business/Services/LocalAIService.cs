@@ -23,7 +23,10 @@ namespace AIStudyHub.Business.Services
             _options = options.Value;
             _httpClient = httpClientFactory.CreateClient();
         }
-        public async Task<string> SendMessageAsync(string message)
+        public Task<string> SendMessageAsync(string message)
+            => SendMessageAsync(message, 0.2f);
+
+        public async Task<string> SendMessageAsync(string message, float temperature)
         {
             //use
             //_options.OllamaUrl+"/api/chat";
@@ -91,6 +94,7 @@ namespace AIStudyHub.Business.Services
             {
                 model = _options.OllamaModel,
                 stream = false,
+                temperature = temperature,
                 messages = new[]
         {
             new
