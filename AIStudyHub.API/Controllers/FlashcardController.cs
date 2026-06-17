@@ -40,6 +40,24 @@ public sealed class FlashcardController : ControllerBase
         return Ok(createdFlashcards);
     }
 
+    [HttpGet("/api/flashcard/document/{docId:guid}")]
+    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> GetByDocument(
+        Guid docId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _service.GetByDocumentAsync(docId, cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpPost("/api/flashcard/ai-save")]
+    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> SaveGenerated(
+        [FromBody] SaveGeneratedFlashcardsRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var saved = await _service.SaveGeneratedBatchAsync(request, cancellationToken);
+        return Ok(saved);
+    }
+
     /// <summary>Lấy danh sách tất cả flashcard.</summary>
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> GetAll(CancellationToken cancellationToken)
@@ -76,8 +94,4 @@ public sealed class FlashcardController : ControllerBase
         await _service.DeleteAsync(id, cancellationToken);
         return NoContent();
     }
-
-    // POST   /api/Flashcard  - Đã xóa. Flashcard phải được tạo từ Document qua AI.
-    // PUT    /api/Flashcard/{id} - Đã xóa.
-    // DELETE /api/Flashcard/{id} - Đã xóa.
 }
