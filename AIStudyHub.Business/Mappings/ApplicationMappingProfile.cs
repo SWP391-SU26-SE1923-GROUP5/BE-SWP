@@ -21,7 +21,24 @@ public sealed class ApplicationMappingProfile : Profile
 {
     public ApplicationMappingProfile()
     {
-        CreateMap<User, UserResponseDto>();
+        CreateMap<User, UserResponseDto>()
+            .ConstructUsing(src => new UserResponseDto(
+                src.Id,
+                src.FullName,
+                src.Email ?? string.Empty,
+                src.DateOfBirth,
+                src.CurrentStorageCapacity,
+                src.CurrentAiTokenUsage,
+                src.Status,
+                src.Role,
+                src.TierId,
+                src.TierMembership != null ? src.TierMembership.TierName : "Unknown",
+                src.TierMembership != null ? src.TierMembership.StorageLimitMb : 0,
+                src.TierMembership != null ? src.TierMembership.AiTokens : 0,
+                src.TierExpireAt,
+                src.CreatedAt,
+                src.UpdatedAt
+            ));
         CreateMap<CreateUserRequestDto, User>()
             .ForMember(dest => dest.CurrentAiTokenUsage, opt => opt.MapFrom(src => src.CurrentAiTokenUsage));
         CreateMap<UpdateUserRequestDto, User>()
