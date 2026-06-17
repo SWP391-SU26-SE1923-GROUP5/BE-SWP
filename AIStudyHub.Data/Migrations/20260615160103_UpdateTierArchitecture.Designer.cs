@@ -4,6 +4,7 @@ using AIStudyHub.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AIStudyHub.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260615160103_UpdateTierArchitecture")]
+    partial class UpdateTierArchitecture
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -156,9 +159,6 @@ namespace AIStudyHub.Data.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("nvarchar(255)")
                         .HasColumnName("file_name");
-
-                    b.Property<long>("FileSizeBytes")
-                        .HasColumnType("bigint");
 
                     b.Property<string>("FileType")
                         .HasMaxLength(128)
@@ -313,9 +313,6 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("nvarchar(max)")
                         .HasColumnName("message");
 
-                    b.Property<int>("Type")
-                        .HasColumnType("int");
-
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime")
                         .HasColumnName("update_at");
@@ -383,10 +380,6 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("payment_id");
 
-                    b.Property<decimal>("Amount")
-                        .HasColumnType("decimal(18,2)")
-                        .HasColumnName("amount");
-
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime")
                         .HasColumnName("create_at");
@@ -408,12 +401,6 @@ namespace AIStudyHub.Data.Migrations
                     b.Property<Guid?>("TierId")
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("tier_id");
-
-                    b.Property<string>("TransactionId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)")
-                        .HasColumnName("transaction_id");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime")
@@ -517,27 +504,18 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("datetime")
                         .HasColumnName("create_at");
 
-                    b.Property<DateTime?>("GradedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("MaxScore")
-                        .HasColumnType("int");
-
                     b.Property<Guid>("QuizId")
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("quiz_id");
 
-                    b.Property<int>("Score")
+                    b.Property<decimal?>("Score")
                         .HasPrecision(5, 2)
-                        .HasColumnType("int")
+                        .HasColumnType("decimal(5,2)")
                         .HasColumnName("score");
 
                     b.Property<DateTime>("SubmittedAt")
                         .HasColumnType("datetime")
                         .HasColumnName("submitted_at");
-
-                    b.Property<int>("TotalCorrect")
-                        .HasColumnType("int");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime")
@@ -709,7 +687,7 @@ namespace AIStudyHub.Data.Migrations
                         {
                             Id = new Guid("11111111-1111-1111-1111-111111111111"),
                             AiTokens = 10000,
-                            CreatedAt = new DateTime(2026, 6, 17, 5, 56, 15, 789, DateTimeKind.Utc).AddTicks(6066),
+                            CreatedAt = new DateTime(2026, 6, 15, 16, 1, 0, 117, DateTimeKind.Utc).AddTicks(3402),
                             StorageLimitMb = 1024,
                             TierName = "Free"
                         },
@@ -717,7 +695,7 @@ namespace AIStudyHub.Data.Migrations
                         {
                             Id = new Guid("55555555-5555-5555-5555-555555555555"),
                             AiTokens = 30000,
-                            CreatedAt = new DateTime(2026, 6, 17, 5, 56, 15, 789, DateTimeKind.Utc).AddTicks(6070),
+                            CreatedAt = new DateTime(2026, 6, 15, 16, 1, 0, 117, DateTimeKind.Utc).AddTicks(3406),
                             StorageLimitMb = 3072,
                             TierName = "Premium"
                         });
@@ -823,9 +801,7 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnName("tier_expire_at");
 
                     b.Property<Guid>("TierId")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier")
-                        .HasDefaultValue(new Guid("11111111-1111-1111-1111-111111111111"))
                         .HasColumnName("tier_id");
 
                     b.Property<bool>("TwoFactorEnabled")

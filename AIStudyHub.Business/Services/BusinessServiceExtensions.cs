@@ -1,3 +1,4 @@
+using AIStudyHub.Business.Options;
 using AIStudyHub.Business.Behaviors;
 using AIStudyHub.Business.Interfaces.Services;
 using MediatR;
@@ -7,7 +8,7 @@ namespace AIStudyHub.Business.Services;
 
 public static class BusinessServiceExtensions
 {
-    public static IServiceCollection AddBusinessServices(this IServiceCollection services)
+    public static IServiceCollection AddBusinessServices(this IServiceCollection services, Microsoft.Extensions.Configuration.IConfiguration configuration)
     {
         services.AddMediatR(configuration =>
         {
@@ -28,9 +29,11 @@ public static class BusinessServiceExtensions
         services.AddScoped<IAnswerService, AnswerService>();
         services.AddScoped<IQuizSubmissionService, QuizSubmissionService>();
         services.AddScoped<INotificationService, NotificationService>();
+        services.Configure<OtpOptions>(configuration.GetSection("Otp"));
+        services.Configure<AIStudyHub.Business.Options.VnPayOptions>(configuration.GetSection(AIStudyHub.Business.Options.VnPayOptions.SectionName));
+        services.AddScoped<IVnPayService, VnPayService>();
         services.AddScoped<IPaymentService, PaymentService>();
         services.AddScoped<ITierMembershipService, TierMembershipService>();
-        services.AddScoped<ITierUserService, TierUserService>();
         services.AddScoped<IAIChatService, AIChatService>();
         services.AddScoped<IDocumentProcessingService, DocumentProcessingService>();
         services.AddScoped<IEmbeddingService, EmbeddingService>();

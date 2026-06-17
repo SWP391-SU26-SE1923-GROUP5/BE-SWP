@@ -5,6 +5,7 @@ using AIStudyHub.Data.Interfaces;
 using AutoMapper;
 using FluentValidation;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 
 namespace AIStudyHub.Business.Services;
 
@@ -32,14 +33,73 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
 
     public override async Task<IReadOnlyList<UserResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
-        var users = await _unitOfWork.Users.GetAllAsync(cancellationToken);
-        return _mapper.Map<IReadOnlyList<UserResponseDto>>(users);
+        var users = await _unitOfWork.Users
+            .Query()
+            .Include(u => u.TierMembership)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+        return users.Select(MapToDto).ToList();
     }
 
     public override async Task<UserResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var user = await _unitOfWork.Users.GetByIdAsync(id, cancellationToken);
-        return user is null ? null : _mapper.Map<UserResponseDto>(user);
+        var user = await _unitOfWork.Users
+            .Query()
+            .Include(u => u.TierMembership)
+            .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
+        return user is null ? null : MapToDto(user);
+    }
+
+    public async Task<UserTierInfoDto?> GetUserTierInfoAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var user = await _unitOfWork.Users
+            .Query()
+            .Include(u => u.TierMembership)
+            .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+
+        if (user is null) return null;
+
+        return new UserTierInfoDto(
+            user.TierId,
+            user.TierMembership?.TierName ?? "Unknown",
+            user.TierMembership?.StorageLimitMb ?? 0,
+            user.TierMembership?.AiTokens ?? 0,
+            user.TierExpireAt,
+            user.CurrentStorageCapacity,
+            user.CurrentAiTokenUsage);
+    }
+
+    public async Task UpdateUserTierAsync(Guid userId, UpdateUserTierRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString())
+            ?? throw new KeyNotFoundException("User not found.");
+
+        var tier = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierId, cancellationToken)
+            ?? throw new KeyNotFoundException("Tier not found.");
+
+        user.TierId = request.TierId;
+        user.TierExpireAt = request.TierExpireAt;
+        await _userManager.UpdateAsync(user);
+    }
+
+    private UserResponseDto MapToDto(User user)
+    {
+        return new UserResponseDto(
+            user.Id,
+            user.FullName,
+            user.Email ?? string.Empty,
+            user.DateOfBirth,
+            user.CurrentStorageCapacity,
+            user.CurrentAiTokenUsage,
+            user.Status,
+            user.Role,
+            user.TierId,
+            user.TierMembership?.TierName ?? "Unknown",
+            user.TierMembership?.StorageLimitMb ?? 0,
+            user.TierMembership?.AiTokens ?? 0,
+            user.TierExpireAt,
+            user.CreatedAt,
+            user.UpdatedAt);
     }
 
     public override async Task<UserResponseDto> CreateAsync(CreateUserRequestDto request, CancellationToken cancellationToken = default)
