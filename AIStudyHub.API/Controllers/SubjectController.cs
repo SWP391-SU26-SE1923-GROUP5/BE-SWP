@@ -33,9 +33,9 @@ public sealed class SubjectController : ControllerBase
         return result is null ? NotFound() : Ok(result);
     }
 
-    /// <summary>Tạo môn học mới (Admin only).</summary>
+    /// <summary>Tạo môn học mới (Student, Admin).</summary>
     [HttpPost]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = "Student,Admin")]
     public async Task<ActionResult<SubjectResponseDto>> Create([FromBody] CreateSubjectRequestDto request, CancellationToken cancellationToken)
     {
         var result = await _service.CreateAsync(request, cancellationToken);
