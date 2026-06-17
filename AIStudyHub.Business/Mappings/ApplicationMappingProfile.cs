@@ -56,7 +56,11 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<CreateAnswerRequestDto, Answer>();
         CreateMap<UpdateAnswerRequestDto, Answer>();
 
-        CreateMap<QuizSubmission, QuizSubmissionResponseDto>();
+        CreateMap<QuizSubmission, QuizSubmissionResponseDto>()
+            .ForMember(dest => dest.Score, opt => opt.MapFrom(src => src.Score))
+            .ForMember(dest => dest.MaxScore, opt => opt.MapFrom(src => src.MaxScore))
+            .ForMember(dest => dest.TotalCorrect, opt => opt.MapFrom(src => src.TotalCorrect))
+            .ForMember(dest => dest.GradedAt, opt => opt.MapFrom(src => src.GradedAt));
         CreateMap<CreateQuizSubmissionRequestDto, QuizSubmission>();
         CreateMap<UpdateQuizSubmissionRequestDto, QuizSubmission>();
 
