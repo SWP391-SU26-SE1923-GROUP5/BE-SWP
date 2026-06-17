@@ -389,6 +389,77 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
         _unitOfWork.Flashcards.Remove(flashcard);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
+
+    public async Task<IReadOnlyList<FlashcardResponseDto>> GetByDocumentAsync(
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        var flashcards = await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => f.DocumentId == documentId)
+            .OrderBy(f => f.CreatedAt)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return flashcards.Select(_mapper.Map<FlashcardResponseDto>).ToList();
+    }
+
+    public async Task<IReadOnlyList<FlashcardResponseDto>> SaveGeneratedBatchAsync(
+        SaveGeneratedFlashcardsRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.Flashcards is null || request.Flashcards.Count == 0)
+            return Array.Empty<FlashcardResponseDto>();
+
+        var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
+        if (!documentExists)
+        {
+            throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
+        }
+
+        var existingFronts = (await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => f.DocumentId == request.DocumentId)
+            .Select(f => f.Front)
+            .ToListAsync(cancellationToken))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var created = new List<Data.Entities.Flashcard>();
+        foreach (var card in request.Flashcards)
+        {
+            if (string.IsNullOrWhiteSpace(card.Front) || string.IsNullOrWhiteSpace(card.Back))
+                continue;
+
+            var cleanFront = card.Front.Trim();
+            var cleanBack = card.Back.Trim();
+
+            if (!existingFronts.Add(cleanFront))
+                continue;
+
+            created.Add(new Data.Entities.Flashcard
+            {
+                DocumentId = request.DocumentId,
+                Front = cleanFront,
+                Back = cleanBack
+            });
+        }
+
+        if (created.Count == 0)
+            return Array.Empty<FlashcardResponseDto>();
+
+        foreach (var card in created)
+            await _unitOfWork.Flashcards.AddAsync(card, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var ids = created.Select(c => c.Id).ToList();
+        var saved = await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => ids.Contains(f.Id))
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return saved.Select(_mapper.Map<FlashcardResponseDto>).ToList();
+    }
 }
 
 public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequestDto, UpdateQuizRequestDto>, IQuizService

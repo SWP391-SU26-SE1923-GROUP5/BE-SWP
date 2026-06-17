@@ -12,3 +12,7 @@ public sealed record UpdateFlashcardRequestDto(string Front, string Back);
 public sealed record CreateFlashcardsViaAiRequestDto(int NumberOfFlashcards = 10);
 
 public sealed record FlashcardsAiResponseDto(IReadOnlyList<FlashcardResponseAiDto> Flashcards);
+
+public sealed record SaveGeneratedFlashcardsRequestDto(
+    Guid DocumentId,
+    IReadOnlyList<FlashcardResponseAiDto> Flashcards);
