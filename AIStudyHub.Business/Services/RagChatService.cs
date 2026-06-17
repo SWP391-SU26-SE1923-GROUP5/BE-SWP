@@ -40,7 +40,7 @@ public sealed class RagChatService : IRagChatService
         _options = options.Value;
         _logger = logger;
 
-        _llmClient.BaseAddress = new Uri(_options.OllamaUrl);
+        _llmClient.BaseAddress = new Uri(_options.OllamaUrl!);
     }
 
     public async Task<RagChatResponseDto> ChatAsync(RagChatRequestDto request, Guid userId)
@@ -195,10 +195,7 @@ public sealed class RagChatService : IRagChatService
                 ANSWER (with citations like [1], [2], [3]):
                 """;
 
-            var response= await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
-
-
-
+            var response = await _openAiService.SendChatAsync(systemPrompt, new List<ChatTurn>(), userPrompt);
             return response;
         }
         catch (HttpRequestException ex)
