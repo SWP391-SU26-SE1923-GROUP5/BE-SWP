@@ -1,4 +1,4 @@
-﻿using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
 using Microsoft.Extensions.Options;
 using OpenAI.Chat;
@@ -151,6 +151,33 @@ namespace AIStudyHub.Business.Services
             var response = await _httpClient.PostAsJsonAsync(
                 $"{_options.OllamaUrl}/api/embed",
                 payload);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                // Fallback to old API (/api/embeddings) for older Ollama versions
+                var payloadOld = new
+                {
+                    model = _options.OllamaEmbeddingModel,
+                    prompt = message
+                };
+
+                var responseOld = await _httpClient.PostAsJsonAsync(
+                    $"{_options.OllamaUrl}/api/embeddings",
+                    payloadOld);
+
+                responseOld.EnsureSuccessStatusCode();
+
+                using var jsonOld = await JsonDocument.ParseAsync(
+                    await responseOld.Content.ReadAsStreamAsync());
+
+                var embeddingArrayOld = jsonOld.RootElement
+                    .GetProperty("embedding");
+
+                return embeddingArrayOld
+                    .EnumerateArray()
+                    .Select(x => x.GetSingle())
+                    .ToArray();
+            }
 
             response.EnsureSuccessStatusCode();
 

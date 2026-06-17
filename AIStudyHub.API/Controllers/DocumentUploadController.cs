@@ -53,6 +53,7 @@ public sealed class DocumentUploadController : ControllerBase
     [ProducesResponseType(typeof(UploadDocumentResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     public async Task<ActionResult<UploadDocumentResponseDto>> UploadDocumentFile(
         [FromForm] UploadDocumentFileRequestDto request,
@@ -73,8 +74,25 @@ public sealed class DocumentUploadController : ControllerBase
         if (subject == null)
             return BadRequest($"Subject with ID {request.SubjectId} not found");
 
+        // Check file size limit from options
+        if (request.File.Length > _options.MaxFileSizeBytes)
+            return BadRequest($"File exceeds maximum allowed size of {_options.MaxFileSizeBytes / (1024 * 1024)}MB");
+
         try
         {
+            // Check storage quota
+            var user = await _unitOfWork.Users.GetByIdAsync(userId, cancellationToken);
+            if (user == null)
+                return Unauthorized();
+
+            var tier = await _unitOfWork.TierMemberships.GetByIdAsync(user.TierId, cancellationToken);
+            if (tier == null)
+                return StatusCode(500, "User tier not found");
+
+            var fileSizeMb = request.File.Length / (1024.0 * 1024.0);
+            if (user.CurrentStorageCapacity + fileSizeMb > tier.StorageLimitMb)
+                return StatusCode(403, $"Storage quota exceeded. Your tier ({tier.TierName}) allows {tier.StorageLimitMb}MB. Current usage: {user.CurrentStorageCapacity:F2}MB. This file: {fileSizeMb:F2}MB.");
+
             var extension = Path.GetExtension(request.File.FileName).ToLowerInvariant();
 
             if (!_fileStorage.IsValidExtension(extension))
@@ -118,6 +136,7 @@ public sealed class DocumentUploadController : ControllerBase
                 FileExtension = extension,
                 FileType = request.File.ContentType,
                 FileLink = fileUrl,
+                FileSizeBytes = request.File.Length,
                 ShareStatus = "private",
                 Status = DocumentStatus.Published,
                 CreatedAt = DateTime.UtcNow,
@@ -125,6 +144,11 @@ public sealed class DocumentUploadController : ControllerBase
             };
 
             await _unitOfWork.Documents.AddAsync(document);
+
+            // Update user's storage usage (already calculated above)
+            user.CurrentStorageCapacity += (int)fileSizeMb;
+            _unitOfWork.Users.Update(user);
+
             await _unitOfWork.SaveChangesAsync(cancellationToken); // Save Document first to get ID
 
             var embeddings = await _embeddingService.GenerateEmbeddingsAsync(chunks);
@@ -241,6 +265,15 @@ public sealed class DocumentUploadController : ControllerBase
             {
                 var relativePath = document.FileLink.Replace("/uploads/", "");
                 await _fileStorage.DeleteFileAsync(relativePath, cancellationToken);
+            }
+
+            // Update user's storage usage
+            var user = await _unitOfWork.Users.GetByIdAsync(userId, cancellationToken);
+            if (user != null)
+            {
+                var fileSizeMb = document.FileSizeBytes / (1024.0 * 1024.0);
+                user.CurrentStorageCapacity = Math.Max(0, user.CurrentStorageCapacity - (int)fileSizeMb);
+                _unitOfWork.Users.Update(user);
             }
 
             await _unitOfWork.SaveChangesAsync(cancellationToken);
