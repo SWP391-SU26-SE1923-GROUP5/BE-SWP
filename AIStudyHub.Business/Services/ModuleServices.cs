@@ -12,6 +12,7 @@ using AIStudyHub.Business.DTOs.Subjects;
 using AIStudyHub.Business.DTOs.TierMemberships;
 using AIStudyHub.Business.DTOs.Votes;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
 using Microsoft.EntityFrameworkCore;
@@ -35,10 +36,25 @@ public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDoc
             .Query()
             .Include(d => d.Subject)
             .Include(d => d.User)
+            .Include(d => d.Votes)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
-        return documents.Select(_mapper.Map<DocumentResponseDto>).ToList();
+        return documents.Select(d => new DocumentResponseDto(
+            d.Id,
+            d.UserId,
+            d.SubjectId,
+            d.Title,
+            d.FileLink,
+            d.FileName,
+            d.FileExtension,
+            d.FileType,
+            d.SharedUsers,
+            d.ShareStatus,
+            d.Status,
+            d.Votes.Count,
+            d.CreatedAt,
+            d.UpdatedAt)).ToList();
     }
 
     public override async Task<DocumentResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
@@ -47,10 +63,27 @@ public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDoc
             .Query()
             .Include(d => d.Subject)
             .Include(d => d.User)
+            .Include(d => d.Votes)
             .AsNoTracking()
             .FirstOrDefaultAsync(d => d.Id == id, cancellationToken);
 
-        return document is null ? null : _mapper.Map<DocumentResponseDto>(document);
+        if (document is null) return null;
+
+        return new DocumentResponseDto(
+            document.Id,
+            document.UserId,
+            document.SubjectId,
+            document.Title,
+            document.FileLink,
+            document.FileName,
+            document.FileExtension,
+            document.FileType,
+            document.SharedUsers,
+            document.ShareStatus,
+            document.Status,
+            document.Votes.Count,
+            document.CreatedAt,
+            document.UpdatedAt);
     }
 
     public override async Task<DocumentResponseDto> CreateAsync(CreateDocumentRequestDto request, CancellationToken cancellationToken = default)
@@ -145,24 +178,32 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
         return vote is null ? null : _mapper.Map<VoteResponseDto>(vote);
     }
 
-    public override async Task<VoteResponseDto> CreateAsync(CreateVoteRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<VoteResponseDto> CreateVoteAsync(Guid userId, Guid documentId, VoteType type, CancellationToken cancellationToken = default)
     {
         var existing = await _unitOfWork.Votes
             .Query()
-            .FirstOrDefaultAsync(v => v.UserId == request.UserId && v.DocumentId == request.DocumentId, cancellationToken);
+            .FirstOrDefaultAsync(v => v.UserId == userId && v.DocumentId == documentId, cancellationToken);
 
         if (existing is not null)
         {
-            throw new InvalidOperationException($"User has already voted on this document.");
+            throw new InvalidOperationException("User has already voted on this document.");
         }
 
-        var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
+        var documentExists = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken) is not null;
         if (!documentExists)
         {
-            throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
+            throw new KeyNotFoundException($"Document with ID {documentId} not found.");
         }
 
-        var vote = _mapper.Map<Data.Entities.Vote>(request);
+        var vote = new Data.Entities.Vote
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            DocumentId = documentId,
+            Type = type,
+            CreatedAt = DateTime.UtcNow
+        };
+
         await _unitOfWork.Votes.AddAsync(vote, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -176,6 +217,11 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
         return _mapper.Map<VoteResponseDto>(created);
     }
 
+    public override async Task<VoteResponseDto> CreateAsync(CreateVoteRequestDto request, CancellationToken cancellationToken = default)
+    {
+        throw new NotSupportedException("Use CreateVoteAsync with explicit userId for security.");
+    }
+
     public override async Task<VoteResponseDto> UpdateAsync(Guid id, UpdateVoteRequestDto request, CancellationToken cancellationToken = default)
     {
         var vote = await _unitOfWork.Votes.GetByIdAsync(id, cancellationToken);
@@ -184,7 +230,8 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
             throw new KeyNotFoundException($"Vote with ID {id} not found.");
         }
 
-        _mapper.Map(request, vote);
+        vote.Type = request.Type;
+        vote.UpdatedAt = DateTime.UtcNow;
         _unitOfWork.Votes.Update(vote);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -388,6 +435,112 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
 
         _unitOfWork.Flashcards.Remove(flashcard);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<FlashcardResponseDto>> GetByDocumentAsync(
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        var flashcards = await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => f.DocumentId == documentId)
+            .OrderBy(f => f.CreatedAt)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return flashcards.Select(_mapper.Map<FlashcardResponseDto>).ToList();
+    }
+
+    public async Task<IReadOnlyList<FlashcardResponseDto>> SaveGeneratedBatchAsync(
+        SaveGeneratedFlashcardsRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.Flashcards is null || request.Flashcards.Count == 0)
+            return Array.Empty<FlashcardResponseDto>();
+
+        var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
+        if (!documentExists)
+        {
+            throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
+        }
+
+        var existingFronts = (await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => f.DocumentId == request.DocumentId)
+            .Select(f => f.Front)
+            .ToListAsync(cancellationToken))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var created = new List<Data.Entities.Flashcard>();
+        foreach (var card in request.Flashcards)
+        {
+            if (string.IsNullOrWhiteSpace(card.Front) || string.IsNullOrWhiteSpace(card.Back))
+                continue;
+
+            var cleanFront = card.Front.Trim();
+            var cleanBack = card.Back.Trim();
+
+            if (!existingFronts.Add(cleanFront))
+                continue;
+
+            created.Add(new Data.Entities.Flashcard
+            {
+                DocumentId = request.DocumentId,
+                Front = cleanFront,
+                Back = cleanBack
+            });
+        }
+
+        if (created.Count == 0)
+            return Array.Empty<FlashcardResponseDto>();
+
+        foreach (var card in created)
+            await _unitOfWork.Flashcards.AddAsync(card, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var ids = created.Select(c => c.Id).ToList();
+        var saved = await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => ids.Contains(f.Id))
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return saved.Select(_mapper.Map<FlashcardResponseDto>).ToList();
+    }
+
+    public async Task<IReadOnlyList<FlashcardResponseDto>> CreateBulkAsync(
+        IReadOnlyList<CreateFlashcardRequestDto> requests,
+        CancellationToken cancellationToken = default)
+    {
+        if (requests is null || requests.Count == 0)
+            return Array.Empty<FlashcardResponseDto>();
+
+        var documentIds = requests.Select(r => r.DocumentId).Distinct().ToList();
+        var allDocumentsExist = await _unitOfWork.Documents
+            .Query()
+            .Where(d => documentIds.Contains(d.Id))
+            .Select(d => d.Id)
+            .CountAsync(cancellationToken) == documentIds.Count;
+
+        if (!allDocumentsExist)
+            throw new KeyNotFoundException("One or more documents not found.");
+
+        var flashcards = requests
+            .Select(r => _mapper.Map<Data.Entities.Flashcard>(r))
+            .ToList();
+
+        foreach (var flashcard in flashcards)
+            await _unitOfWork.Flashcards.AddAsync(flashcard, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var ids = flashcards.Select(f => f.Id).ToList();
+        var saved = await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => ids.Contains(f.Id))
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return saved.Select(_mapper.Map<FlashcardResponseDto>).ToList();
     }
 }
 
@@ -694,14 +847,57 @@ public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDt
 
     public override async Task<QuizSubmissionResponseDto> CreateAsync(CreateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
     {
-        var quizExists = await _unitOfWork.Quizzes.GetByIdAsync(request.QuizId, cancellationToken) is not null;
-        if (!quizExists)
+        var quiz = await _unitOfWork.Quizzes
+            .Query()
+            .Include(q => q.Questions)
+                .ThenInclude(q => q.Answers)
+            .FirstOrDefaultAsync(q => q.Id == request.QuizId, cancellationToken);
+
+        if (quiz is null)
         {
             throw new KeyNotFoundException($"Quiz with ID {request.QuizId} not found.");
         }
 
-        var submission = _mapper.Map<Data.Entities.QuizSubmission>(request);
-        submission.SubmittedAt = DateTime.UtcNow;
+        var submission = new Data.Entities.QuizSubmission
+        {
+            Id = Guid.NewGuid(),
+            UserId = request.UserId,
+            QuizId = request.QuizId,
+            Answers = request.Answers,
+            SubmittedAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Grade the submission
+        if (quiz.Questions.Any())
+        {
+            var maxScore = quiz.Questions.Count;
+            var totalCorrect = 0;
+
+            // Simple grading: parse submitted answers and match with questions
+            // Assuming request.Answers is JSON string like "{\"q1\":\"A\",\"q2\":\"B\"}"
+            // And Question has Answers where IsCorrect == true
+            var submittedAnswers = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(request.Answers)
+                ?? new Dictionary<string, string>();
+
+            foreach (var question in quiz.Questions)
+            {
+                var correctAnswer = question.Answers.FirstOrDefault(a => a.IsCorrect);
+                if (correctAnswer != null && submittedAnswers.TryGetValue(question.Id.ToString(), out var selectedOption))
+                {
+                    if (correctAnswer.SelectedOption.Equals(selectedOption, StringComparison.OrdinalIgnoreCase))
+                    {
+                        totalCorrect++;
+                    }
+                }
+            }
+
+            submission.Score = totalCorrect;
+            submission.MaxScore = maxScore;
+            submission.TotalCorrect = totalCorrect;
+            submission.GradedAt = DateTime.UtcNow;
+        }
+
         await _unitOfWork.QuizSubmissions.AddAsync(submission, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -785,7 +981,21 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
 
     public override async Task<NotificationResponseDto> CreateAsync(CreateNotificationRequestDto request, CancellationToken cancellationToken = default)
     {
-        var notification = _mapper.Map<Data.Entities.Notification>(request);
+        if (!Enum.TryParse<Data.Enums.NotificationType>(request.Type, true, out var notificationType))
+        {
+            notificationType = Data.Enums.NotificationType.System;
+        }
+
+        var notification = new Data.Entities.Notification
+        {
+            Id = Guid.NewGuid(),
+            UserId = request.UserId,
+            Message = request.Message,
+            Type = notificationType,
+            IsRead = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
         await _unitOfWork.Notifications.AddAsync(notification, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -795,7 +1005,14 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
             .AsNoTracking()
             .FirstOrDefaultAsync(n => n.Id == notification.Id, cancellationToken);
 
-        return _mapper.Map<NotificationResponseDto>(created);
+        return new NotificationResponseDto(
+            created!.Id,
+            created.UserId,
+            created.Message,
+            created.IsRead,
+            created.Type.ToString(),
+            created.CreatedAt,
+            created.UpdatedAt);
     }
 
     public override async Task<NotificationResponseDto> UpdateAsync(Guid id, UpdateNotificationRequestDto request, CancellationToken cancellationToken = default)
@@ -828,6 +1045,48 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
         }
 
         _unitOfWork.Notifications.Remove(notification);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<NotificationResponseDto>> GetUserNotificationsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var notifications = await _unitOfWork.Notifications
+            .Query()
+            .Where(n => n.UserId == userId)
+            .OrderByDescending(n => n.CreatedAt)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return notifications.Select(n => new NotificationResponseDto(
+            n.Id, n.UserId, n.Message, n.IsRead, n.Type.ToString(), n.CreatedAt, n.UpdatedAt)).ToList();
+    }
+
+    public async Task MarkAsReadAsync(Guid notificationId, CancellationToken cancellationToken = default)
+    {
+        var notification = await _unitOfWork.Notifications.GetByIdAsync(notificationId, cancellationToken);
+        if (notification is null)
+        {
+            throw new KeyNotFoundException($"Notification with ID {notificationId} not found.");
+        }
+
+        notification.IsRead = true;
+        _unitOfWork.Notifications.Update(notification);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task MarkAllAsReadAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var notifications = await _unitOfWork.Notifications
+            .Query()
+            .Where(n => n.UserId == userId && !n.IsRead)
+            .ToListAsync(cancellationToken);
+
+        foreach (var notification in notifications)
+        {
+            notification.IsRead = true;
+            _unitOfWork.Notifications.Update(notification);
+        }
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 }
@@ -873,37 +1132,54 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
     {
         if (request.TierId.HasValue)
         {
-            var tierExists = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierId.Value, cancellationToken) is not null;
-            if (!tierExists)
+            var tier = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierId.Value, cancellationToken);
+            if (tier is null)
             {
                 throw new KeyNotFoundException($"Tier membership with ID {request.TierId} not found.");
             }
-        }
 
-        var payment = _mapper.Map<Data.Entities.Payment>(request);
-        await _unitOfWork.Payments.AddAsync(payment, cancellationToken);
+            var payment = _mapper.Map<Data.Entities.Payment>(request);
+            await _unitOfWork.Payments.AddAsync(payment, cancellationToken);
 
-        if (request.TierId.HasValue)
-        {
             var user = await _unitOfWork.Users.GetByIdAsync(request.UserId, cancellationToken);
             if (user is not null)
             {
                 user.TierId = request.TierId.Value;
-                user.TierExpireAt = DateTime.UtcNow.AddDays(30);
+                if (!tier.TierName.Equals("Free", StringComparison.OrdinalIgnoreCase))
+                {
+                    user.TierExpireAt = DateTime.UtcNow.AddDays(30);
+                }
+                else
+                {
+                    user.TierExpireAt = null;
+                }
                 _unitOfWork.Users.Update(user);
             }
+
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            var created = await _unitOfWork.Payments
+                .Query()
+                .Include(p => p.User)
+                .Include(p => p.TierMembership)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == payment.Id, cancellationToken);
+
+            return _mapper.Map<PaymentResponseDto>(created);
         }
 
+        var paymentNoTier = _mapper.Map<Data.Entities.Payment>(request);
+        await _unitOfWork.Payments.AddAsync(paymentNoTier, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var created = await _unitOfWork.Payments
+        var createdNoTier = await _unitOfWork.Payments
             .Query()
             .Include(p => p.User)
             .Include(p => p.TierMembership)
             .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == payment.Id, cancellationToken);
+            .FirstOrDefaultAsync(p => p.Id == paymentNoTier.Id, cancellationToken);
 
-        return _mapper.Map<PaymentResponseDto>(created);
+        return _mapper.Map<PaymentResponseDto>(createdNoTier);
     }
 
     public override async Task<PaymentResponseDto> UpdateAsync(Guid id, UpdatePaymentRequestDto request, CancellationToken cancellationToken = default)
@@ -1005,8 +1281,16 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
                 var user = await _unitOfWork.Users.GetByIdAsync(payment.UserId, cancellationToken);
                 if (user is not null)
                 {
+                    var tier = await _unitOfWork.TierMemberships.GetByIdAsync(payment.TierId.Value, cancellationToken);
                     user.TierId = payment.TierId.Value;
-                    user.TierExpireAt = DateTime.UtcNow.AddDays(30);
+                    if (tier is not null && !tier.TierName.Equals("Free", StringComparison.OrdinalIgnoreCase))
+                    {
+                        user.TierExpireAt = DateTime.UtcNow.AddDays(30);
+                    }
+                    else
+                    {
+                        user.TierExpireAt = null;
+                    }
                     _unitOfWork.Users.Update(user);
                 }
             }
@@ -1020,6 +1304,43 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return true;
+    }
+
+    public async Task<IReadOnlyList<PaymentResponseDto>> GetUserPaymentsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var payments = await _unitOfWork.Payments
+            .Query()
+            .Include(p => p.User)
+            .Include(p => p.TierMembership)
+            .Where(p => p.UserId == userId)
+            .AsNoTracking()
+            .OrderByDescending(p => p.PaymentDate)
+            .ToListAsync(cancellationToken);
+
+        return payments.Select(_mapper.Map<PaymentResponseDto>).ToList();
+    }
+
+    public async Task RefundPaymentAsync(Guid paymentId, CancellationToken cancellationToken = default)
+    {
+        var payment = await _unitOfWork.Payments.GetByIdAsync(paymentId, cancellationToken);
+        if (payment is null)
+        {
+            throw new KeyNotFoundException($"Payment with ID {paymentId} not found.");
+        }
+
+        if (payment.Status == Data.Enums.PaymentStatus.Refunded)
+        {
+            throw new InvalidOperationException("Payment has already been refunded.");
+        }
+
+        if (payment.Status != Data.Enums.PaymentStatus.Completed)
+        {
+            throw new InvalidOperationException("Only completed payments can be refunded.");
+        }
+
+        payment.Status = Data.Enums.PaymentStatus.Refunded;
+        _unitOfWork.Payments.Update(payment);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 }
 

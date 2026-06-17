@@ -20,14 +20,42 @@ public sealed class FlashcardController : ControllerBase
     }
 
     [HttpPost("/api/flashcard/document/{docId:guid}/ai-gen")]
-    public async Task<ActionResult<AIStudyHub.Business.DTOs.Flashcards.FlashcardsAiResponseDto>> GenerateFromDocument(Guid docId, [FromBody] CreateFlashcardsViaAiRequestDto request, CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> GenerateFromDocument(Guid docId, [FromBody] CreateFlashcardsViaAiRequestDto request, CancellationToken cancellationToken)
     {
         var userIdClaim = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier || c.Type == "sub" || c.Type == "userId")?.Value;
         if (!Guid.TryParse(userIdClaim, out var userId))
             return Forbid();
 
-        var result = await _flashcardAiService.GenerateFlashcardsAsync(docId, request, userId, cancellationToken);
+        var aiResult = await _flashcardAiService.GenerateFlashcardsAsync(docId, request, userId, cancellationToken);
+
+        // Save generated flashcards to DB
+        var createdFlashcards = new List<FlashcardResponseDto>();
+        foreach (var flashcard in aiResult.Flashcards)
+        {
+            var createDto = new CreateFlashcardRequestDto(docId, flashcard.Front, flashcard.Back);
+            var created = await _service.CreateAsync(createDto, cancellationToken);
+            createdFlashcards.Add(created);
+        }
+
+        return Ok(createdFlashcards);
+    }
+
+    [HttpGet("/api/flashcard/document/{docId:guid}")]
+    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> GetByDocument(
+        Guid docId,
+        CancellationToken cancellationToken)
+    {
+        var result = await _service.GetByDocumentAsync(docId, cancellationToken);
         return Ok(result);
+    }
+
+    [HttpPost("/api/flashcard/ai-save")]
+    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> SaveGenerated(
+        [FromBody] SaveGeneratedFlashcardsRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var saved = await _service.SaveGeneratedBatchAsync(request, cancellationToken);
+        return Ok(saved);
     }
 
     /// <summary>Lấy danh sách tất cả flashcard.</summary>
@@ -66,8 +94,4 @@ public sealed class FlashcardController : ControllerBase
         await _service.DeleteAsync(id, cancellationToken);
         return NoContent();
     }
-
-    // POST   /api/Flashcard  - Đã xóa. Flashcard phải được tạo từ Document qua AI.
-    // PUT    /api/Flashcard/{id} - Đã xóa.
-    // DELETE /api/Flashcard/{id} - Đã xóa.
 }
