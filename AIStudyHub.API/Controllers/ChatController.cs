@@ -23,44 +23,28 @@ public sealed class ChatController : ControllerBase
     [HttpGet("sessions")]
     public async Task<ActionResult<IReadOnlyList<ChatSessionResponseDto>>> GetSessions()
     {
-        var userId = GetCurrentUserId();
-        if (userId == Guid.Empty)
-            return Unauthorized();
-
-        var result = await _chatService.GetSessionsAsync(userId);
+        var result = await _chatService.GetSessionsAsync();
         return Ok(result);
     }
 
     [HttpPost("sessions")]
     public async Task<ActionResult<ChatSessionResponseDto>> CreateSession(CreateChatSessionRequestDto request)
     {
-        var userId = GetCurrentUserId();
-        if (userId == Guid.Empty)
-            return Unauthorized();
-
-        var result = await _chatService.CreateSessionAsync(request, userId);
+        var result = await _chatService.CreateSessionAsync(request);
         return Ok(result);
     }
 
     [HttpGet("sessions/{sessionId:guid}/messages")]
     public async Task<ActionResult<IReadOnlyList<ChatMessageResponseDto>>> GetMessages(Guid sessionId)
     {
-        var userId = GetCurrentUserId();
-        if (userId == Guid.Empty)
-            return Unauthorized();
-
-        var result = await _chatService.GetMessagesAsync(sessionId, userId);
+        var result = await _chatService.GetMessagesAsync(sessionId);
         return Ok(result);
     }
 
     [HttpPost("messages")]
     public async Task<ActionResult<ChatMessageResponseDto>> CreateMessage(CreateChatMessageRequestDto request)
     {
-        var userId = GetCurrentUserId();
-        if (userId == Guid.Empty)
-            return Unauthorized();
-
-        var result = await _chatService.CreateMessageAsync(request, userId);
+        var result = await _chatService.CreateMessageAsync(request);
         return Ok(result);
     }
 

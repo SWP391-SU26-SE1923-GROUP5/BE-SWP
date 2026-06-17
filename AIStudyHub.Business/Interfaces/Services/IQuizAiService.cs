@@ -4,7 +4,11 @@ namespace AIStudyHub.Business.Interfaces.Services;
 
 public interface IQuizAiService
 {
-    Task<AiGeneratedQuizResponseDto> GenerateQuizAsync(
+    /// <summary>
+    /// Generate a quiz of the requested number of questions from a document's
+    /// chunks. Persists the resulting Quiz/Question/Answer rows.
+    /// </summary>
+    Task<AiGeneratedQuizResponseDto> GenerateAndPersistQuizAsync(
         Guid documentId,
         CreateQuizRequestViaAIDto request,
         Guid userId,
