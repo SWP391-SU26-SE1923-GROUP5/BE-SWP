@@ -4,8 +4,8 @@ namespace AIStudyHub.Business.Interfaces.Services;
 
 public interface IAIChatService
 {
-    Task<IReadOnlyList<ChatSessionResponseDto>> GetSessionsAsync();
-    Task<ChatSessionResponseDto> CreateSessionAsync(CreateChatSessionRequestDto request);
-    Task<IReadOnlyList<ChatMessageResponseDto>> GetMessagesAsync(Guid sessionId);
-    Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request);
+    Task<IReadOnlyList<ChatSessionResponseDto>> GetSessionsAsync(Guid? userId = null);
+    Task<ChatSessionResponseDto> CreateSessionAsync(CreateChatSessionRequestDto request, Guid userId);
+    Task<IReadOnlyList<ChatMessageResponseDto>> GetMessagesAsync(Guid sessionId, Guid userId);
+    Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request, Guid userId);
 }
