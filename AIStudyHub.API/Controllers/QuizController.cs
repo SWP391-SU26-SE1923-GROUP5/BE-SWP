@@ -1,5 +1,6 @@
 using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Data.Enums;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Linq;
@@ -12,13 +13,14 @@ namespace AIStudyHub.API.Controllers;
 public sealed class QuizController : ControllerBase
 {
     private readonly IQuizService _service;
+    private readonly IQuizAiService _quizAiService;
 
-    public QuizController(IQuizService service)
+    public QuizController(IQuizService service, IQuizAiService quizAiService)
     {
         _service = service;
+        _quizAiService = quizAiService;
     }
 
-    /// <summary>Lấy danh sách tất cả quiz.</summary>
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<QuizResponseDto>>> GetAll(CancellationToken cancellationToken)
     {
@@ -59,7 +61,7 @@ public sealed class QuizController : ControllerBase
             return BadRequest(ex.Message);
         }
     }
-    /// <summary>Lấy thông tin quiz theo ID.</summary>
+
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<QuizResponseDto>> GetById(Guid id, CancellationToken cancellationToken)
     {
@@ -87,8 +89,4 @@ public sealed class QuizController : ControllerBase
         await _service.DeleteAsync(id, cancellationToken);
         return NoContent();
     }
-
-    // POST   /api/Quiz  - Đã xóa. Quiz phải được AI sinh ra từ Document.
-    // PUT    /api/Quiz/{id} - Đã xóa.
-    // DELETE /api/Quiz/{id} - Đã xóa. Xóa quiz phải đi kèm xóa Question và Answer con.
 }

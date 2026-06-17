@@ -14,6 +14,7 @@ public sealed record DocumentResponseDto(
     string? SharedUsers,
     string ShareStatus,
     DocumentStatus? Status,
+    int VoteCount,
     DateTime CreatedAt,
     DateTime? UpdatedAt);
 

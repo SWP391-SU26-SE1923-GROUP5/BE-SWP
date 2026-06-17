@@ -21,7 +21,24 @@ public sealed class ApplicationMappingProfile : Profile
 {
     public ApplicationMappingProfile()
     {
-        CreateMap<User, UserResponseDto>();
+        CreateMap<User, UserResponseDto>()
+            .ConstructUsing(src => new UserResponseDto(
+                src.Id,
+                src.FullName,
+                src.Email ?? string.Empty,
+                src.DateOfBirth,
+                src.CurrentStorageCapacity,
+                src.CurrentAiTokenUsage,
+                src.Status,
+                src.Role,
+                src.TierId,
+                src.TierMembership != null ? src.TierMembership.TierName : "Unknown",
+                src.TierMembership != null ? src.TierMembership.StorageLimitMb : 0,
+                src.TierMembership != null ? src.TierMembership.AiTokens : 0,
+                src.TierExpireAt,
+                src.CreatedAt,
+                src.UpdatedAt
+            ));
         CreateMap<CreateUserRequestDto, User>()
             .ForMember(dest => dest.CurrentAiTokenUsage, opt => opt.MapFrom(src => src.CurrentAiTokenUsage));
         CreateMap<UpdateUserRequestDto, User>()
@@ -56,7 +73,11 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<CreateAnswerRequestDto, Answer>();
         CreateMap<UpdateAnswerRequestDto, Answer>();
 
-        CreateMap<QuizSubmission, QuizSubmissionResponseDto>();
+        CreateMap<QuizSubmission, QuizSubmissionResponseDto>()
+            .ForMember(dest => dest.Score, opt => opt.MapFrom(src => src.Score))
+            .ForMember(dest => dest.MaxScore, opt => opt.MapFrom(src => src.MaxScore))
+            .ForMember(dest => dest.TotalCorrect, opt => opt.MapFrom(src => src.TotalCorrect))
+            .ForMember(dest => dest.GradedAt, opt => opt.MapFrom(src => src.GradedAt));
         CreateMap<CreateQuizSubmissionRequestDto, QuizSubmission>();
         CreateMap<UpdateQuizSubmissionRequestDto, QuizSubmission>();
 

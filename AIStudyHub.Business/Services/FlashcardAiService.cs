@@ -1,4 +1,5 @@
 using AIStudyHub.Business.DTOs.Flashcards;
+using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
 using AIStudyHub.Data.Interfaces;
@@ -39,7 +40,7 @@ public sealed class FlashcardAiService : IFlashcardAiService
         Guid userId,
         CancellationToken cancellationToken = default)
     {
-        if (request.NumberOfFlashcards <= 0 || request.NumberOfFlashcards > 20)
+        if (request.NumberOfFlashcards <= 0 || request.NumberOfFlashcards > 7)
             throw new ArgumentOutOfRangeException(
                 nameof(request.NumberOfFlashcards),
                 "Number of flashcards must be between 1 and 20.");

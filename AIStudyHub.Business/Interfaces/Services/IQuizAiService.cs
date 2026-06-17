@@ -9,6 +9,7 @@ public interface IQuizAiService
     /// chunks. Persists the resulting Quiz/Question/Answer rows.
     /// </summary>
     Task<AiGeneratedQuizResponseDto> GenerateAndPersistQuizAsync(
+    Task<AiGeneratedQuizResponseDto> GenerateQuizAsync(
         Guid documentId,
         CreateQuizRequestViaAIDto request,
         Guid userId,
