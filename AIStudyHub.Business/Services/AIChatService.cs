@@ -51,10 +51,16 @@ public sealed class AIChatService : IAIChatService
         _logger = logger;
     }
 
-    public async Task<IReadOnlyList<ChatSessionResponseDto>> GetSessionsAsync()
+    public async Task<IReadOnlyList<ChatSessionResponseDto>> GetSessionsAsync(Guid? userId = null)
     {
-        var sessions = await _unitOfWork.ChatSessions
-            .Query()
+        var query = _unitOfWork.ChatSessions.Query();
+
+        if (userId.HasValue)
+        {
+            query = query.Where(s => s.UserId == userId.Value);
+        }
+
+        var sessions = await query
             .Include(session => session.User)
             .Include(session => session.Document)
             .AsNoTracking()
@@ -64,17 +70,25 @@ public sealed class AIChatService : IAIChatService
         return sessions.Select(_mapper.Map<ChatSessionResponseDto>).ToList();
     }
 
-    public async Task<ChatSessionResponseDto> CreateSessionAsync(CreateChatSessionRequestDto request)
+    public async Task<ChatSessionResponseDto> CreateSessionAsync(CreateChatSessionRequestDto request, Guid userId)
     {
         await _createSessionValidator.ValidateAndThrowAsync(request);
 
-        var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId) is not null;
-        if (!documentExists)
+        var document = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId);
+        if (document is null)
         {
             throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
         }
 
-        var session = _mapper.Map<ChatSession>(request);
+        var session = new ChatSession
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            DocumentId = request.DocumentId,
+            SessionTitle = request.SessionTitle ?? "New Chat",
+            CreatedAt = DateTime.UtcNow
+        };
+
         await _unitOfWork.ChatSessions.AddAsync(session);
         await _unitOfWork.SaveChangesAsync();
 
@@ -88,12 +102,17 @@ public sealed class AIChatService : IAIChatService
         return _mapper.Map<ChatSessionResponseDto>(created);
     }
 
-    public async Task<IReadOnlyList<ChatMessageResponseDto>> GetMessagesAsync(Guid sessionId)
+    public async Task<IReadOnlyList<ChatMessageResponseDto>> GetMessagesAsync(Guid sessionId, Guid userId)
     {
-        var sessionExists = await _unitOfWork.ChatSessions.GetByIdAsync(sessionId) is not null;
-        if (!sessionExists)
+        var session = await _unitOfWork.ChatSessions.GetByIdAsync(sessionId);
+        if (session is null)
         {
             throw new KeyNotFoundException($"Chat session with ID {sessionId} not found.");
+        }
+
+        if (session.UserId != userId)
+        {
+            throw new UnauthorizedAccessException("You do not have access to this chat session.");
         }
 
         var messages = await _unitOfWork.ChatMessages
@@ -106,12 +125,12 @@ public sealed class AIChatService : IAIChatService
         return messages.Select(_mapper.Map<ChatMessageResponseDto>).ToList();
     }
 
-    public async Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request)
+    public async Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request, Guid userId)
     {
         await _createMessageValidator.ValidateAndThrowAsync(request);
 
-        var sessionExists = await _unitOfWork.ChatSessions.GetByIdAsync(request.SessionId) is not null;
-        if (!sessionExists)
+        var session = await _unitOfWork.ChatSessions.GetByIdAsync(request.SessionId);
+        if (session is null)
         {
             throw new KeyNotFoundException($"Chat session with ID {request.SessionId} not found.");
         }
@@ -143,12 +162,7 @@ public sealed class AIChatService : IAIChatService
         await _unitOfWork.ChatMessages.AddAsync(assistantMessage);
         await _unitOfWork.SaveChangesAsync();
 
-        var created = await _unitOfWork.ChatMessages
-            .Query()
-            .AsNoTracking()
-            .FirstAsync(chatMessage => chatMessage.Id == assistantMessage.Id);
-
-        return _mapper.Map<ChatMessageResponseDto>(created);
+        return _mapper.Map<ChatMessageResponseDto>(assistantMessage);
     }
 
     private async Task<List<ChatTurn>> LoadHistoryAsync(Guid sessionId, Guid excludeMessageId)

@@ -1,4 +1,4 @@
-﻿using AIStudyHub.Business.DTOs.AIChat;
+using AIStudyHub.Business.DTOs.AIChat;
 using AIStudyHub.Business.DTOs.Answers;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Flashcards;
@@ -10,7 +10,6 @@ using AIStudyHub.Business.DTOs.QuizSubmissions;
 using AIStudyHub.Business.DTOs.Reports;
 using AIStudyHub.Business.DTOs.Subjects;
 using AIStudyHub.Business.DTOs.TierMemberships;
-using AIStudyHub.Business.DTOs.TierUsers;
 using AIStudyHub.Business.DTOs.Users;
 using AIStudyHub.Business.DTOs.Votes;
 using AIStudyHub.Data.Entities;
@@ -57,7 +56,11 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<CreateAnswerRequestDto, Answer>();
         CreateMap<UpdateAnswerRequestDto, Answer>();
 
-        CreateMap<QuizSubmission, QuizSubmissionResponseDto>();
+        CreateMap<QuizSubmission, QuizSubmissionResponseDto>()
+            .ForMember(dest => dest.Score, opt => opt.MapFrom(src => src.Score))
+            .ForMember(dest => dest.MaxScore, opt => opt.MapFrom(src => src.MaxScore))
+            .ForMember(dest => dest.TotalCorrect, opt => opt.MapFrom(src => src.TotalCorrect))
+            .ForMember(dest => dest.GradedAt, opt => opt.MapFrom(src => src.GradedAt));
         CreateMap<CreateQuizSubmissionRequestDto, QuizSubmission>();
         CreateMap<UpdateQuizSubmissionRequestDto, QuizSubmission>();
 
@@ -73,9 +76,6 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<TierMembership, TierMembershipResponseDto>();
         CreateMap<CreateTierMembershipRequestDto, TierMembership>();
         CreateMap<UpdateTierMembershipRequestDto, TierMembership>();
-
-        CreateMap<TierUser, TierUserResponseDto>();
-        CreateMap<CreateTierUserRequestDto, TierUser>();
 
         CreateMap<Subject, SubjectResponseDto>();
         CreateMap<CreateSubjectRequestDto, Subject>();

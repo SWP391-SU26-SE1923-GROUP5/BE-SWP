@@ -15,4 +15,5 @@ public interface IFlashcardService : ICrudService<FlashcardResponseDto, CreateFl
     Task<IReadOnlyList<FlashcardResponseDto>> SaveGeneratedBatchAsync(
         SaveGeneratedFlashcardsRequestDto request,
         CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<FlashcardResponseDto>> CreateBulkAsync(IReadOnlyList<CreateFlashcardRequestDto> requests, CancellationToken cancellationToken = default);
 }

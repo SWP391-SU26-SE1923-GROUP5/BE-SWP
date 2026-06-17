@@ -1,4 +1,4 @@
-﻿using AIStudyHub.Data.Entities;
+using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -22,8 +22,11 @@ internal sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(x => x.CurrentAiTokenUsage).HasColumnName("current_ai_token_usage").HasDefaultValue(0);
         builder.Property(x => x.Status).HasColumnName("status").HasMaxLength(20).HasDefaultValue("active");
         builder.Property(x => x.Role).HasColumnName("role").HasMaxLength(20).IsRequired();
+        builder.Property(x => x.TierId).HasColumnName("tier_id").IsRequired().HasDefaultValue(Guid.Parse("11111111-1111-1111-1111-111111111111"));
+        builder.Property(x => x.TierExpireAt).HasColumnName("tier_expire_at").HasColumnType("datetime");
         builder.HasIndex(x => x.FullName).IsUnique();
         builder.HasIndex(x => x.Email).IsUnique();
+        builder.HasOne(x => x.TierMembership).WithMany(x => x.Users).HasForeignKey(x => x.TierId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -70,22 +73,6 @@ internal sealed class TierMembershipConfiguration : IEntityTypeConfiguration<Tie
         builder.Property(x => x.AiTokens).HasColumnName("ai_tokens").IsRequired();
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
-    }
-}
-
-internal sealed class TierUserConfiguration : IEntityTypeConfiguration<TierUser>
-{
-    public void Configure(EntityTypeBuilder<TierUser> builder)
-    {
-        builder.ToTable("TierUser");
-        builder.HasKey(x => x.Id);
-        builder.Property(x => x.Id).HasColumnName("tier_user_id");
-        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
-        builder.Property(x => x.TierMembershipId).HasColumnName("tier_id").IsRequired();
-        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
-        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
-        builder.HasOne(x => x.User).WithMany(x => x.TierUsers).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
-        builder.HasOne(x => x.TierMembership).WithMany(x => x.TierUsers).HasForeignKey(x => x.TierMembershipId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -277,6 +264,8 @@ internal sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
         builder.Property(x => x.PaymentDate).HasColumnName("payment_date").HasColumnType("datetime");
         builder.Property(x => x.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(20);
         builder.Property(x => x.TierId).HasColumnName("tier_id");
+        builder.Property(x => x.Amount).HasColumnName("amount").HasColumnType("decimal(18,2)");
+        builder.Property(x => x.TransactionId).HasColumnName("transaction_id").HasMaxLength(100);
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.User).WithMany(x => x.Payments).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
