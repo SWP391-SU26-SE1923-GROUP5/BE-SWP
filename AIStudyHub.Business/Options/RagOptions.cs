@@ -36,4 +36,7 @@ public sealed class RagOptions
     public int ChunkSize { get; set; } = 512;
     public int ChunkOverlap { get; set; } = 50;
     public int TopKChunks { get; set; } = 5;
+
+    // File Upload Settings
+    public long MaxFileSizeBytes { get; set; } = 50 * 1024 * 1024; // 50MB default
 }
