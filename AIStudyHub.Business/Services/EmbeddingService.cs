@@ -35,15 +35,7 @@ public sealed class EmbeddingService : IEmbeddingService
 
     public async Task<List<float[]>> GenerateEmbeddingsAsync(List<string> texts)
     {
-        var embeddings = new List<float[]>();
-
-        foreach (string text in texts)
-        {
-            var embedding = await _localAIService.CreateEmbeddingFromText(text);
-            embeddings.Add(embedding.ToArray());
-        }
-
-        return embeddings;
+        return await _localAIService.CreateEmbeddingsFromTexts(texts);
     }
 
     public int GetEmbeddingDimension()

@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AIStudyHub.Business.Services;
 
-public sealed class UserService : CrudService<UserResponseDto, CreateUserRequestDto, UpdateUserRequestDto>, IUserService
+public sealed class UserService : IUserService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly UserManager<User> _userManager;
@@ -31,7 +31,7 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
         _updateValidator = updateValidator;
     }
 
-    public override async Task<IReadOnlyList<UserResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<UserResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var users = await _unitOfWork.Users
             .Query()
@@ -41,7 +41,7 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
         return users.Select(MapToDto).ToList();
     }
 
-    public override async Task<UserResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<UserResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var user = await _unitOfWork.Users
             .Query()
@@ -102,7 +102,7 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
             user.UpdatedAt);
     }
 
-    public override async Task<UserResponseDto> CreateAsync(CreateUserRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<UserResponseDto> CreateAsync(CreateUserRequestDto request, CancellationToken cancellationToken = default)
     {
         await _createValidator.ValidateAndThrowAsync(request, cancellationToken);
 
@@ -139,7 +139,7 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
         return _mapper.Map<UserResponseDto>(user);
     }
 
-    public override async Task<UserResponseDto> UpdateAsync(Guid id, UpdateUserRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<UserResponseDto> UpdateAsync(Guid id, UpdateUserRequestDto request, CancellationToken cancellationToken = default)
     {
         await _updateValidator.ValidateAndThrowAsync(request, cancellationToken);
 
@@ -181,7 +181,7 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
         return _mapper.Map<UserResponseDto>(user);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var user = await _userManager.FindByIdAsync(id.ToString())
             ?? throw new KeyNotFoundException("User not found.");

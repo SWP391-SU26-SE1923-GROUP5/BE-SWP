@@ -19,7 +19,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AIStudyHub.Business.Services;
 
-public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDocumentRequestDto, UpdateDocumentRequestDto>, IDocumentService
+public sealed class DocumentService : IDocumentService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -30,7 +30,7 @@ public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDoc
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<DocumentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<DocumentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var documents = await _unitOfWork.Documents
             .Query()
@@ -85,7 +85,7 @@ public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDoc
             d.UpdatedAt)).ToList();
     }
 
-    public override async Task<DocumentResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<DocumentResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var document = await _unitOfWork.Documents
             .Query()
@@ -114,7 +114,7 @@ public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDoc
             document.UpdatedAt);
     }
 
-    public override async Task<DocumentResponseDto> CreateAsync(CreateDocumentRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<DocumentResponseDto> CreateAsync(CreateDocumentRequestDto request, CancellationToken cancellationToken = default)
     {
         var subjectExists = await _unitOfWork.Subjects.GetByIdAsync(request.SubjectId, cancellationToken) is not null;
         if (!subjectExists)
@@ -136,7 +136,7 @@ public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDoc
         return _mapper.Map<DocumentResponseDto>(created);
     }
 
-    public override async Task<DocumentResponseDto> UpdateAsync(Guid id, UpdateDocumentRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<DocumentResponseDto> UpdateAsync(Guid id, UpdateDocumentRequestDto request, CancellationToken cancellationToken = default)
     {
         var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
         if (document is null)
@@ -158,7 +158,7 @@ public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDoc
         return _mapper.Map<DocumentResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
         if (document is null)
@@ -171,7 +171,7 @@ public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDoc
     }
 }
 
-public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequestDto, UpdateVoteRequestDto>, IVoteService
+public sealed class VoteService : IVoteService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -182,7 +182,7 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<VoteResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<VoteResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var votes = await _unitOfWork.Votes
             .Query()
@@ -194,7 +194,7 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
         return votes.Select(_mapper.Map<VoteResponseDto>).ToList();
     }
 
-    public override async Task<VoteResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<VoteResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var vote = await _unitOfWork.Votes
             .Query()
@@ -245,12 +245,12 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
         return _mapper.Map<VoteResponseDto>(created);
     }
 
-    public override async Task<VoteResponseDto> CreateAsync(CreateVoteRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<VoteResponseDto> CreateAsync(CreateVoteRequestDto request, CancellationToken cancellationToken = default)
     {
         throw new NotSupportedException("Use CreateVoteAsync with explicit userId for security.");
     }
 
-    public override async Task<VoteResponseDto> UpdateAsync(Guid id, UpdateVoteRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<VoteResponseDto> UpdateAsync(Guid id, UpdateVoteRequestDto request, CancellationToken cancellationToken = default)
     {
         var vote = await _unitOfWork.Votes.GetByIdAsync(id, cancellationToken);
         if (vote is null)
@@ -273,7 +273,7 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
         return _mapper.Map<VoteResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var vote = await _unitOfWork.Votes.GetByIdAsync(id, cancellationToken);
         if (vote is null)
@@ -286,7 +286,7 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
     }
 }
 
-public sealed class ReportService : CrudService<ReportResponseDto, CreateReportRequestDto, UpdateReportRequestDto>, IReportService
+public sealed class ReportService : IReportService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -297,7 +297,7 @@ public sealed class ReportService : CrudService<ReportResponseDto, CreateReportR
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<ReportResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<ReportResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var reports = await _unitOfWork.Reports
             .Query()
@@ -309,7 +309,7 @@ public sealed class ReportService : CrudService<ReportResponseDto, CreateReportR
         return reports.Select(_mapper.Map<ReportResponseDto>).ToList();
     }
 
-    public override async Task<ReportResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<ReportResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var report = await _unitOfWork.Reports
             .Query()
@@ -321,7 +321,7 @@ public sealed class ReportService : CrudService<ReportResponseDto, CreateReportR
         return report is null ? null : _mapper.Map<ReportResponseDto>(report);
     }
 
-    public override async Task<ReportResponseDto> CreateAsync(CreateReportRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<ReportResponseDto> CreateAsync(CreateReportRequestDto request, CancellationToken cancellationToken = default)
     {
         var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
         if (!documentExists)
@@ -343,7 +343,7 @@ public sealed class ReportService : CrudService<ReportResponseDto, CreateReportR
         return _mapper.Map<ReportResponseDto>(created);
     }
 
-    public override async Task<ReportResponseDto> UpdateAsync(Guid id, UpdateReportRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<ReportResponseDto> UpdateAsync(Guid id, UpdateReportRequestDto request, CancellationToken cancellationToken = default)
     {
         var report = await _unitOfWork.Reports.GetByIdAsync(id, cancellationToken);
         if (report is null)
@@ -365,7 +365,7 @@ public sealed class ReportService : CrudService<ReportResponseDto, CreateReportR
         return _mapper.Map<ReportResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var report = await _unitOfWork.Reports.GetByIdAsync(id, cancellationToken);
         if (report is null)
@@ -378,7 +378,7 @@ public sealed class ReportService : CrudService<ReportResponseDto, CreateReportR
     }
 }
 
-public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateFlashcardRequestDto, UpdateFlashcardRequestDto>, IFlashcardService
+public sealed class FlashcardService : IFlashcardService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -389,7 +389,7 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<FlashcardResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<FlashcardResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var flashcards = await _unitOfWork.Flashcards
             .Query()
@@ -400,7 +400,7 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
         return flashcards.Select(_mapper.Map<FlashcardResponseDto>).ToList();
     }
 
-    public override async Task<FlashcardResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<FlashcardResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var flashcard = await _unitOfWork.Flashcards
             .Query()
@@ -411,7 +411,7 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
         return flashcard is null ? null : _mapper.Map<FlashcardResponseDto>(flashcard);
     }
 
-    public override async Task<FlashcardResponseDto> CreateAsync(CreateFlashcardRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<FlashcardResponseDto> CreateAsync(CreateFlashcardRequestDto request, CancellationToken cancellationToken = default)
     {
         var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
         if (!documentExists)
@@ -432,7 +432,7 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
         return _mapper.Map<FlashcardResponseDto>(created);
     }
 
-    public override async Task<FlashcardResponseDto> UpdateAsync(Guid id, UpdateFlashcardRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<FlashcardResponseDto> UpdateAsync(Guid id, UpdateFlashcardRequestDto request, CancellationToken cancellationToken = default)
     {
         var flashcard = await _unitOfWork.Flashcards.GetByIdAsync(id, cancellationToken);
         if (flashcard is null)
@@ -453,7 +453,7 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
         return _mapper.Map<FlashcardResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var flashcard = await _unitOfWork.Flashcards.GetByIdAsync(id, cancellationToken);
         if (flashcard is null)
@@ -572,7 +572,7 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
     }
 }
 
-public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequestDto, UpdateQuizRequestDto>, IQuizService
+public sealed class QuizService : IQuizService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -583,7 +583,7 @@ public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequest
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<QuizResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<QuizResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var quizzes = await _unitOfWork.Quizzes
             .Query()
@@ -594,7 +594,7 @@ public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequest
         return quizzes.Select(_mapper.Map<QuizResponseDto>).ToList();
     }
 
-    public override async Task<QuizResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<QuizResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var quiz = await _unitOfWork.Quizzes
             .Query()
@@ -605,7 +605,7 @@ public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequest
         return quiz is null ? null : _mapper.Map<QuizResponseDto>(quiz);
     }
 
-    public override async Task<QuizResponseDto> CreateAsync(CreateQuizRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<QuizResponseDto> CreateAsync(CreateQuizRequestDto request, CancellationToken cancellationToken = default)
     {
         var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
         if (!documentExists)
@@ -626,7 +626,7 @@ public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequest
         return _mapper.Map<QuizResponseDto>(created);
     }
 
-    public override async Task<QuizResponseDto> UpdateAsync(Guid id, UpdateQuizRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<QuizResponseDto> UpdateAsync(Guid id, UpdateQuizRequestDto request, CancellationToken cancellationToken = default)
     {
         var quiz = await _unitOfWork.Quizzes.GetByIdAsync(id, cancellationToken);
         if (quiz is null)
@@ -647,7 +647,7 @@ public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequest
         return _mapper.Map<QuizResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var quiz = await _unitOfWork.Quizzes.GetByIdAsync(id, cancellationToken);
         if (quiz is null)
@@ -660,7 +660,7 @@ public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequest
     }
 }
 
-public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQuestionRequestDto, UpdateQuestionRequestDto>, IQuestionService
+public sealed class QuestionService : IQuestionService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -673,7 +673,7 @@ public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQue
         _citationService = citationService;
     }
 
-    public override async Task<IReadOnlyList<QuestionResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<QuestionResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var questions = await _unitOfWork.Questions
             .Query()
@@ -684,7 +684,7 @@ public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQue
         return questions.Select(_mapper.Map<QuestionResponseDto>).ToList();
     }
 
-    public override async Task<QuestionResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<QuestionResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var question = await _unitOfWork.Questions
             .Query()
@@ -695,7 +695,7 @@ public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQue
         return question is null ? null : _mapper.Map<QuestionResponseDto>(question);
     }
 
-    public override async Task<QuestionResponseDto> CreateAsync(CreateQuestionRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<QuestionResponseDto> CreateAsync(CreateQuestionRequestDto request, CancellationToken cancellationToken = default)
     {
         var quizExists = await _unitOfWork.Quizzes.GetByIdAsync(request.QuizId, cancellationToken) is not null;
         if (!quizExists)
@@ -716,7 +716,7 @@ public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQue
         return _mapper.Map<QuestionResponseDto>(created);
     }
 
-    public override async Task<QuestionResponseDto> UpdateAsync(Guid id, UpdateQuestionRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<QuestionResponseDto> UpdateAsync(Guid id, UpdateQuestionRequestDto request, CancellationToken cancellationToken = default)
     {
         var question = await _unitOfWork.Questions.GetByIdAsync(id, cancellationToken);
         if (question is null)
@@ -737,7 +737,7 @@ public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQue
         return _mapper.Map<QuestionResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var question = await _unitOfWork.Questions.GetByIdAsync(id, cancellationToken);
         if (question is null)
@@ -750,7 +750,7 @@ public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQue
     }
 }
 
-public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerRequestDto, UpdateAnswerRequestDto>, IAnswerService
+public sealed class AnswerService : IAnswerService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -761,7 +761,7 @@ public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerR
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<AnswerResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<AnswerResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var answers = await _unitOfWork.Answers
             .Query()
@@ -772,7 +772,7 @@ public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerR
         return answers.Select(_mapper.Map<AnswerResponseDto>).ToList();
     }
 
-    public override async Task<AnswerResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<AnswerResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var answer = await _unitOfWork.Answers
             .Query()
@@ -783,7 +783,7 @@ public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerR
         return answer is null ? null : _mapper.Map<AnswerResponseDto>(answer);
     }
 
-    public override async Task<AnswerResponseDto> CreateAsync(CreateAnswerRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<AnswerResponseDto> CreateAsync(CreateAnswerRequestDto request, CancellationToken cancellationToken = default)
     {
         var questionExists = await _unitOfWork.Questions.GetByIdAsync(request.QuestionId, cancellationToken) is not null;
         if (!questionExists)
@@ -804,7 +804,7 @@ public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerR
         return _mapper.Map<AnswerResponseDto>(created);
     }
 
-    public override async Task<AnswerResponseDto> UpdateAsync(Guid id, UpdateAnswerRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<AnswerResponseDto> UpdateAsync(Guid id, UpdateAnswerRequestDto request, CancellationToken cancellationToken = default)
     {
         var answer = await _unitOfWork.Answers.GetByIdAsync(id, cancellationToken);
         if (answer is null)
@@ -825,7 +825,7 @@ public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerR
         return _mapper.Map<AnswerResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var answer = await _unitOfWork.Answers.GetByIdAsync(id, cancellationToken);
         if (answer is null)
@@ -838,7 +838,7 @@ public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerR
     }
 }
 
-public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDto, CreateQuizSubmissionRequestDto, UpdateQuizSubmissionRequestDto>, IQuizSubmissionService
+public sealed class QuizSubmissionService : IQuizSubmissionService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -849,7 +849,7 @@ public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDt
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<QuizSubmissionResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<QuizSubmissionResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var submissions = await _unitOfWork.QuizSubmissions
             .Query()
@@ -861,7 +861,7 @@ public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDt
         return submissions.Select(_mapper.Map<QuizSubmissionResponseDto>).ToList();
     }
 
-    public override async Task<QuizSubmissionResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<QuizSubmissionResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var submission = await _unitOfWork.QuizSubmissions
             .Query()
@@ -873,7 +873,7 @@ public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDt
         return submission is null ? null : _mapper.Map<QuizSubmissionResponseDto>(submission);
     }
 
-    public override async Task<QuizSubmissionResponseDto> CreateAsync(CreateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<QuizSubmissionResponseDto> CreateAsync(CreateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
     {
         var quiz = await _unitOfWork.Quizzes
             .Query()
@@ -939,7 +939,7 @@ public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDt
         return _mapper.Map<QuizSubmissionResponseDto>(created);
     }
 
-    public override async Task<QuizSubmissionResponseDto> UpdateAsync(Guid id, UpdateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<QuizSubmissionResponseDto> UpdateAsync(Guid id, UpdateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
     {
         var submission = await _unitOfWork.QuizSubmissions.GetByIdAsync(id, cancellationToken);
         if (submission is null)
@@ -961,7 +961,7 @@ public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDt
         return _mapper.Map<QuizSubmissionResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var submission = await _unitOfWork.QuizSubmissions.GetByIdAsync(id, cancellationToken);
         if (submission is null)
@@ -974,7 +974,7 @@ public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDt
     }
 }
 
-public sealed class NotificationService : CrudService<NotificationResponseDto, CreateNotificationRequestDto, UpdateNotificationRequestDto>, INotificationService
+public sealed class NotificationService : INotificationService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -985,7 +985,7 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<NotificationResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<NotificationResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var notifications = await _unitOfWork.Notifications
             .Query()
@@ -996,7 +996,7 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
         return notifications.Select(_mapper.Map<NotificationResponseDto>).ToList();
     }
 
-    public override async Task<NotificationResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<NotificationResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var notification = await _unitOfWork.Notifications
             .Query()
@@ -1007,7 +1007,7 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
         return notification is null ? null : _mapper.Map<NotificationResponseDto>(notification);
     }
 
-    public override async Task<NotificationResponseDto> CreateAsync(CreateNotificationRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<NotificationResponseDto> CreateAsync(CreateNotificationRequestDto request, CancellationToken cancellationToken = default)
     {
         if (!Enum.TryParse<Data.Enums.NotificationType>(request.Type, true, out var notificationType))
         {
@@ -1043,7 +1043,7 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
             created.UpdatedAt);
     }
 
-    public override async Task<NotificationResponseDto> UpdateAsync(Guid id, UpdateNotificationRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<NotificationResponseDto> UpdateAsync(Guid id, UpdateNotificationRequestDto request, CancellationToken cancellationToken = default)
     {
         var notification = await _unitOfWork.Notifications.GetByIdAsync(id, cancellationToken);
         if (notification is null)
@@ -1064,7 +1064,7 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
         return _mapper.Map<NotificationResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var notification = await _unitOfWork.Notifications.GetByIdAsync(id, cancellationToken);
         if (notification is null)
@@ -1119,7 +1119,7 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
     }
 }
 
-public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePaymentRequestDto, UpdatePaymentRequestDto>, IPaymentService
+public sealed class PaymentService : IPaymentService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -1132,7 +1132,7 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
         _vnPayService = vnPayService;
     }
 
-    public override async Task<IReadOnlyList<PaymentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<PaymentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var payments = await _unitOfWork.Payments
             .Query()
@@ -1144,7 +1144,7 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
         return payments.Select(_mapper.Map<PaymentResponseDto>).ToList();
     }
 
-    public override async Task<PaymentResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<PaymentResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var payment = await _unitOfWork.Payments
             .Query()
@@ -1156,7 +1156,7 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
         return payment is null ? null : _mapper.Map<PaymentResponseDto>(payment);
     }
 
-    public override async Task<PaymentResponseDto> CreateAsync(CreatePaymentRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<PaymentResponseDto> CreateAsync(CreatePaymentRequestDto request, CancellationToken cancellationToken = default)
     {
         if (request.TierId.HasValue)
         {
@@ -1210,7 +1210,7 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
         return _mapper.Map<PaymentResponseDto>(createdNoTier);
     }
 
-    public override async Task<PaymentResponseDto> UpdateAsync(Guid id, UpdatePaymentRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<PaymentResponseDto> UpdateAsync(Guid id, UpdatePaymentRequestDto request, CancellationToken cancellationToken = default)
     {
         var payment = await _unitOfWork.Payments.GetByIdAsync(id, cancellationToken);
         if (payment is null)
@@ -1232,7 +1232,7 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
         return _mapper.Map<PaymentResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var payment = await _unitOfWork.Payments.GetByIdAsync(id, cancellationToken);
         if (payment is null)
@@ -1372,7 +1372,7 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
     }
 }
 
-public sealed class SubjectService : CrudService<SubjectResponseDto, CreateSubjectRequestDto, UpdateSubjectRequestDto>, ISubjectService
+public sealed class SubjectService : ISubjectService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -1383,19 +1383,19 @@ public sealed class SubjectService : CrudService<SubjectResponseDto, CreateSubje
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<SubjectResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<SubjectResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var subjects = await _unitOfWork.Subjects.GetAllAsync(cancellationToken);
         return subjects.Select(_mapper.Map<SubjectResponseDto>).ToList();
     }
 
-    public override async Task<SubjectResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<SubjectResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
         return subject is null ? null : _mapper.Map<SubjectResponseDto>(subject);
     }
 
-    public override async Task<SubjectResponseDto> CreateAsync(CreateSubjectRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<SubjectResponseDto> CreateAsync(CreateSubjectRequestDto request, CancellationToken cancellationToken = default)
     {
         var existing = await _unitOfWork.Subjects
             .Query()
@@ -1413,7 +1413,7 @@ public sealed class SubjectService : CrudService<SubjectResponseDto, CreateSubje
         return _mapper.Map<SubjectResponseDto>(subject);
     }
 
-    public override async Task<SubjectResponseDto> UpdateAsync(Guid id, UpdateSubjectRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<SubjectResponseDto> UpdateAsync(Guid id, UpdateSubjectRequestDto request, CancellationToken cancellationToken = default)
     {
         var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
         if (subject is null)
@@ -1437,7 +1437,7 @@ public sealed class SubjectService : CrudService<SubjectResponseDto, CreateSubje
         return _mapper.Map<SubjectResponseDto>(subject);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
         if (subject is null)
@@ -1450,7 +1450,7 @@ public sealed class SubjectService : CrudService<SubjectResponseDto, CreateSubje
     }
 }
 
-public sealed class TierMembershipService : CrudService<TierMembershipResponseDto, CreateTierMembershipRequestDto, UpdateTierMembershipRequestDto>, ITierMembershipService
+public sealed class TierMembershipService : ITierMembershipService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -1461,19 +1461,19 @@ public sealed class TierMembershipService : CrudService<TierMembershipResponseDt
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<TierMembershipResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<TierMembershipResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var tiers = await _unitOfWork.TierMemberships.GetAllAsync(cancellationToken);
         return tiers.Select(_mapper.Map<TierMembershipResponseDto>).ToList();
     }
 
-    public override async Task<TierMembershipResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<TierMembershipResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var tier = await _unitOfWork.TierMemberships.GetByIdAsync(id, cancellationToken);
         return tier is null ? null : _mapper.Map<TierMembershipResponseDto>(tier);
     }
 
-    public override async Task<TierMembershipResponseDto> CreateAsync(CreateTierMembershipRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<TierMembershipResponseDto> CreateAsync(CreateTierMembershipRequestDto request, CancellationToken cancellationToken = default)
     {
         var existing = await _unitOfWork.TierMemberships
             .Query()
@@ -1491,7 +1491,7 @@ public sealed class TierMembershipService : CrudService<TierMembershipResponseDt
         return _mapper.Map<TierMembershipResponseDto>(tier);
     }
 
-    public override async Task<TierMembershipResponseDto> UpdateAsync(Guid id, UpdateTierMembershipRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<TierMembershipResponseDto> UpdateAsync(Guid id, UpdateTierMembershipRequestDto request, CancellationToken cancellationToken = default)
     {
         var tier = await _unitOfWork.TierMemberships.GetByIdAsync(id, cancellationToken);
         if (tier is null)
@@ -1515,7 +1515,7 @@ public sealed class TierMembershipService : CrudService<TierMembershipResponseDt
         return _mapper.Map<TierMembershipResponseDto>(tier);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var tier = await _unitOfWork.TierMemberships.GetByIdAsync(id, cancellationToken);
         if (tier is null)
