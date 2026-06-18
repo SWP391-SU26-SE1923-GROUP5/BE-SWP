@@ -60,8 +60,19 @@ public sealed class UserController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>Người dùng tự cập nhật thông tin cá nhân (Profile).</summary>
+    [HttpPut("me")]
+    public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequestDto request, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty)
+            return Unauthorized();
+
+        await _userService.UpdateProfileAsync(userId, request, cancellationToken);
+        return NoContent();
+    }
+
     // POST   /api/User  - Đã xóa. Dùng POST /api/Auth/register để tạo tài khoản qua luồng Identity + OTP.
-    // PUT    /api/User/{id} - Đã xóa. Tính năng cập nhật profile sẽ được xử lý riêng.
     // DELETE /api/User/{id} - Đã xóa. Xóa user cần nghiệp vụ đặc thù (deactivate, cleanup data...).
 
     private Guid GetCurrentUserId()

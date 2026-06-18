@@ -82,6 +82,18 @@ public sealed class UserService : IUserService
         await _userManager.UpdateAsync(user);
     }
 
+    public async Task UpdateProfileAsync(Guid userId, UpdateProfileRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString())
+            ?? throw new KeyNotFoundException("User not found.");
+
+        user.FullName = request.FullName.Trim();
+        user.DateOfBirth = request.DateOfBirth;
+        
+        var result = await _userManager.UpdateAsync(user);
+        EnsureIdentitySucceeded(result);
+    }
+
     private UserResponseDto MapToDto(User user)
     {
         return new UserResponseDto(

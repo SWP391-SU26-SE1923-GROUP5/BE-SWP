@@ -35,6 +35,10 @@ public sealed record UpdateUserRequestDto(
     string Status,
     string Role);
 
+public sealed record UpdateProfileRequestDto(
+    string FullName,
+    DateOnly? DateOfBirth);
+
 public sealed record UpdateUserTierRequestDto(
     Guid TierId,
     DateTime? TierExpireAt);
