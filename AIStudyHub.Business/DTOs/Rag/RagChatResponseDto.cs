@@ -12,7 +12,14 @@ public sealed record ReferenceDto(
     string? PageInfo,
     string ChunkExcerpt);
 
+public sealed record NeighborDto(
+    string DocumentTitle,
+    double Score,
+    string RelevanceLabel);
+
 public sealed record RagChatResponseDto(
     string Answer,
     List<CitationDto> Citations,
-    List<ReferenceDto> References);
+    List<ReferenceDto> References,
+    List<NeighborDto> Neighbors,
+    string? Summary = null);
