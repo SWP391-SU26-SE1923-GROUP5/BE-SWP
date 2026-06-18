@@ -57,6 +57,34 @@ public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDoc
             d.UpdatedAt)).ToList();
     }
 
+    public async Task<IReadOnlyList<DocumentResponseDto>> GetAllByUserIdAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var documents = await _unitOfWork.Documents
+            .Query()
+            .Where(d => d.UserId == userId || d.ShareStatus == "public")
+            .Include(d => d.Subject)
+            .Include(d => d.User)
+            .Include(d => d.Votes)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return documents.Select(d => new DocumentResponseDto(
+            d.Id,
+            d.UserId,
+            d.SubjectId,
+            d.Title,
+            d.FileLink,
+            d.FileName,
+            d.FileExtension,
+            d.FileType,
+            d.SharedUsers,
+            d.ShareStatus,
+            d.Status,
+            d.Votes.Count,
+            d.CreatedAt,
+            d.UpdatedAt)).ToList();
+    }
+
     public override async Task<DocumentResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var document = await _unitOfWork.Documents
