@@ -221,30 +221,14 @@ public sealed class DocumentService : IDocumentService
             ? null
             : System.Text.Json.JsonSerializer.Serialize(sharedUserIds);
 
-        // Derive a sensible share status when the caller did not provide one.
-        document.ShareStatus = NormalizeShareStatus(request.ShareStatus, sharedUserIds.Count);
+        // Derive the share status from the resulting list. This endpoint does NOT
+        // accept an explicit status from the caller — status is owned by PUT /api/Document/{id}.
+        document.ShareStatus = sharedUserIds.Count > 0 ? "shared" : "private";
 
         _unitOfWork.Documents.Update(document);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return new ShareDocumentResponseDto(document.Id, document.ShareStatus, sharedUserIds);
-    }
-
-    private static string NormalizeShareStatus(string? requested, int sharedCount)
-    {
-        if (!string.IsNullOrWhiteSpace(requested))
-        {
-            var normalized = requested.Trim().ToLowerInvariant();
-            return normalized switch
-            {
-                "private" => "private",
-                "shared" => "shared",
-                "public" => "public",
-                _ => sharedCount > 0 ? "shared" : "private"
-            };
-        }
-
-        return sharedCount > 0 ? "shared" : "private";
+        return new ShareDocumentResponseDto(document.Id, sharedUserIds);
     }
 }
 
