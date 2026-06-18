@@ -2,6 +2,8 @@ using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using AIStudyHub.Business.Interfaces.Services;
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
 using UglyToad.PdfPig;
 
 namespace AIStudyHub.Business.Services;
@@ -10,7 +12,7 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
 {
     private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".txt", ".md", ".pdf"
+        ".txt", ".md", ".pdf", ".docx"
     };
 
     public async Task<string> ExtractTextAsync(byte[] fileContent, string fileExtension)
@@ -18,12 +20,13 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         var extension = fileExtension.ToLowerInvariant().TrimStart('.');
 
         if (!SupportedExtensions.Contains($".{extension}"))
-            throw new NotSupportedException($"File type '.{extension}' is not supported. Supported types: .txt, .md, .pdf");
+            throw new NotSupportedException($"File type '.{extension}' is not supported. Supported types: .txt, .md, .pdf, .docx");
 
         return extension switch
         {
             "txt" or "md" => await ExtractTextFromTxtAsync(fileContent),
             "pdf" => ExtractTextFromPdf(fileContent),
+            "docx" => ExtractTextFromDocx(fileContent),
             _ => throw new NotSupportedException($"File type '.{extension}' is not supported.")
         };
     }
@@ -94,6 +97,45 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         }
 
         return text.ToString();
+    }
+
+    private static string ExtractTextFromDocx(byte[] fileContent)
+    {
+        var text = new StringBuilder();
+        try
+        {
+            using var stream = new MemoryStream(fileContent);
+            using var document = WordprocessingDocument.Open(stream, false);
+
+            var body = document.MainDocumentPart?.Document?.Body;
+            if (body == null)
+                return string.Empty;
+
+            foreach (var element in body.Elements())
+            {
+                var paraText = GetParagraphText(element);
+                if (!string.IsNullOrWhiteSpace(paraText))
+                {
+                    text.AppendLine(paraText);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            return $"[DOCX extraction failed: {ex.Message}]";
+        }
+
+        return text.ToString();
+    }
+
+    private static string GetParagraphText(OpenXmlElement element)
+    {
+        var sb = new StringBuilder();
+        foreach (var text in element.Descendants<DocumentFormat.OpenXml.Wordprocessing.Text>())
+        {
+            sb.Append(text.Text);
+        }
+        return sb.ToString();
     }
 
     private static string CleanText(string text)
