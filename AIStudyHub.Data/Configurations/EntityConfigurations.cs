@@ -24,7 +24,6 @@ internal sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(x => x.Role).HasColumnName("role").HasMaxLength(20).IsRequired();
         builder.Property(x => x.TierId).HasColumnName("tier_id").IsRequired().HasDefaultValue(Guid.Parse("11111111-1111-1111-1111-111111111111"));
         builder.Property(x => x.TierExpireAt).HasColumnName("tier_expire_at").HasColumnType("datetime");
-        builder.HasIndex(x => x.FullName).IsUnique();
         builder.HasIndex(x => x.Email).IsUnique();
         builder.HasOne(x => x.TierMembership).WithMany(x => x.Users).HasForeignKey(x => x.TierId).OnDelete(DeleteBehavior.Restrict);
     }
