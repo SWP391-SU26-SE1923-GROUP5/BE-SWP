@@ -8,10 +8,55 @@ namespace AIStudyHub.API.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/[controller]")]
-public sealed class SubjectController : CrudControllerBase<SubjectResponseDto, CreateSubjectRequestDto, UpdateSubjectRequestDto>
+public sealed class SubjectController : ControllerBase
 {
+    private readonly ISubjectService _service;
+
     public SubjectController(ISubjectService service)
-        : base(service)
     {
+        _service = service;
+    }
+
+    /// <summary>Lấy danh sách tất cả môn học.</summary>
+    [HttpGet]
+    public async Task<ActionResult<IReadOnlyList<SubjectResponseDto>>> GetAll(CancellationToken cancellationToken)
+    {
+        var result = await _service.GetAllAsync(cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>Lấy thông tin môn học theo ID.</summary>
+    [HttpGet("{id:guid}")]
+    public async Task<ActionResult<SubjectResponseDto>> GetById(Guid id, CancellationToken cancellationToken)
+    {
+        var result = await _service.GetByIdAsync(id, cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    /// <summary>Tạo môn học mới (Student, Admin).</summary>
+    [HttpPost]
+    [Authorize(Roles = "Student,Admin")]
+    public async Task<ActionResult<SubjectResponseDto>> Create([FromBody] CreateSubjectRequestDto request, CancellationToken cancellationToken)
+    {
+        var result = await _service.CreateAsync(request, cancellationToken);
+        return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
+    }
+
+    /// <summary>Cập nhật môn học (Admin only).</summary>
+    [HttpPut("{id:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<SubjectResponseDto>> Update(Guid id, [FromBody] UpdateSubjectRequestDto request, CancellationToken cancellationToken)
+    {
+        var result = await _service.UpdateAsync(id, request, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>Xóa môn học (Admin only).</summary>
+    [HttpDelete("{id:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
+    {
+        await _service.DeleteAsync(id, cancellationToken);
+        return NoContent();
     }
 }

@@ -61,6 +61,19 @@ public sealed class ChatController : ControllerBase
         return Ok(result);
     }
 
+    [HttpPost("summarize")]
+    public async Task<ActionResult<SummarizeResponseDto>> Summarize(
+        [FromBody] SummarizeRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty)
+            return Unauthorized();
+
+        var summary = await _ragChatService.SummarizeAsync(request.DocumentId, userId);
+        return Ok(new SummarizeResponseDto(summary));
+    }
+
     private Guid GetCurrentUserId()
     {
         var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)

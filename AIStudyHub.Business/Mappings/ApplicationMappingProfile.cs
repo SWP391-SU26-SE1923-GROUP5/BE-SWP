@@ -1,4 +1,4 @@
-﻿using AIStudyHub.Business.DTOs.AIChat;
+using AIStudyHub.Business.DTOs.AIChat;
 using AIStudyHub.Business.DTOs.Answers;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Flashcards;
@@ -10,7 +10,6 @@ using AIStudyHub.Business.DTOs.QuizSubmissions;
 using AIStudyHub.Business.DTOs.Reports;
 using AIStudyHub.Business.DTOs.Subjects;
 using AIStudyHub.Business.DTOs.TierMemberships;
-using AIStudyHub.Business.DTOs.TierUsers;
 using AIStudyHub.Business.DTOs.Users;
 using AIStudyHub.Business.DTOs.Votes;
 using AIStudyHub.Data.Entities;
@@ -22,7 +21,24 @@ public sealed class ApplicationMappingProfile : Profile
 {
     public ApplicationMappingProfile()
     {
-        CreateMap<User, UserResponseDto>();
+        CreateMap<User, UserResponseDto>()
+            .ConstructUsing(src => new UserResponseDto(
+                src.Id,
+                src.FullName,
+                src.Email ?? string.Empty,
+                src.DateOfBirth,
+                src.CurrentStorageCapacity,
+                src.CurrentAiTokenUsage,
+                src.Status,
+                src.Role,
+                src.TierId,
+                src.TierMembership != null ? src.TierMembership.TierName : "Unknown",
+                src.TierMembership != null ? src.TierMembership.StorageLimitMb : 0,
+                src.TierMembership != null ? src.TierMembership.AiTokens : 0,
+                src.TierExpireAt,
+                src.CreatedAt,
+                src.UpdatedAt
+            ));
         CreateMap<CreateUserRequestDto, User>()
             .ForMember(dest => dest.CurrentAiTokenUsage, opt => opt.MapFrom(src => src.CurrentAiTokenUsage));
         CreateMap<UpdateUserRequestDto, User>()
@@ -51,12 +67,17 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<Question, QuestionResponseDto>();
         CreateMap<CreateQuestionRequestDto, Question>();
         CreateMap<UpdateQuestionRequestDto, Question>();
+        CreateMap<Answer, AnswerResponseDto>();
 
         CreateMap<Answer, AnswerResponseDto>();
         CreateMap<CreateAnswerRequestDto, Answer>();
         CreateMap<UpdateAnswerRequestDto, Answer>();
 
-        CreateMap<QuizSubmission, QuizSubmissionResponseDto>();
+        CreateMap<QuizSubmission, QuizSubmissionResponseDto>()
+            .ForMember(dest => dest.Score, opt => opt.MapFrom(src => src.Score))
+            .ForMember(dest => dest.MaxScore, opt => opt.MapFrom(src => src.MaxScore))
+            .ForMember(dest => dest.TotalCorrect, opt => opt.MapFrom(src => src.TotalCorrect))
+            .ForMember(dest => dest.GradedAt, opt => opt.MapFrom(src => src.GradedAt));
         CreateMap<CreateQuizSubmissionRequestDto, QuizSubmission>();
         CreateMap<UpdateQuizSubmissionRequestDto, QuizSubmission>();
 
@@ -72,9 +93,6 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<TierMembership, TierMembershipResponseDto>();
         CreateMap<CreateTierMembershipRequestDto, TierMembership>();
         CreateMap<UpdateTierMembershipRequestDto, TierMembership>();
-
-        CreateMap<TierUser, TierUserResponseDto>();
-        CreateMap<CreateTierUserRequestDto, TierUser>();
 
         CreateMap<Subject, SubjectResponseDto>();
         CreateMap<CreateSubjectRequestDto, Subject>();

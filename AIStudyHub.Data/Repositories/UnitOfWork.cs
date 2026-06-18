@@ -1,4 +1,4 @@
-﻿using AIStudyHub.Data.Entities;
+using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Interfaces;
 
 namespace AIStudyHub.Data.Repositories;
@@ -13,7 +13,6 @@ public sealed class UnitOfWork : IUnitOfWork
         Users = new GenericRepository<User>(_dbContext);
         Subjects = new GenericRepository<Subject>(_dbContext);
         TierMemberships = new GenericRepository<TierMembership>(_dbContext);
-        TierUsers = new GenericRepository<TierUser>(_dbContext);
         Documents = new GenericRepository<Document>(_dbContext);
         DocumentChunks = new DocumentChunkRepository(_dbContext);
         Votes = new GenericRepository<Vote>(_dbContext);
@@ -32,7 +31,6 @@ public sealed class UnitOfWork : IUnitOfWork
     public IRepository<User> Users { get; }
     public IRepository<Subject> Subjects { get; }
     public IRepository<TierMembership> TierMemberships { get; }
-    public IRepository<TierUser> TierUsers { get; }
     public IRepository<Document> Documents { get; }
     public IDocumentChunkRepository DocumentChunks { get; }
     public IRepository<Vote> Votes { get; }

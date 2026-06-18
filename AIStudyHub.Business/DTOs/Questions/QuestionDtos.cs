@@ -1,7 +1,19 @@
-﻿namespace AIStudyHub.Business.DTOs.Questions;
+﻿using AIStudyHub.Data.Enums;
+using AIStudyHub.Business.DTOs.Answers;
 
-public sealed record QuestionResponseDto(Guid Id, Guid QuizId, string Title, DateTime CreatedAt, DateTime? UpdatedAt);
+namespace AIStudyHub.Business.DTOs.Questions;
 
-public sealed record CreateQuestionRequestDto(Guid QuizId, string Title);
+public sealed record QuestionResponseDto(
+    Guid Id,
+    Guid QuizId,
+    string Title,
+    QuestionType Type,
+    int Position,
+    DateTime CreatedAt,
+    DateTime? UpdatedAt,
+    IReadOnlyList<AnswerResponseDto> Answers
+);
 
-public sealed record UpdateQuestionRequestDto(string Title);
+public sealed record CreateQuestionRequestDto(Guid QuizId, string Title, QuestionType Type = QuestionType.SingleChoice, int Position = 0);
+
+public sealed record UpdateQuestionRequestDto(string Title, QuestionType Type, int Position);

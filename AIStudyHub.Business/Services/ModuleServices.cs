@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using AIStudyHub.Business.DTOs.Answers;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Flashcards;
@@ -9,16 +10,16 @@ using AIStudyHub.Business.DTOs.QuizSubmissions;
 using AIStudyHub.Business.DTOs.Reports;
 using AIStudyHub.Business.DTOs.Subjects;
 using AIStudyHub.Business.DTOs.TierMemberships;
-using AIStudyHub.Business.DTOs.TierUsers;
 using AIStudyHub.Business.DTOs.Votes;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
 using Microsoft.EntityFrameworkCore;
 
 namespace AIStudyHub.Business.Services;
 
-public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDocumentRequestDto, UpdateDocumentRequestDto>, IDocumentService
+public sealed class DocumentService : IDocumentService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -29,31 +30,104 @@ public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDoc
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<DocumentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<DocumentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var documents = await _unitOfWork.Documents
             .Query()
             .Include(d => d.Subject)
             .Include(d => d.User)
+            .Include(d => d.Votes)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
-        return documents.Select(_mapper.Map<DocumentResponseDto>).ToList();
+        return documents.Select(d => new DocumentResponseDto(
+            d.Id,
+            d.UserId,
+            d.SubjectId,
+            d.Title,
+            d.FileLink,
+            d.FileName,
+            d.FileExtension,
+            d.FileType,
+            d.SharedUsers,
+            d.ShareStatus,
+            d.Status,
+            d.Votes.Count,
+            d.CreatedAt,
+            d.UpdatedAt)).ToList();
     }
 
-    public override async Task<DocumentResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<DocumentResponseDto>> GetAllByUserIdAsync(Guid userId, string? keyword = null, Guid? subjectId = null, CancellationToken cancellationToken = default)
+    {
+        var query = _unitOfWork.Documents
+            .Query()
+            .Where(d => d.UserId == userId || d.ShareStatus == "public");
+
+        if (subjectId.HasValue)
+        {
+            query = query.Where(d => d.SubjectId == subjectId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var lowerKeyword = keyword.ToLower();
+            query = query.Where(d => d.Title.ToLower().Contains(lowerKeyword) || (d.FileName != null && d.FileName.ToLower().Contains(lowerKeyword)));
+        }
+
+        var documents = await query
+            .Include(d => d.Subject)
+            .Include(d => d.User)
+            .Include(d => d.Votes)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return documents.Select(d => new DocumentResponseDto(
+            d.Id,
+            d.UserId,
+            d.SubjectId,
+            d.Title,
+            d.FileLink,
+            d.FileName,
+            d.FileExtension,
+            d.FileType,
+            d.SharedUsers,
+            d.ShareStatus,
+            d.Status,
+            d.Votes.Count,
+            d.CreatedAt,
+            d.UpdatedAt)).ToList();
+    }
+
+    public async Task<DocumentResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var document = await _unitOfWork.Documents
             .Query()
             .Include(d => d.Subject)
             .Include(d => d.User)
+            .Include(d => d.Votes)
             .AsNoTracking()
             .FirstOrDefaultAsync(d => d.Id == id, cancellationToken);
 
-        return document is null ? null : _mapper.Map<DocumentResponseDto>(document);
+        if (document is null) return null;
+
+        return new DocumentResponseDto(
+            document.Id,
+            document.UserId,
+            document.SubjectId,
+            document.Title,
+            document.FileLink,
+            document.FileName,
+            document.FileExtension,
+            document.FileType,
+            document.SharedUsers,
+            document.ShareStatus,
+            document.Status,
+            document.Votes.Count,
+            document.CreatedAt,
+            document.UpdatedAt);
     }
 
-    public override async Task<DocumentResponseDto> CreateAsync(CreateDocumentRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<DocumentResponseDto> CreateAsync(CreateDocumentRequestDto request, CancellationToken cancellationToken = default)
     {
         var subjectExists = await _unitOfWork.Subjects.GetByIdAsync(request.SubjectId, cancellationToken) is not null;
         if (!subjectExists)
@@ -75,7 +149,7 @@ public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDoc
         return _mapper.Map<DocumentResponseDto>(created);
     }
 
-    public override async Task<DocumentResponseDto> UpdateAsync(Guid id, UpdateDocumentRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<DocumentResponseDto> UpdateAsync(Guid id, UpdateDocumentRequestDto request, CancellationToken cancellationToken = default)
     {
         var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
         if (document is null)
@@ -97,7 +171,7 @@ public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDoc
         return _mapper.Map<DocumentResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
         if (document is null)
@@ -110,7 +184,7 @@ public sealed class DocumentService : CrudService<DocumentResponseDto, CreateDoc
     }
 }
 
-public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequestDto, UpdateVoteRequestDto>, IVoteService
+public sealed class VoteService : IVoteService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -121,7 +195,7 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<VoteResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<VoteResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var votes = await _unitOfWork.Votes
             .Query()
@@ -133,7 +207,7 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
         return votes.Select(_mapper.Map<VoteResponseDto>).ToList();
     }
 
-    public override async Task<VoteResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<VoteResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var vote = await _unitOfWork.Votes
             .Query()
@@ -145,24 +219,32 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
         return vote is null ? null : _mapper.Map<VoteResponseDto>(vote);
     }
 
-    public override async Task<VoteResponseDto> CreateAsync(CreateVoteRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<VoteResponseDto> CreateVoteAsync(Guid userId, Guid documentId, VoteType type, CancellationToken cancellationToken = default)
     {
         var existing = await _unitOfWork.Votes
             .Query()
-            .FirstOrDefaultAsync(v => v.UserId == request.UserId && v.DocumentId == request.DocumentId, cancellationToken);
+            .FirstOrDefaultAsync(v => v.UserId == userId && v.DocumentId == documentId, cancellationToken);
 
         if (existing is not null)
         {
-            throw new InvalidOperationException($"User has already voted on this document.");
+            throw new InvalidOperationException("User has already voted on this document.");
         }
 
-        var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
+        var documentExists = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken) is not null;
         if (!documentExists)
         {
-            throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
+            throw new KeyNotFoundException($"Document with ID {documentId} not found.");
         }
 
-        var vote = _mapper.Map<Data.Entities.Vote>(request);
+        var vote = new Data.Entities.Vote
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            DocumentId = documentId,
+            Type = type,
+            CreatedAt = DateTime.UtcNow
+        };
+
         await _unitOfWork.Votes.AddAsync(vote, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -176,7 +258,12 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
         return _mapper.Map<VoteResponseDto>(created);
     }
 
-    public override async Task<VoteResponseDto> UpdateAsync(Guid id, UpdateVoteRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<VoteResponseDto> CreateAsync(CreateVoteRequestDto request, CancellationToken cancellationToken = default)
+    {
+        throw new NotSupportedException("Use CreateVoteAsync with explicit userId for security.");
+    }
+
+    public async Task<VoteResponseDto> UpdateAsync(Guid id, UpdateVoteRequestDto request, CancellationToken cancellationToken = default)
     {
         var vote = await _unitOfWork.Votes.GetByIdAsync(id, cancellationToken);
         if (vote is null)
@@ -184,7 +271,8 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
             throw new KeyNotFoundException($"Vote with ID {id} not found.");
         }
 
-        _mapper.Map(request, vote);
+        vote.Type = request.Type;
+        vote.UpdatedAt = DateTime.UtcNow;
         _unitOfWork.Votes.Update(vote);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -198,7 +286,7 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
         return _mapper.Map<VoteResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var vote = await _unitOfWork.Votes.GetByIdAsync(id, cancellationToken);
         if (vote is null)
@@ -211,7 +299,7 @@ public sealed class VoteService : CrudService<VoteResponseDto, CreateVoteRequest
     }
 }
 
-public sealed class ReportService : CrudService<ReportResponseDto, CreateReportRequestDto, UpdateReportRequestDto>, IReportService
+public sealed class ReportService : IReportService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -222,7 +310,7 @@ public sealed class ReportService : CrudService<ReportResponseDto, CreateReportR
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<ReportResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<ReportResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var reports = await _unitOfWork.Reports
             .Query()
@@ -234,7 +322,7 @@ public sealed class ReportService : CrudService<ReportResponseDto, CreateReportR
         return reports.Select(_mapper.Map<ReportResponseDto>).ToList();
     }
 
-    public override async Task<ReportResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<ReportResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var report = await _unitOfWork.Reports
             .Query()
@@ -246,7 +334,7 @@ public sealed class ReportService : CrudService<ReportResponseDto, CreateReportR
         return report is null ? null : _mapper.Map<ReportResponseDto>(report);
     }
 
-    public override async Task<ReportResponseDto> CreateAsync(CreateReportRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<ReportResponseDto> CreateAsync(CreateReportRequestDto request, CancellationToken cancellationToken = default)
     {
         var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
         if (!documentExists)
@@ -268,7 +356,7 @@ public sealed class ReportService : CrudService<ReportResponseDto, CreateReportR
         return _mapper.Map<ReportResponseDto>(created);
     }
 
-    public override async Task<ReportResponseDto> UpdateAsync(Guid id, UpdateReportRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<ReportResponseDto> UpdateAsync(Guid id, UpdateReportRequestDto request, CancellationToken cancellationToken = default)
     {
         var report = await _unitOfWork.Reports.GetByIdAsync(id, cancellationToken);
         if (report is null)
@@ -290,7 +378,7 @@ public sealed class ReportService : CrudService<ReportResponseDto, CreateReportR
         return _mapper.Map<ReportResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var report = await _unitOfWork.Reports.GetByIdAsync(id, cancellationToken);
         if (report is null)
@@ -303,7 +391,7 @@ public sealed class ReportService : CrudService<ReportResponseDto, CreateReportR
     }
 }
 
-public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateFlashcardRequestDto, UpdateFlashcardRequestDto>, IFlashcardService
+public sealed class FlashcardService : IFlashcardService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -314,7 +402,7 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<FlashcardResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<FlashcardResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var flashcards = await _unitOfWork.Flashcards
             .Query()
@@ -325,7 +413,7 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
         return flashcards.Select(_mapper.Map<FlashcardResponseDto>).ToList();
     }
 
-    public override async Task<FlashcardResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<FlashcardResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var flashcard = await _unitOfWork.Flashcards
             .Query()
@@ -336,7 +424,7 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
         return flashcard is null ? null : _mapper.Map<FlashcardResponseDto>(flashcard);
     }
 
-    public override async Task<FlashcardResponseDto> CreateAsync(CreateFlashcardRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<FlashcardResponseDto> CreateAsync(CreateFlashcardRequestDto request, CancellationToken cancellationToken = default)
     {
         var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
         if (!documentExists)
@@ -357,7 +445,7 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
         return _mapper.Map<FlashcardResponseDto>(created);
     }
 
-    public override async Task<FlashcardResponseDto> UpdateAsync(Guid id, UpdateFlashcardRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<FlashcardResponseDto> UpdateAsync(Guid id, UpdateFlashcardRequestDto request, CancellationToken cancellationToken = default)
     {
         var flashcard = await _unitOfWork.Flashcards.GetByIdAsync(id, cancellationToken);
         if (flashcard is null)
@@ -378,7 +466,7 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
         return _mapper.Map<FlashcardResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var flashcard = await _unitOfWork.Flashcards.GetByIdAsync(id, cancellationToken);
         if (flashcard is null)
@@ -389,9 +477,115 @@ public sealed class FlashcardService : CrudService<FlashcardResponseDto, CreateF
         _unitOfWork.Flashcards.Remove(flashcard);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
+
+    public async Task<IReadOnlyList<FlashcardResponseDto>> GetByDocumentAsync(
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        var flashcards = await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => f.DocumentId == documentId)
+            .OrderBy(f => f.CreatedAt)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return flashcards.Select(_mapper.Map<FlashcardResponseDto>).ToList();
+    }
+
+    public async Task<IReadOnlyList<FlashcardResponseDto>> SaveGeneratedBatchAsync(
+        SaveGeneratedFlashcardsRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.Flashcards is null || request.Flashcards.Count == 0)
+            return Array.Empty<FlashcardResponseDto>();
+
+        var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
+        if (!documentExists)
+        {
+            throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
+        }
+
+        var existingFronts = (await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => f.DocumentId == request.DocumentId)
+            .Select(f => f.Front)
+            .ToListAsync(cancellationToken))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var created = new List<Data.Entities.Flashcard>();
+        foreach (var card in request.Flashcards)
+        {
+            if (string.IsNullOrWhiteSpace(card.Front) || string.IsNullOrWhiteSpace(card.Back))
+                continue;
+
+            var cleanFront = card.Front.Trim();
+            var cleanBack = card.Back.Trim();
+
+            if (!existingFronts.Add(cleanFront))
+                continue;
+
+            created.Add(new Data.Entities.Flashcard
+            {
+                DocumentId = request.DocumentId,
+                Front = cleanFront,
+                Back = cleanBack
+            });
+        }
+
+        if (created.Count == 0)
+            return Array.Empty<FlashcardResponseDto>();
+
+        foreach (var card in created)
+            await _unitOfWork.Flashcards.AddAsync(card, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var ids = created.Select(c => c.Id).ToList();
+        var saved = await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => ids.Contains(f.Id))
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return saved.Select(_mapper.Map<FlashcardResponseDto>).ToList();
+    }
+
+    public async Task<IReadOnlyList<FlashcardResponseDto>> CreateBulkAsync(
+        IReadOnlyList<CreateFlashcardRequestDto> requests,
+        CancellationToken cancellationToken = default)
+    {
+        if (requests is null || requests.Count == 0)
+            return Array.Empty<FlashcardResponseDto>();
+
+        var documentIds = requests.Select(r => r.DocumentId).Distinct().ToList();
+        var allDocumentsExist = await _unitOfWork.Documents
+            .Query()
+            .Where(d => documentIds.Contains(d.Id))
+            .Select(d => d.Id)
+            .CountAsync(cancellationToken) == documentIds.Count;
+
+        if (!allDocumentsExist)
+            throw new KeyNotFoundException("One or more documents not found.");
+
+        var flashcards = requests
+            .Select(r => _mapper.Map<Data.Entities.Flashcard>(r))
+            .ToList();
+
+        foreach (var flashcard in flashcards)
+            await _unitOfWork.Flashcards.AddAsync(flashcard, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var ids = flashcards.Select(f => f.Id).ToList();
+        var saved = await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => ids.Contains(f.Id))
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return saved.Select(_mapper.Map<FlashcardResponseDto>).ToList();
+    }
 }
 
-public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequestDto, UpdateQuizRequestDto>, IQuizService
+public sealed class QuizService : IQuizService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -402,7 +596,7 @@ public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequest
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<QuizResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<QuizResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var quizzes = await _unitOfWork.Quizzes
             .Query()
@@ -413,7 +607,7 @@ public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequest
         return quizzes.Select(_mapper.Map<QuizResponseDto>).ToList();
     }
 
-    public override async Task<QuizResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<QuizResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var quiz = await _unitOfWork.Quizzes
             .Query()
@@ -424,7 +618,7 @@ public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequest
         return quiz is null ? null : _mapper.Map<QuizResponseDto>(quiz);
     }
 
-    public override async Task<QuizResponseDto> CreateAsync(CreateQuizRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<QuizResponseDto> CreateAsync(CreateQuizRequestDto request, CancellationToken cancellationToken = default)
     {
         var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
         if (!documentExists)
@@ -445,7 +639,7 @@ public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequest
         return _mapper.Map<QuizResponseDto>(created);
     }
 
-    public override async Task<QuizResponseDto> UpdateAsync(Guid id, UpdateQuizRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<QuizResponseDto> UpdateAsync(Guid id, UpdateQuizRequestDto request, CancellationToken cancellationToken = default)
     {
         var quiz = await _unitOfWork.Quizzes.GetByIdAsync(id, cancellationToken);
         if (quiz is null)
@@ -466,7 +660,7 @@ public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequest
         return _mapper.Map<QuizResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var quiz = await _unitOfWork.Quizzes.GetByIdAsync(id, cancellationToken);
         if (quiz is null)
@@ -479,18 +673,20 @@ public sealed class QuizService : CrudService<QuizResponseDto, CreateQuizRequest
     }
 }
 
-public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQuestionRequestDto, UpdateQuestionRequestDto>, IQuestionService
+public sealed class QuestionService : IQuestionService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
+    private readonly ICitationService _citationService;
 
-    public QuestionService(IUnitOfWork unitOfWork, IMapper mapper)
+    public QuestionService(IUnitOfWork unitOfWork, IMapper mapper, ICitationService citationService)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _citationService = citationService;
     }
 
-    public override async Task<IReadOnlyList<QuestionResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<QuestionResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var questions = await _unitOfWork.Questions
             .Query()
@@ -501,7 +697,7 @@ public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQue
         return questions.Select(_mapper.Map<QuestionResponseDto>).ToList();
     }
 
-    public override async Task<QuestionResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<QuestionResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var question = await _unitOfWork.Questions
             .Query()
@@ -512,7 +708,7 @@ public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQue
         return question is null ? null : _mapper.Map<QuestionResponseDto>(question);
     }
 
-    public override async Task<QuestionResponseDto> CreateAsync(CreateQuestionRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<QuestionResponseDto> CreateAsync(CreateQuestionRequestDto request, CancellationToken cancellationToken = default)
     {
         var quizExists = await _unitOfWork.Quizzes.GetByIdAsync(request.QuizId, cancellationToken) is not null;
         if (!quizExists)
@@ -533,7 +729,7 @@ public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQue
         return _mapper.Map<QuestionResponseDto>(created);
     }
 
-    public override async Task<QuestionResponseDto> UpdateAsync(Guid id, UpdateQuestionRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<QuestionResponseDto> UpdateAsync(Guid id, UpdateQuestionRequestDto request, CancellationToken cancellationToken = default)
     {
         var question = await _unitOfWork.Questions.GetByIdAsync(id, cancellationToken);
         if (question is null)
@@ -554,7 +750,7 @@ public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQue
         return _mapper.Map<QuestionResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var question = await _unitOfWork.Questions.GetByIdAsync(id, cancellationToken);
         if (question is null)
@@ -567,7 +763,7 @@ public sealed class QuestionService : CrudService<QuestionResponseDto, CreateQue
     }
 }
 
-public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerRequestDto, UpdateAnswerRequestDto>, IAnswerService
+public sealed class AnswerService : IAnswerService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -578,7 +774,7 @@ public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerR
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<AnswerResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<AnswerResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var answers = await _unitOfWork.Answers
             .Query()
@@ -589,7 +785,7 @@ public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerR
         return answers.Select(_mapper.Map<AnswerResponseDto>).ToList();
     }
 
-    public override async Task<AnswerResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<AnswerResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var answer = await _unitOfWork.Answers
             .Query()
@@ -600,7 +796,7 @@ public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerR
         return answer is null ? null : _mapper.Map<AnswerResponseDto>(answer);
     }
 
-    public override async Task<AnswerResponseDto> CreateAsync(CreateAnswerRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<AnswerResponseDto> CreateAsync(CreateAnswerRequestDto request, CancellationToken cancellationToken = default)
     {
         var questionExists = await _unitOfWork.Questions.GetByIdAsync(request.QuestionId, cancellationToken) is not null;
         if (!questionExists)
@@ -621,7 +817,7 @@ public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerR
         return _mapper.Map<AnswerResponseDto>(created);
     }
 
-    public override async Task<AnswerResponseDto> UpdateAsync(Guid id, UpdateAnswerRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<AnswerResponseDto> UpdateAsync(Guid id, UpdateAnswerRequestDto request, CancellationToken cancellationToken = default)
     {
         var answer = await _unitOfWork.Answers.GetByIdAsync(id, cancellationToken);
         if (answer is null)
@@ -642,7 +838,7 @@ public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerR
         return _mapper.Map<AnswerResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var answer = await _unitOfWork.Answers.GetByIdAsync(id, cancellationToken);
         if (answer is null)
@@ -655,7 +851,7 @@ public sealed class AnswerService : CrudService<AnswerResponseDto, CreateAnswerR
     }
 }
 
-public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDto, CreateQuizSubmissionRequestDto, UpdateQuizSubmissionRequestDto>, IQuizSubmissionService
+public sealed class QuizSubmissionService : IQuizSubmissionService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -666,7 +862,7 @@ public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDt
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<QuizSubmissionResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<QuizSubmissionResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var submissions = await _unitOfWork.QuizSubmissions
             .Query()
@@ -678,7 +874,7 @@ public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDt
         return submissions.Select(_mapper.Map<QuizSubmissionResponseDto>).ToList();
     }
 
-    public override async Task<QuizSubmissionResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<QuizSubmissionResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var submission = await _unitOfWork.QuizSubmissions
             .Query()
@@ -690,16 +886,59 @@ public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDt
         return submission is null ? null : _mapper.Map<QuizSubmissionResponseDto>(submission);
     }
 
-    public override async Task<QuizSubmissionResponseDto> CreateAsync(CreateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<QuizSubmissionResponseDto> CreateAsync(CreateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
     {
-        var quizExists = await _unitOfWork.Quizzes.GetByIdAsync(request.QuizId, cancellationToken) is not null;
-        if (!quizExists)
+        var quiz = await _unitOfWork.Quizzes
+            .Query()
+            .Include(q => q.Questions)
+                .ThenInclude(q => q.Answers)
+            .FirstOrDefaultAsync(q => q.Id == request.QuizId, cancellationToken);
+
+        if (quiz is null)
         {
             throw new KeyNotFoundException($"Quiz with ID {request.QuizId} not found.");
         }
 
-        var submission = _mapper.Map<Data.Entities.QuizSubmission>(request);
-        submission.SubmittedAt = DateTime.UtcNow;
+        var submission = new Data.Entities.QuizSubmission
+        {
+            Id = Guid.NewGuid(),
+            UserId = request.UserId,
+            QuizId = request.QuizId,
+            Answers = request.Answers,
+            SubmittedAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Grade the submission
+        if (quiz.Questions.Any())
+        {
+            var maxScore = quiz.Questions.Count;
+            var totalCorrect = 0;
+
+            // Simple grading: parse submitted answers and match with questions
+            // Assuming request.Answers is JSON string like "{\"q1\":\"A\",\"q2\":\"B\"}"
+            // And Question has Answers where IsCorrect == true
+            var submittedAnswers = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(request.Answers)
+                ?? new Dictionary<string, string>();
+
+            foreach (var question in quiz.Questions)
+            {
+                var correctAnswer = question.Answers.FirstOrDefault(a => a.IsCorrect);
+                if (correctAnswer != null && submittedAnswers.TryGetValue(question.Id.ToString(), out var selectedOption))
+                {
+                    if (correctAnswer.SelectedOption.Equals(selectedOption, StringComparison.OrdinalIgnoreCase))
+                    {
+                        totalCorrect++;
+                    }
+                }
+            }
+
+            submission.Score = totalCorrect;
+            submission.MaxScore = maxScore;
+            submission.TotalCorrect = totalCorrect;
+            submission.GradedAt = DateTime.UtcNow;
+        }
+
         await _unitOfWork.QuizSubmissions.AddAsync(submission, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -713,7 +952,7 @@ public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDt
         return _mapper.Map<QuizSubmissionResponseDto>(created);
     }
 
-    public override async Task<QuizSubmissionResponseDto> UpdateAsync(Guid id, UpdateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<QuizSubmissionResponseDto> UpdateAsync(Guid id, UpdateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
     {
         var submission = await _unitOfWork.QuizSubmissions.GetByIdAsync(id, cancellationToken);
         if (submission is null)
@@ -735,7 +974,7 @@ public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDt
         return _mapper.Map<QuizSubmissionResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var submission = await _unitOfWork.QuizSubmissions.GetByIdAsync(id, cancellationToken);
         if (submission is null)
@@ -748,7 +987,7 @@ public sealed class QuizSubmissionService : CrudService<QuizSubmissionResponseDt
     }
 }
 
-public sealed class NotificationService : CrudService<NotificationResponseDto, CreateNotificationRequestDto, UpdateNotificationRequestDto>, INotificationService
+public sealed class NotificationService : INotificationService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -759,7 +998,7 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<NotificationResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<NotificationResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var notifications = await _unitOfWork.Notifications
             .Query()
@@ -770,7 +1009,7 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
         return notifications.Select(_mapper.Map<NotificationResponseDto>).ToList();
     }
 
-    public override async Task<NotificationResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<NotificationResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var notification = await _unitOfWork.Notifications
             .Query()
@@ -781,9 +1020,23 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
         return notification is null ? null : _mapper.Map<NotificationResponseDto>(notification);
     }
 
-    public override async Task<NotificationResponseDto> CreateAsync(CreateNotificationRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<NotificationResponseDto> CreateAsync(CreateNotificationRequestDto request, CancellationToken cancellationToken = default)
     {
-        var notification = _mapper.Map<Data.Entities.Notification>(request);
+        if (!Enum.TryParse<Data.Enums.NotificationType>(request.Type, true, out var notificationType))
+        {
+            notificationType = Data.Enums.NotificationType.System;
+        }
+
+        var notification = new Data.Entities.Notification
+        {
+            Id = Guid.NewGuid(),
+            UserId = request.UserId,
+            Message = request.Message,
+            Type = notificationType,
+            IsRead = false,
+            CreatedAt = DateTime.UtcNow
+        };
+
         await _unitOfWork.Notifications.AddAsync(notification, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -793,10 +1046,17 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
             .AsNoTracking()
             .FirstOrDefaultAsync(n => n.Id == notification.Id, cancellationToken);
 
-        return _mapper.Map<NotificationResponseDto>(created);
+        return new NotificationResponseDto(
+            created!.Id,
+            created.UserId,
+            created.Message,
+            created.IsRead,
+            created.Type.ToString(),
+            created.CreatedAt,
+            created.UpdatedAt);
     }
 
-    public override async Task<NotificationResponseDto> UpdateAsync(Guid id, UpdateNotificationRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<NotificationResponseDto> UpdateAsync(Guid id, UpdateNotificationRequestDto request, CancellationToken cancellationToken = default)
     {
         var notification = await _unitOfWork.Notifications.GetByIdAsync(id, cancellationToken);
         if (notification is null)
@@ -817,7 +1077,7 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
         return _mapper.Map<NotificationResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var notification = await _unitOfWork.Notifications.GetByIdAsync(id, cancellationToken);
         if (notification is null)
@@ -828,20 +1088,64 @@ public sealed class NotificationService : CrudService<NotificationResponseDto, C
         _unitOfWork.Notifications.Remove(notification);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
+
+    public async Task<IReadOnlyList<NotificationResponseDto>> GetUserNotificationsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var notifications = await _unitOfWork.Notifications
+            .Query()
+            .Where(n => n.UserId == userId)
+            .OrderByDescending(n => n.CreatedAt)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return notifications.Select(n => new NotificationResponseDto(
+            n.Id, n.UserId, n.Message, n.IsRead, n.Type.ToString(), n.CreatedAt, n.UpdatedAt)).ToList();
+    }
+
+    public async Task MarkAsReadAsync(Guid notificationId, CancellationToken cancellationToken = default)
+    {
+        var notification = await _unitOfWork.Notifications.GetByIdAsync(notificationId, cancellationToken);
+        if (notification is null)
+        {
+            throw new KeyNotFoundException($"Notification with ID {notificationId} not found.");
+        }
+
+        notification.IsRead = true;
+        _unitOfWork.Notifications.Update(notification);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task MarkAllAsReadAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var notifications = await _unitOfWork.Notifications
+            .Query()
+            .Where(n => n.UserId == userId && !n.IsRead)
+            .ToListAsync(cancellationToken);
+
+        foreach (var notification in notifications)
+        {
+            notification.IsRead = true;
+            _unitOfWork.Notifications.Update(notification);
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
 }
 
-public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePaymentRequestDto, UpdatePaymentRequestDto>, IPaymentService
+public sealed class PaymentService : IPaymentService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
+    private readonly IVnPayService _vnPayService;
 
-    public PaymentService(IUnitOfWork unitOfWork, IMapper mapper)
+    public PaymentService(IUnitOfWork unitOfWork, IMapper mapper, IVnPayService vnPayService)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _vnPayService = vnPayService;
     }
 
-    public override async Task<IReadOnlyList<PaymentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<PaymentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var payments = await _unitOfWork.Payments
             .Query()
@@ -853,7 +1157,7 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
         return payments.Select(_mapper.Map<PaymentResponseDto>).ToList();
     }
 
-    public override async Task<PaymentResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<PaymentResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var payment = await _unitOfWork.Payments
             .Query()
@@ -865,32 +1169,61 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
         return payment is null ? null : _mapper.Map<PaymentResponseDto>(payment);
     }
 
-    public override async Task<PaymentResponseDto> CreateAsync(CreatePaymentRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<PaymentResponseDto> CreateAsync(CreatePaymentRequestDto request, CancellationToken cancellationToken = default)
     {
         if (request.TierId.HasValue)
         {
-            var tierExists = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierId.Value, cancellationToken) is not null;
-            if (!tierExists)
+            var tier = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierId.Value, cancellationToken);
+            if (tier is null)
             {
                 throw new KeyNotFoundException($"Tier membership with ID {request.TierId} not found.");
             }
+
+            var payment = _mapper.Map<Data.Entities.Payment>(request);
+            await _unitOfWork.Payments.AddAsync(payment, cancellationToken);
+
+            var user = await _unitOfWork.Users.GetByIdAsync(request.UserId, cancellationToken);
+            if (user is not null)
+            {
+                user.TierId = request.TierId.Value;
+                if (!tier.TierName.Equals("Free", StringComparison.OrdinalIgnoreCase))
+                {
+                    user.TierExpireAt = DateTime.UtcNow.AddDays(30);
+                }
+                else
+                {
+                    user.TierExpireAt = null;
+                }
+                _unitOfWork.Users.Update(user);
+            }
+
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            var created = await _unitOfWork.Payments
+                .Query()
+                .Include(p => p.User)
+                .Include(p => p.TierMembership)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == payment.Id, cancellationToken);
+
+            return _mapper.Map<PaymentResponseDto>(created);
         }
 
-        var payment = _mapper.Map<Data.Entities.Payment>(request);
-        await _unitOfWork.Payments.AddAsync(payment, cancellationToken);
+        var paymentNoTier = _mapper.Map<Data.Entities.Payment>(request);
+        await _unitOfWork.Payments.AddAsync(paymentNoTier, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var created = await _unitOfWork.Payments
+        var createdNoTier = await _unitOfWork.Payments
             .Query()
             .Include(p => p.User)
             .Include(p => p.TierMembership)
             .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == payment.Id, cancellationToken);
+            .FirstOrDefaultAsync(p => p.Id == paymentNoTier.Id, cancellationToken);
 
-        return _mapper.Map<PaymentResponseDto>(created);
+        return _mapper.Map<PaymentResponseDto>(createdNoTier);
     }
 
-    public override async Task<PaymentResponseDto> UpdateAsync(Guid id, UpdatePaymentRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<PaymentResponseDto> UpdateAsync(Guid id, UpdatePaymentRequestDto request, CancellationToken cancellationToken = default)
     {
         var payment = await _unitOfWork.Payments.GetByIdAsync(id, cancellationToken);
         if (payment is null)
@@ -912,7 +1245,7 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
         return _mapper.Map<PaymentResponseDto>(updated);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var payment = await _unitOfWork.Payments.GetByIdAsync(id, cancellationToken);
         if (payment is null)
@@ -923,9 +1256,136 @@ public sealed class PaymentService : CrudService<PaymentResponseDto, CreatePayme
         _unitOfWork.Payments.Remove(payment);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
+
+    public async Task<PaymentLinkResponseDto> CreatePaymentUrlAsync(CreatePaymentLinkRequestDto request, HttpContext context, CancellationToken cancellationToken = default)
+    {
+        var userIdString = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userIdString) || !Guid.TryParse(userIdString, out var userId))
+        {
+            throw new UnauthorizedAccessException("User not authenticated or invalid ID.");
+        }
+
+        var tier = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierId, cancellationToken);
+        if (tier is null)
+        {
+            throw new KeyNotFoundException($"Tier with ID {request.TierId} not found.");
+        }
+
+        var amount = 100000m; // Default amount for premium tier if not specified in tier entity. Assuming 100k VND
+        var payment = new Data.Entities.Payment
+        {
+            UserId = userId,
+            TierId = request.TierId,
+            Amount = amount,
+            Status = Data.Enums.PaymentStatus.Pending,
+            PaymentInfo = $"Upgrade to {tier.TierName} tier",
+            PaymentDate = DateTime.UtcNow
+        };
+
+        await _unitOfWork.Payments.AddAsync(payment, cancellationToken);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var url = _vnPayService.CreatePaymentUrl(context, payment.Id, payment.Amount, payment.PaymentInfo);
+        return new PaymentLinkResponseDto(url);
+    }
+
+    public async Task<bool> ProcessVnPayWebhookAsync(IQueryCollection query, CancellationToken cancellationToken = default)
+    {
+        if (!_vnPayService.ValidateSignature(query))
+        {
+            return false;
+        }
+
+        var paymentIdString = query["vnp_TxnRef"].ToString();
+        var responseCode = query["vnp_ResponseCode"].ToString();
+        var transactionId = query["vnp_TransactionNo"].ToString();
+
+        if (string.IsNullOrEmpty(paymentIdString) || !Guid.TryParse(paymentIdString, out var paymentId))
+        {
+            return false;
+        }
+
+        var payment = await _unitOfWork.Payments.GetByIdAsync(paymentId, cancellationToken);
+        if (payment is null)
+        {
+            return false;
+        }
+
+        payment.TransactionId = transactionId;
+
+        if (responseCode == "00") // Success
+        {
+            payment.Status = Data.Enums.PaymentStatus.Completed;
+
+            if (payment.TierId.HasValue)
+            {
+                var user = await _unitOfWork.Users.GetByIdAsync(payment.UserId, cancellationToken);
+                if (user is not null)
+                {
+                    var tier = await _unitOfWork.TierMemberships.GetByIdAsync(payment.TierId.Value, cancellationToken);
+                    user.TierId = payment.TierId.Value;
+                    if (tier is not null && !tier.TierName.Equals("Free", StringComparison.OrdinalIgnoreCase))
+                    {
+                        user.TierExpireAt = DateTime.UtcNow.AddDays(30);
+                    }
+                    else
+                    {
+                        user.TierExpireAt = null;
+                    }
+                    _unitOfWork.Users.Update(user);
+                }
+            }
+        }
+        else
+        {
+            payment.Status = Data.Enums.PaymentStatus.Failed;
+        }
+
+        _unitOfWork.Payments.Update(payment);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return true;
+    }
+
+    public async Task<IReadOnlyList<PaymentResponseDto>> GetUserPaymentsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var payments = await _unitOfWork.Payments
+            .Query()
+            .Include(p => p.User)
+            .Include(p => p.TierMembership)
+            .Where(p => p.UserId == userId)
+            .AsNoTracking()
+            .OrderByDescending(p => p.PaymentDate)
+            .ToListAsync(cancellationToken);
+
+        return payments.Select(_mapper.Map<PaymentResponseDto>).ToList();
+    }
+
+    public async Task RefundPaymentAsync(Guid paymentId, CancellationToken cancellationToken = default)
+    {
+        var payment = await _unitOfWork.Payments.GetByIdAsync(paymentId, cancellationToken);
+        if (payment is null)
+        {
+            throw new KeyNotFoundException($"Payment with ID {paymentId} not found.");
+        }
+
+        if (payment.Status == Data.Enums.PaymentStatus.Refunded)
+        {
+            throw new InvalidOperationException("Payment has already been refunded.");
+        }
+
+        if (payment.Status != Data.Enums.PaymentStatus.Completed)
+        {
+            throw new InvalidOperationException("Only completed payments can be refunded.");
+        }
+
+        payment.Status = Data.Enums.PaymentStatus.Refunded;
+        _unitOfWork.Payments.Update(payment);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
 }
 
-public sealed class SubjectService : CrudService<SubjectResponseDto, CreateSubjectRequestDto, UpdateSubjectRequestDto>, ISubjectService
+public sealed class SubjectService : ISubjectService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -936,19 +1396,19 @@ public sealed class SubjectService : CrudService<SubjectResponseDto, CreateSubje
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<SubjectResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<SubjectResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var subjects = await _unitOfWork.Subjects.GetAllAsync(cancellationToken);
         return subjects.Select(_mapper.Map<SubjectResponseDto>).ToList();
     }
 
-    public override async Task<SubjectResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<SubjectResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
         return subject is null ? null : _mapper.Map<SubjectResponseDto>(subject);
     }
 
-    public override async Task<SubjectResponseDto> CreateAsync(CreateSubjectRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<SubjectResponseDto> CreateAsync(CreateSubjectRequestDto request, CancellationToken cancellationToken = default)
     {
         var existing = await _unitOfWork.Subjects
             .Query()
@@ -966,7 +1426,7 @@ public sealed class SubjectService : CrudService<SubjectResponseDto, CreateSubje
         return _mapper.Map<SubjectResponseDto>(subject);
     }
 
-    public override async Task<SubjectResponseDto> UpdateAsync(Guid id, UpdateSubjectRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<SubjectResponseDto> UpdateAsync(Guid id, UpdateSubjectRequestDto request, CancellationToken cancellationToken = default)
     {
         var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
         if (subject is null)
@@ -990,7 +1450,7 @@ public sealed class SubjectService : CrudService<SubjectResponseDto, CreateSubje
         return _mapper.Map<SubjectResponseDto>(subject);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
         if (subject is null)
@@ -1003,7 +1463,7 @@ public sealed class SubjectService : CrudService<SubjectResponseDto, CreateSubje
     }
 }
 
-public sealed class TierMembershipService : CrudService<TierMembershipResponseDto, CreateTierMembershipRequestDto, UpdateTierMembershipRequestDto>, ITierMembershipService
+public sealed class TierMembershipService : ITierMembershipService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
@@ -1014,19 +1474,19 @@ public sealed class TierMembershipService : CrudService<TierMembershipResponseDt
         _mapper = mapper;
     }
 
-    public override async Task<IReadOnlyList<TierMembershipResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<TierMembershipResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var tiers = await _unitOfWork.TierMemberships.GetAllAsync(cancellationToken);
         return tiers.Select(_mapper.Map<TierMembershipResponseDto>).ToList();
     }
 
-    public override async Task<TierMembershipResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<TierMembershipResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var tier = await _unitOfWork.TierMemberships.GetByIdAsync(id, cancellationToken);
         return tier is null ? null : _mapper.Map<TierMembershipResponseDto>(tier);
     }
 
-    public override async Task<TierMembershipResponseDto> CreateAsync(CreateTierMembershipRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<TierMembershipResponseDto> CreateAsync(CreateTierMembershipRequestDto request, CancellationToken cancellationToken = default)
     {
         var existing = await _unitOfWork.TierMemberships
             .Query()
@@ -1044,7 +1504,7 @@ public sealed class TierMembershipService : CrudService<TierMembershipResponseDt
         return _mapper.Map<TierMembershipResponseDto>(tier);
     }
 
-    public override async Task<TierMembershipResponseDto> UpdateAsync(Guid id, UpdateTierMembershipRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<TierMembershipResponseDto> UpdateAsync(Guid id, UpdateTierMembershipRequestDto request, CancellationToken cancellationToken = default)
     {
         var tier = await _unitOfWork.TierMemberships.GetByIdAsync(id, cancellationToken);
         if (tier is null)
@@ -1068,7 +1528,7 @@ public sealed class TierMembershipService : CrudService<TierMembershipResponseDt
         return _mapper.Map<TierMembershipResponseDto>(tier);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var tier = await _unitOfWork.TierMemberships.GetByIdAsync(id, cancellationToken);
         if (tier is null)
@@ -1081,99 +1541,4 @@ public sealed class TierMembershipService : CrudService<TierMembershipResponseDt
     }
 }
 
-public sealed class TierUserService : ITierUserService
-{
-    private readonly IUnitOfWork _unitOfWork;
-    private readonly IMapper _mapper;
 
-    public TierUserService(IUnitOfWork unitOfWork, IMapper mapper)
-    {
-        _unitOfWork = unitOfWork;
-        _mapper = mapper;
-    }
-
-    public async Task<IReadOnlyList<TierUserResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
-    {
-        var assignments = await _unitOfWork.TierUsers
-            .Query()
-            .Include(tu => tu.User)
-            .Include(tu => tu.TierMembership)
-            .AsNoTracking()
-            .ToListAsync(cancellationToken);
-
-        return assignments.Select(_mapper.Map<TierUserResponseDto>).ToList();
-    }
-
-    public async Task<TierUserResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
-    {
-        var assignment = await _unitOfWork.TierUsers
-            .Query()
-            .Include(tu => tu.User)
-            .Include(tu => tu.TierMembership)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(tu => tu.Id == id, cancellationToken);
-
-        return assignment is null ? null : _mapper.Map<TierUserResponseDto>(assignment);
-    }
-
-    public async Task<TierUserResponseDto> CreateAsync(CreateTierUserRequestDto request, CancellationToken cancellationToken = default)
-    {
-        var userExists = await _unitOfWork.Users.GetByIdAsync(request.UserId, cancellationToken) is not null;
-        if (!userExists)
-        {
-            throw new KeyNotFoundException($"User with ID {request.UserId} not found.");
-        }
-
-        var tierExists = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierMembershipId, cancellationToken) is not null;
-        if (!tierExists)
-        {
-            throw new KeyNotFoundException($"Tier membership with ID {request.TierMembershipId} not found.");
-        }
-
-        var existing = await _unitOfWork.TierUsers
-            .Query()
-            .FirstOrDefaultAsync(tu => tu.UserId == request.UserId && tu.TierMembershipId == request.TierMembershipId, cancellationToken);
-
-        if (existing is not null)
-        {
-            throw new InvalidOperationException($"User is already assigned to this tier.");
-        }
-
-        var assignment = _mapper.Map<Data.Entities.TierUser>(request);
-        await _unitOfWork.TierUsers.AddAsync(assignment, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var created = await _unitOfWork.TierUsers
-            .Query()
-            .Include(tu => tu.User)
-            .Include(tu => tu.TierMembership)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(tu => tu.Id == assignment.Id, cancellationToken);
-
-        return _mapper.Map<TierUserResponseDto>(created);
-    }
-
-    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
-    {
-        var assignment = await _unitOfWork.TierUsers.GetByIdAsync(id, cancellationToken);
-        if (assignment is null)
-        {
-            throw new KeyNotFoundException($"Tier user assignment with ID {id} not found.");
-        }
-
-        _unitOfWork.TierUsers.Remove(assignment);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-    }
-
-    public async Task<TierUserResponseDto?> GetActiveByUserIdAsync(Guid userId, CancellationToken cancellationToken = default)
-    {
-        var assignment = await _unitOfWork.TierUsers
-            .Query()
-            .Include(tu => tu.User)
-            .Include(tu => tu.TierMembership)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(tu => tu.UserId == userId, cancellationToken);
-
-        return assignment is null ? null : _mapper.Map<TierUserResponseDto>(assignment);
-    }
-}

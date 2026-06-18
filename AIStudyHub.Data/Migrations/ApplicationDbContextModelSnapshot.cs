@@ -157,6 +157,9 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("nvarchar(255)")
                         .HasColumnName("file_name");
 
+                    b.Property<long>("FileSizeBytes")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("FileType")
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)")
@@ -310,6 +313,9 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("nvarchar(max)")
                         .HasColumnName("message");
 
+                    b.Property<int>("Type")
+                        .HasColumnType("int");
+
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime")
                         .HasColumnName("update_at");
@@ -377,6 +383,10 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("payment_id");
 
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(18,2)")
+                        .HasColumnName("amount");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime")
                         .HasColumnName("create_at");
@@ -398,6 +408,12 @@ namespace AIStudyHub.Data.Migrations
                     b.Property<Guid?>("TierId")
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("tier_id");
+
+                    b.Property<string>("TransactionId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("transaction_id");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime")
@@ -427,6 +443,9 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("datetime")
                         .HasColumnName("create_at");
 
+                    b.Property<int>("Position")
+                        .HasColumnType("int");
+
                     b.Property<Guid>("QuizId")
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("quiz_id");
@@ -435,6 +454,9 @@ namespace AIStudyHub.Data.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)")
                         .HasColumnName("title");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("int");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime")
@@ -495,18 +517,27 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("datetime")
                         .HasColumnName("create_at");
 
+                    b.Property<DateTime?>("GradedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("MaxScore")
+                        .HasColumnType("int");
+
                     b.Property<Guid>("QuizId")
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("quiz_id");
 
-                    b.Property<decimal?>("Score")
+                    b.Property<int>("Score")
                         .HasPrecision(5, 2)
-                        .HasColumnType("decimal(5,2)")
+                        .HasColumnType("int")
                         .HasColumnName("score");
 
                     b.Property<DateTime>("SubmittedAt")
                         .HasColumnType("datetime")
                         .HasColumnName("submitted_at");
+
+                    b.Property<int>("TotalCorrect")
+                        .HasColumnType("int");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime")
@@ -672,38 +703,24 @@ namespace AIStudyHub.Data.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("TierMembership", (string)null);
-                });
 
-            modelBuilder.Entity("AIStudyHub.Data.Entities.TierUser", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("tier_user_id");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime")
-                        .HasColumnName("create_at");
-
-                    b.Property<Guid>("TierMembershipId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("tier_id");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime")
-                        .HasColumnName("update_at");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("u_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("TierMembershipId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("TierUser", (string)null);
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("11111111-1111-1111-1111-111111111111"),
+                            AiTokens = 10000,
+                            CreatedAt = new DateTime(2026, 6, 18, 8, 49, 35, 39, DateTimeKind.Utc).AddTicks(514),
+                            StorageLimitMb = 1024,
+                            TierName = "Free"
+                        },
+                        new
+                        {
+                            Id = new Guid("55555555-5555-5555-5555-555555555555"),
+                            AiTokens = 30000,
+                            CreatedAt = new DateTime(2026, 6, 18, 8, 49, 35, 39, DateTimeKind.Utc).AddTicks(519),
+                            StorageLimitMb = 3072,
+                            TierName = "Premium"
+                        });
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.User", b =>
@@ -801,6 +818,16 @@ namespace AIStudyHub.Data.Migrations
                         .HasDefaultValue("active")
                         .HasColumnName("status");
 
+                    b.Property<DateTime?>("TierExpireAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("tier_expire_at");
+
+                    b.Property<Guid>("TierId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValue(new Guid("11111111-1111-1111-1111-111111111111"))
+                        .HasColumnName("tier_id");
+
                     b.Property<bool>("TwoFactorEnabled")
                         .HasColumnType("bit");
 
@@ -817,9 +844,6 @@ namespace AIStudyHub.Data.Migrations
                     b.HasIndex("Email")
                         .IsUnique();
 
-                    b.HasIndex("FullName")
-                        .IsUnique();
-
                     b.HasIndex("NormalizedEmail")
                         .HasDatabaseName("EmailIndex");
 
@@ -827,6 +851,8 @@ namespace AIStudyHub.Data.Migrations
                         .IsUnique()
                         .HasDatabaseName("UserNameIndex")
                         .HasFilter("[NormalizedUserName] IS NOT NULL");
+
+                    b.HasIndex("TierId");
 
                     b.ToTable("Users", (string)null);
                 });
@@ -1217,23 +1243,15 @@ namespace AIStudyHub.Data.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("AIStudyHub.Data.Entities.TierUser", b =>
+            modelBuilder.Entity("AIStudyHub.Data.Entities.User", b =>
                 {
                     b.HasOne("AIStudyHub.Data.Entities.TierMembership", "TierMembership")
-                        .WithMany("TierUsers")
-                        .HasForeignKey("TierMembershipId")
+                        .WithMany("Users")
+                        .HasForeignKey("TierId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("AIStudyHub.Data.Entities.User", "User")
-                        .WithMany("TierUsers")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
                     b.Navigation("TierMembership");
-
-                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.Vote", b =>
@@ -1347,7 +1365,7 @@ namespace AIStudyHub.Data.Migrations
                 {
                     b.Navigation("Payments");
 
-                    b.Navigation("TierUsers");
+                    b.Navigation("Users");
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.User", b =>
@@ -1365,8 +1383,6 @@ namespace AIStudyHub.Data.Migrations
                     b.Navigation("RefreshTokens");
 
                     b.Navigation("Reports");
-
-                    b.Navigation("TierUsers");
 
                     b.Navigation("Votes");
                 });

@@ -5,10 +5,11 @@ using AIStudyHub.Data.Interfaces;
 using AutoMapper;
 using FluentValidation;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 
 namespace AIStudyHub.Business.Services;
 
-public sealed class UserService : CrudService<UserResponseDto, CreateUserRequestDto, UpdateUserRequestDto>, IUserService
+public sealed class UserService : IUserService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly UserManager<User> _userManager;
@@ -30,19 +31,90 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
         _updateValidator = updateValidator;
     }
 
-    public override async Task<IReadOnlyList<UserResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<UserResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
-        var users = await _unitOfWork.Users.GetAllAsync(cancellationToken);
-        return _mapper.Map<IReadOnlyList<UserResponseDto>>(users);
+        var users = await _unitOfWork.Users
+            .Query()
+            .Include(u => u.TierMembership)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+        return users.Select(MapToDto).ToList();
     }
 
-    public override async Task<UserResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<UserResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var user = await _unitOfWork.Users.GetByIdAsync(id, cancellationToken);
-        return user is null ? null : _mapper.Map<UserResponseDto>(user);
+        var user = await _unitOfWork.Users
+            .Query()
+            .Include(u => u.TierMembership)
+            .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
+        return user is null ? null : MapToDto(user);
     }
 
-    public override async Task<UserResponseDto> CreateAsync(CreateUserRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<UserTierInfoDto?> GetUserTierInfoAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var user = await _unitOfWork.Users
+            .Query()
+            .Include(u => u.TierMembership)
+            .FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+
+        if (user is null) return null;
+
+        return new UserTierInfoDto(
+            user.TierId,
+            user.TierMembership?.TierName ?? "Unknown",
+            user.TierMembership?.StorageLimitMb ?? 0,
+            user.TierMembership?.AiTokens ?? 0,
+            user.TierExpireAt,
+            user.CurrentStorageCapacity,
+            user.CurrentAiTokenUsage);
+    }
+
+    public async Task UpdateUserTierAsync(Guid userId, UpdateUserTierRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString())
+            ?? throw new KeyNotFoundException("User not found.");
+
+        var tier = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierId, cancellationToken)
+            ?? throw new KeyNotFoundException("Tier not found.");
+
+        user.TierId = request.TierId;
+        user.TierExpireAt = request.TierExpireAt;
+        await _userManager.UpdateAsync(user);
+    }
+
+    public async Task UpdateProfileAsync(Guid userId, UpdateProfileRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString())
+            ?? throw new KeyNotFoundException("User not found.");
+
+        user.FullName = request.FullName.Trim();
+        user.DateOfBirth = request.DateOfBirth;
+        
+        var result = await _userManager.UpdateAsync(user);
+        EnsureIdentitySucceeded(result);
+    }
+
+    private UserResponseDto MapToDto(User user)
+    {
+        return new UserResponseDto(
+            user.Id,
+            user.FullName,
+            user.Email ?? string.Empty,
+            user.DateOfBirth,
+            user.CurrentStorageCapacity,
+            user.CurrentAiTokenUsage,
+            user.Status,
+            user.Role,
+            user.TierId,
+            user.TierMembership?.TierName ?? "Unknown",
+            user.TierMembership?.StorageLimitMb ?? 0,
+            user.TierMembership?.AiTokens ?? 0,
+            user.TierExpireAt,
+            user.CreatedAt,
+            user.UpdatedAt);
+    }
+
+    public async Task<UserResponseDto> CreateAsync(CreateUserRequestDto request, CancellationToken cancellationToken = default)
     {
         await _createValidator.ValidateAndThrowAsync(request, cancellationToken);
 
@@ -79,7 +151,7 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
         return _mapper.Map<UserResponseDto>(user);
     }
 
-    public override async Task<UserResponseDto> UpdateAsync(Guid id, UpdateUserRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<UserResponseDto> UpdateAsync(Guid id, UpdateUserRequestDto request, CancellationToken cancellationToken = default)
     {
         await _updateValidator.ValidateAndThrowAsync(request, cancellationToken);
 
@@ -121,7 +193,7 @@ public sealed class UserService : CrudService<UserResponseDto, CreateUserRequest
         return _mapper.Map<UserResponseDto>(user);
     }
 
-    public override async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var user = await _userManager.FindByIdAsync(id.ToString())
             ?? throw new KeyNotFoundException("User not found.");

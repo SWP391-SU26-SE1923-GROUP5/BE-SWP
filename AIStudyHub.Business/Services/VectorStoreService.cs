@@ -73,13 +73,13 @@ public sealed class VectorStoreService : IVectorStoreService
         }
     }
 
-    public async Task<List<(string Id, float[] Embedding, Dictionary<string, string> Metadata)>> SearchAsync(
+    public async Task<List<(string Id, float[] Embedding, Dictionary<string, string> Metadata, double Score)>> SearchAsync(
         float[] queryEmbedding, int topK, Dictionary<string, string>? filterMetadata = null)
     {
         if (string.IsNullOrEmpty(_options.PineconeApiKey))
         {
             _logger.LogWarning("Pinecone not configured, returning empty search results");
-            return new List<(string, float[], Dictionary<string, string>)>();
+            return new List<(string, float[], Dictionary<string, string>, double)>();
         }
 
         try
@@ -109,12 +109,12 @@ public sealed class VectorStoreService : IVectorStoreService
             {
                 var error = await response.Content.ReadAsStringAsync();
                 _logger.LogWarning("Pinecone query failed: {Error}", error);
-                return new List<(string, float[], Dictionary<string, string>)>();
+                return new List<(string, float[], Dictionary<string, string>, double)>();
             }
 
             var json = await response.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(json);
-            var results = new List<(string, float[], Dictionary<string, string>)>();
+            var results = new List<(string, float[], Dictionary<string, string>, double)>();
 
             foreach (var match in doc.RootElement.GetProperty("matches").EnumerateArray())
             {
@@ -132,7 +132,11 @@ public sealed class VectorStoreService : IVectorStoreService
                     }
                 }
 
-                results.Add((id, values, metadata));
+                var score = match.TryGetProperty("score", out var scoreElement)
+                    ? scoreElement.GetDouble()
+                    : 0.0;
+
+                results.Add((id, values, metadata, score));
             }
 
             return results;
@@ -140,7 +144,7 @@ public sealed class VectorStoreService : IVectorStoreService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Pinecone search failed");
-            return new List<(string, float[], Dictionary<string, string>)>();
+            return new List<(string, float[], Dictionary<string, string>, double)>();
         }
     }
 

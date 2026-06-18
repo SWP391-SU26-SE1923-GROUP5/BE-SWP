@@ -15,6 +15,7 @@ flowchart TD
     end
 
     subgraph Business["Business Layer - AIStudyHub.Business"]
+        CQRS[MediatR CQRS / Features]
         Services[Services]
         ServiceInterfaces[Service Interfaces]
         DTOs[DTOs]
@@ -270,115 +271,50 @@ Cardinalities:
 
 # Request Flow
 
-Standard API request flow:
+There are two primary request flows depending on the domain complexity:
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Controller
-    participant Service
-    participant Repository
-    participant DbContext
-    participant SQLServer
-
-    Client->>Controller: HTTP Request
-    Controller->>Controller: Model binding / auth metadata
-    Controller->>Service: DTO + CancellationToken
-    Service->>Service: Business rules / validation orchestration
-    Service->>Repository: Entity operation
-    Repository->>DbContext: EF Core query / command
-    DbContext->>SQLServer: SQL
-    SQLServer-->>DbContext: Result
-    DbContext-->>Repository: Entities
-    Repository-->>Service: Entities
-    Service-->>Controller: Response DTO
-    Controller-->>Client: HTTP Response
-```
-
-Linear flow:
+Standard Service Flow (Simple CRUD/Domain logic):
 
 ```text
-Client
-→ Controller
-→ Service
-→ Repository
-→ DbContext
-→ SQL Server
+Client -> Controller -> Service -> Repository -> DbContext -> SQL Server
+```
+
+CQRS Flow via MediatR (Complex Domains like Users & Auth):
+
+```text
+Client -> Controller -> MediatR -> Command/Query Handler -> Repository -> DbContext -> SQL Server
 ```
 
 # Authentication Flow
 
-JWT authentication flow:
+JWT authentication flow uses ASP.NET Core Identity:
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant AuthController
-    participant AuthService
-    participant UserRepository
-    participant JwtIssuer
-
-    Client->>AuthController: Register/Login request
-    AuthController->>AuthService: Auth DTO
-    AuthService->>UserRepository: Find or create user
-    AuthService->>AuthService: Validate credentials
-    AuthService->>JwtIssuer: Generate JWT
-    JwtIssuer-->>AuthService: Access token
-    AuthService-->>AuthController: AuthResponseDto
-    AuthController-->>Client: JWT response
-
-    Client->>AuthController: Future request with Authorization header
+```text
+Client -> AuthController -> Identity UserManager/SignInManager -> DbContext
 ```
-
-JWT rules:
-
-- Use Bearer tokens.
-- Token settings live under `Jwt` configuration.
-- Protected endpoints require `[Authorize]`.
-- Admin endpoints require `[Authorize(Roles = "Admin")]`.
-- Password hashes must never be returned.
-- Real secrets must not be committed.
 
 # AI Features Flow
 
-Target AI feature flow:
+Current AI architecture uses a **Local LLM stack** (Ollama) with `nomic-embed-text` for generating vector embeddings locally, and Pinecone for vector storage.
 
 ```mermaid
 flowchart LR
-    Upload[Document Upload]
-    Extract[Text Extraction]
-    Vector[Vectorization]
-    AI[AI Processing]
-    Flashcard[Flashcard]
-    Quiz[Quiz]
-    Chat[Chat]
+    Upload[Document Upload (multipart/form-data)]
+    Extract[Text Extraction & Chunking (Local)]
+    Vector[Vectorization via Ollama]
+    Store[Vector Storage via Pinecone]
 
     Upload --> Extract
     Extract --> Vector
-    Vector --> AI
-    AI --> Flashcard
-    AI --> Quiz
-    AI --> Chat
+    Vector --> Store
 ```
 
-Linear flow:
+Future integrations will expand to:
 
-```text
-Document Upload
-→ Vectorization
-→ AI Processing
-→ Flashcard
-→ Quiz
-→ Chat
-```
+- Chat interactions leveraging `RagChatService`
+- Automated Flashcard and Quiz generation based on stored vectors
 
-Future AI abstraction recommendations:
-
-- Add an AI provider interface in Business layer.
-- Keep vendor SDK integrations outside controllers.
-- Store generated flashcards and quizzes as normal entities.
-- Store chat sessions and messages using `ChatSession` and `ChatMessage`.
-- Treat document content, embeddings, prompts, and chat content as sensitive user data.
+All AI interactions ensure that sensitive prompts and data chunks are managed within the backend.
 
 # Payment Flow
 

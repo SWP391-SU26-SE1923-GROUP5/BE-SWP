@@ -9,6 +9,11 @@ public sealed record UserResponseDto(
     int CurrentAiTokenUsage,
     string Status,
     string Role,
+    Guid TierId,
+    string TierName,
+    int TierStorageLimitMb,
+    int TierAiTokens,
+    DateTime? TierExpireAt,
     DateTime CreatedAt,
     DateTime? UpdatedAt);
 
@@ -29,3 +34,20 @@ public sealed record UpdateUserRequestDto(
     int CurrentAiTokenUsage,
     string Status,
     string Role);
+
+public sealed record UpdateProfileRequestDto(
+    string FullName,
+    DateOnly? DateOfBirth);
+
+public sealed record UpdateUserTierRequestDto(
+    Guid TierId,
+    DateTime? TierExpireAt);
+
+public sealed record UserTierInfoDto(
+    Guid TierId,
+    string TierName,
+    int StorageLimitMb,
+    int AiTokens,
+    DateTime? TierExpireAt,
+    int CurrentStorageMb,
+    int CurrentAiTokensUsed);

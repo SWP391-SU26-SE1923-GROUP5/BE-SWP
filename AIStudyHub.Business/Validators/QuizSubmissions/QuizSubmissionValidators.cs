@@ -9,7 +9,7 @@ public sealed class CreateQuizSubmissionRequestDtoValidator : AbstractValidator<
     {
         RuleFor(x => x.UserId).NotEmpty();
         RuleFor(x => x.QuizId).NotEmpty();
-        RuleFor(x => x.Score).InclusiveBetween(0, 100);
+        RuleFor(x => x.Answers).NotEmpty();
     }
 }
 
@@ -17,6 +17,6 @@ public sealed class UpdateQuizSubmissionRequestDtoValidator : AbstractValidator<
 {
     public UpdateQuizSubmissionRequestDtoValidator()
     {
-        RuleFor(x => x.Score).InclusiveBetween(0, 100);
+        RuleFor(x => x.Answers).NotEmpty();
     }
 }
