@@ -57,11 +57,24 @@ public sealed class DocumentService : IDocumentService
             d.UpdatedAt)).ToList();
     }
 
-    public async Task<IReadOnlyList<DocumentResponseDto>> GetAllByUserIdAsync(Guid userId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<DocumentResponseDto>> GetAllByUserIdAsync(Guid userId, string? keyword = null, Guid? subjectId = null, CancellationToken cancellationToken = default)
     {
-        var documents = await _unitOfWork.Documents
+        var query = _unitOfWork.Documents
             .Query()
-            .Where(d => d.UserId == userId || d.ShareStatus == "public")
+            .Where(d => d.UserId == userId || d.ShareStatus == "public");
+
+        if (subjectId.HasValue)
+        {
+            query = query.Where(d => d.SubjectId == subjectId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var lowerKeyword = keyword.ToLower();
+            query = query.Where(d => d.Title.ToLower().Contains(lowerKeyword) || (d.FileName != null && d.FileName.ToLower().Contains(lowerKeyword)));
+        }
+
+        var documents = await query
             .Include(d => d.Subject)
             .Include(d => d.User)
             .Include(d => d.Votes)

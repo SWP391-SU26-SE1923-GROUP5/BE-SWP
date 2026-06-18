@@ -21,14 +21,17 @@ public sealed class DocumentController : ControllerBase
         _storageOptions = storageOptions.Value;
     }
 
-    /// <summary>Lấy danh sách tất cả tài liệu.</summary>
+    /// <summary>Lấy danh sách tất cả tài liệu (có hỗ trợ tìm kiếm và lọc theo môn học).</summary>
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<DocumentResponseDto>>> GetAll(CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyList<DocumentResponseDto>>> GetAll(
+        [FromQuery] string? keyword, 
+        [FromQuery] Guid? subjectId, 
+        CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
         if (userId == Guid.Empty) return Unauthorized();
 
-        var result = await _service.GetAllByUserIdAsync(userId, cancellationToken);
+        var result = await _service.GetAllByUserIdAsync(userId, keyword, subjectId, cancellationToken);
         return Ok(result);
     }
 
@@ -99,5 +102,31 @@ public sealed class DocumentController : ControllerBase
 
         var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         return File(stream, contentType, fileName);
+    }
+
+    [HttpGet("{id:guid}/preview")]
+    [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> Preview(Guid id, CancellationToken cancellationToken)
+    {
+        var document = await _service.GetByIdAsync(id, cancellationToken);
+        if (document is null)
+            return NotFound();
+
+        if (string.IsNullOrEmpty(document.FileLink))
+            return NotFound("No file associated with this document");
+
+        var relativePath = document.FileLink.Replace("/uploads/", "");
+        var fullPath = Path.Combine(_storageOptions.BasePath, relativePath);
+
+        if (!System.IO.File.Exists(fullPath))
+            return NotFound("File not found on disk");
+
+        var contentType = document.FileType ?? "application/octet-stream";
+        var fileName = document.FileName ?? Path.GetFileName(relativePath);
+
+        var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        Response.Headers.Append("Content-Disposition", $"inline; filename=\"{fileName}\"");
+        return File(stream, contentType);
     }
 }
