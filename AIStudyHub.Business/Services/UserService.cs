@@ -89,9 +89,35 @@ public sealed class UserService : IUserService
 
         user.FullName = request.FullName.Trim();
         user.DateOfBirth = request.DateOfBirth;
-        
+
         var result = await _userManager.UpdateAsync(user);
         EnsureIdentitySucceeded(result);
+    }
+
+    public async Task<IReadOnlyList<ShareableUserDto>> GetShareableUsersAsync(
+        Guid callerId,
+        string? keyword = null,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _unitOfWork.Users
+            .Query()
+            .Where(u => u.Id != callerId && u.IsActive && u.Status == "active")
+            .AsNoTracking();
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var lowered = keyword.Trim().ToLowerInvariant();
+            query = query.Where(u =>
+                u.FullName.ToLower().Contains(lowered) ||
+                (u.Email != null && u.Email.ToLower().Contains(lowered)));
+        }
+
+        var users = await query
+            .OrderBy(u => u.FullName)
+            .Select(u => new ShareableUserDto(u.Id, u.FullName, u.Email ?? string.Empty, u.Role))
+            .ToListAsync(cancellationToken);
+
+        return users;
     }
 
     private UserResponseDto MapToDto(User user)

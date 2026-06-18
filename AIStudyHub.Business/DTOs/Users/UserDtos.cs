@@ -51,3 +51,10 @@ public sealed record UserTierInfoDto(
     DateTime? TierExpireAt,
     int CurrentStorageMb,
     int CurrentAiTokensUsed);
+
+/// <summary>Lightweight projection of a user for share-target pickers (excludes the caller).</summary>
+public sealed record ShareableUserDto(
+    Guid Id,
+    string FullName,
+    string Email,
+    string Role);
