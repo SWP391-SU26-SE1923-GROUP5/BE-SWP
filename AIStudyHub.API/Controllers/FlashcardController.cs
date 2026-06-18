@@ -20,24 +20,15 @@ public sealed class FlashcardController : ControllerBase
     }
 
     [HttpPost("/api/flashcard/document/{docId:guid}/ai-gen")]
-    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> GenerateFromDocument(Guid docId, [FromBody] CreateFlashcardsViaAiRequestDto request, CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyList<FlashcardResponseAiDto>>> GenerateFromDocument(Guid docId, [FromBody] CreateFlashcardsViaAiRequestDto request, CancellationToken cancellationToken)
     {
         var userIdClaim = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier || c.Type == "sub" || c.Type == "userId")?.Value;
         if (!Guid.TryParse(userIdClaim, out var userId))
             return Forbid();
 
+        // Generate via AI but do NOT persist to the database.
         var aiResult = await _flashcardAiService.GenerateFlashcardsAsync(docId, request, userId, cancellationToken);
-
-        // Save generated flashcards to DB
-        var createdFlashcards = new List<FlashcardResponseDto>();
-        foreach (var flashcard in aiResult.Flashcards)
-        {
-            var createDto = new CreateFlashcardRequestDto(docId, flashcard.Front, flashcard.Back);
-            var created = await _service.CreateAsync(createDto, cancellationToken);
-            createdFlashcards.Add(created);
-        }
-
-        return Ok(createdFlashcards);
+        return Ok(aiResult.Flashcards);
     }
 
     [HttpGet("/api/flashcard/document/{docId:guid}")]

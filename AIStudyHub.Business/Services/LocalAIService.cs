@@ -1,5 +1,6 @@
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OpenAI.Chat;
 using OpenAI.Embeddings;
@@ -18,16 +19,20 @@ namespace AIStudyHub.Business.Services
     {
         private readonly RagOptions _options;
         private readonly HttpClient _httpClient;
-        public LocalAIService(IOptions<RagOptions> options, IHttpClientFactory httpClientFactory)
+        private readonly ILogger<LocalAIService> _logger;
+        public LocalAIService(IOptions<RagOptions> options, IHttpClientFactory httpClientFactory, ILogger<LocalAIService> logger)
         {
             _options = options.Value;
             _httpClient = httpClientFactory.CreateClient();
+            _logger = logger;
         }
         public Task<string> SendMessageAsync(string message)
             => SendMessageAsync(message, 0.2f);
 
         public async Task<string> SendMessageAsync(string message, float temperature)
         {
+            try
+            {
             //use
             //_options.OllamaUrl+"/api/chat";
             //model:  _options.OllamaModel 
@@ -109,7 +114,14 @@ namespace AIStudyHub.Business.Services
                 $"{_options.OllamaUrl}/api/chat",
                 payload);
 
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                _logger.LogError(
+                    "Ollama chat call failed: {Status} {Reason}. Body: {Body}",
+                    (int)response.StatusCode, response.ReasonPhrase, errorBody);
+                return string.Empty;
+            }
 
             using var json = await JsonDocument.ParseAsync(
                 await response.Content.ReadAsStreamAsync());
@@ -119,6 +131,12 @@ namespace AIStudyHub.Business.Services
                 .GetProperty("content")
                 .GetString() ?? "";
        //     return "hmm";
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "LocalAIService.SendMessageAsync failed");
+                return string.Empty;
+            }
         }
         public async Task<ReadOnlyMemory<float>> CreateEmbeddingFromText(string message)
         {
