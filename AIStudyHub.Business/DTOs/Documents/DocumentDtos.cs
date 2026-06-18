@@ -22,19 +22,14 @@ public sealed record CreateDocumentRequestDto(
     Guid UserId,
     Guid SubjectId,
     string Title,
-    string? FileLink,
     string? FileName,
     string? FileExtension,
     string? FileType,
-    string? SharedUsers,
     string ShareStatus);
 
 public sealed record UpdateDocumentRequestDto(
     string Title,
-    string? FileLink,
     string? FileName,
     string? FileExtension,
     string? FileType,
-    string? SharedUsers,
-    string ShareStatus,
-    DocumentStatus? Status);
+    string ShareStatus);
