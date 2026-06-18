@@ -11,4 +11,10 @@ public interface IRagChatService
     /// Returns the model's response text without citation formatting.
     /// </summary>
     Task<string> SendRawPromptAsync(string prompt, float temperature = 0.2f);
+
+    /// <summary>
+    /// Summarizes a document by retrieving all its chunks and condensing them
+    /// into a coherent summary.
+    /// </summary>
+    Task<string> SummarizeAsync(Guid documentId, Guid userId);
 }

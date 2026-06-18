@@ -5,4 +5,5 @@ public sealed record ChunkDto(
     Guid DocumentId,
     string Content,
     int OrderIndex,
-    string? VectorId);
+    string? VectorId,
+    double Score = 0.0);

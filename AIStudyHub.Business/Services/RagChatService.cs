@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
@@ -52,7 +51,8 @@ public sealed class RagChatService : IRagChatService
             return new RagChatResponseDto(
                 "I couldn't find any relevant documents to answer your question. Please upload some documents first.",
                 new List<CitationDto>(),
-                new List<ReferenceDto>()
+                new List<ReferenceDto>(),
+                new List<NeighborDto>()
             );
         }
 
@@ -66,11 +66,78 @@ public sealed class RagChatService : IRagChatService
         var citations = _citationService.CreateCitations(references);
         var formattedAnswer = _citationService.FormatAnswerWithCitations(answer, references);
 
+        var neighbors = BuildNeighbors(relevantChunks, documentTitles);
+
         return new RagChatResponseDto(
             formattedAnswer,
             citations,
-            references
+            references,
+            neighbors
         );
+    }
+
+    public async Task<string> SummarizeAsync(Guid documentId, Guid userId)
+    {
+        var document = await _unitOfWork.Documents
+            .Query()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.UserId == userId);
+
+        if (document == null)
+            return "Document not found.";
+
+        var chunks = await _unitOfWork.DocumentChunks
+            .Query()
+            .Where(c => c.DocumentId == documentId)
+            .OrderBy(c => c.OrderIndex)
+            .AsNoTracking()
+            .ToListAsync();
+
+        if (chunks.Count == 0)
+            return "No content found in this document.";
+
+        var context = new StringBuilder();
+        context.AppendLine($"Document: {document.Title}");
+        context.AppendLine();
+        foreach (var chunk in chunks)
+        {
+            context.AppendLine(chunk.ChunkJson);
+            context.AppendLine();
+        }
+
+        var systemPrompt = """
+            You are a helpful AI assistant that summarizes documents.
+            Provide a clear, concise summary that covers the main points of the document.
+            Structure the summary with key topics and their details.
+            """;
+
+        var userPrompt = $"""
+            Please summarize the following document:
+
+            {context}
+
+            SUMMARY:
+            """;
+
+        try
+        {
+            return await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex, "LLM server connection failed during summarization. URL: {Url}", _options.OllamaUrl);
+            return $"I couldn't connect to the AI server at {_options.OllamaUrl}. Please ensure the local AI server is running.";
+        }
+        catch (TaskCanceledException)
+        {
+            _logger.LogWarning("Summarization request timed out");
+            return "The summarization request timed out. Please try again.";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error during summarization");
+            return "I'm sorry, but I'm having trouble summarizing the document right now. Please try again.";
+        }
     }
 
     private async Task<List<ChunkDto>> RetrieveRelevantChunksAsync(
@@ -100,6 +167,12 @@ public sealed class RagChatService : IRagChatService
             .AsNoTracking()
             .ToListAsync();
 
+        var resultDict = searchResults
+            .Where(r => r.Metadata.TryGetValue("chunkId", out _))
+            .ToDictionary(
+                r => r.Metadata["chunkId"],
+                r => r.Score);
+
         var orderedChunks = chunkIds
             .Select(id => chunks.FirstOrDefault(c => c.Id.ToString() == id))
             .Where(c => c != null)
@@ -108,7 +181,8 @@ public sealed class RagChatService : IRagChatService
                 c.DocumentId,
                 c.ChunkJson ?? "",
                 0,
-                null))
+                null,
+                resultDict.TryGetValue(c.Id.ToString(), out var score) ? score : 0.0))
             .ToList();
 
         return orderedChunks;
@@ -151,7 +225,8 @@ public sealed class RagChatService : IRagChatService
                 x.Chunk.DocumentId,
                 x.Chunk.ChunkJson ?? "",
                 0,
-                null))
+                null,
+                x.Score))
             .ToList();
     }
 
@@ -167,6 +242,47 @@ public sealed class RagChatService : IRagChatService
             context.AppendLine();
         }
         return context.ToString();
+    }
+
+    private static List<NeighborDto> BuildNeighbors(List<ChunkDto> chunks, Dictionary<Guid, string> documentTitles)
+    {
+        if (chunks.Count == 0)
+            return new List<NeighborDto>();
+
+        var maxScore = chunks.Max(c => c.Score);
+        if (maxScore == 0)
+            maxScore = 1;
+
+        var neighbors = chunks
+            .GroupBy(c => c.DocumentId)
+            .Select(g =>
+            {
+                var topChunk = g.OrderByDescending(c => c.Score).First();
+                var docTitle = documentTitles.GetValueOrDefault(g.Key, "Unknown");
+                return new NeighborDto(
+                    docTitle,
+                    Math.Round(topChunk.Score, 4),
+                    GetNeighborRelevanceLabel(topChunk.Score, maxScore));
+            })
+            .OrderByDescending(n => n.Score)
+            .ToList();
+
+        return neighbors;
+    }
+
+    private static string GetNeighborRelevanceLabel(double score, double maxScore)
+    {
+        if (maxScore <= 0)
+            return "Unknown";
+        var ratio = score / maxScore;
+        return ratio switch
+        {
+            >= 0.9 => "Highly Relevant",
+            >= 0.7 => "Relevant",
+            >= 0.5 => "Somewhat Relevant",
+            >= 0.3 => "Loosely Relevant",
+            _ => "Weakly Relevant"
+        };
     }
 
     public async Task<string> SendRawPromptAsync(string prompt, float temperature = 0.2f)
@@ -188,7 +304,7 @@ public sealed class RagChatService : IRagChatService
         {
             var systemPrompt = """
                 You are a helpful AI assistant specialized in answering questions based on provided documents.
-                
+
                 IMPORTANT RULES:
                 1. ONLY answer questions using information from the provided sources.
                 2. If the answer is not found in the sources, clearly state: "I don't have enough information in the provided documents to answer this question."
@@ -209,8 +325,6 @@ public sealed class RagChatService : IRagChatService
                 """;
 
             var response = await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
-
-
 
             return response;
         }
