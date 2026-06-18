@@ -267,8 +267,34 @@ public sealed class AuthService : IAuthService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        var htmlBody = $"<p>Hello {System.Net.WebUtility.HtmlEncode(user.FullName)},</p><p>Your email verification OTP is: <strong>{otp}</strong></p><p>This code expires in {_otpOptions.ExpiryMinutes} minutes.</p><p>If you did not request this, you can ignore this email.</p>";
-        await _emailService.SendAsync(normalizedEmail, "Verify your AIStudyHub email", htmlBody, cancellationToken);
+        var htmlBody = $@"
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+</head>
+<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;'>
+    <div style='background-color: #f8f9fa; padding: 30px; border-radius: 8px;'>
+        <h2 style='color: #2c3e50; margin-bottom: 20px;'>Email Verification - AI Study Hub</h2>
+        <p>Dear {System.Net.WebUtility.HtmlEncode(user.FullName)},</p>
+        <p>Thank you for registering with AI Study Hub. To complete your email verification, please use the following one-time verification code:</p>
+        <div style='background-color: #ffffff; padding: 20px; border-radius: 6px; text-align: center; margin: 20px 0; border: 1px solid #e0e0e0;'>
+            <span style='font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #2c3e50;'>{otp}</span>
+        </div>
+        <p><strong>Important:</strong> This verification code will expire in <em>{_otpOptions.ExpiryMinutes} minutes</em>. Please enter it promptly to avoid expiration.</p>
+        <hr style='border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;'>
+        <div style='background-color: #fff3cd; padding: 15px; border-radius: 6px; margin: 15px 0;'>
+            <p style='margin: 0;'><strong>Security Notice:</strong></p>
+            <p style='margin: 10px 0 0 0;'>If you did not initiate this account registration, please disregard this email. No further action is required on your part. Your email address will not be associated with any account without your explicit verification.</p>
+        </div>
+        <p>If you have any questions or require assistance, please contact our support team.</p>
+        <p>Thank you for choosing AI Study Hub.</p>
+        <p>Kind regards,<br><strong>AI Study Hub Support Team</strong></p>
+    </div>
+</body>
+</html>";
+        await _emailService.SendAsync(normalizedEmail, "AI Study Hub - Email Verification Code", htmlBody, cancellationToken);
     }
 
     public async Task ForgotPasswordAsync(ForgotPasswordRequestDto request, CancellationToken cancellationToken = default)
@@ -315,8 +341,34 @@ public sealed class AuthService : IAuthService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        var htmlBody = $"<p>Hello {System.Net.WebUtility.HtmlEncode(user.FullName)},</p><p>Your password reset OTP is: <strong>{otp}</strong></p><p>This code expires in {_otpOptions.ExpiryMinutes} minutes.</p><p>If you did not request this, please ignore this email.</p>";
-        await _emailService.SendAsync(normalizedEmail, "AIStudyHub Password Reset OTP", htmlBody, cancellationToken);
+        var htmlBody = $@"
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+</head>
+<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;'>
+    <div style='background-color: #f8f9fa; padding: 30px; border-radius: 8px;'>
+        <h2 style='color: #2c3e50; margin-bottom: 20px;'>Password Reset - AI Study Hub</h2>
+        <p>Dear {System.Net.WebUtility.HtmlEncode(user.FullName)},</p>
+        <p>We received a request to reset your AI Study Hub account password. Please use the following one-time verification code to proceed:</p>
+        <div style='background-color: #ffffff; padding: 20px; border-radius: 6px; text-align: center; margin: 20px 0; border: 1px solid #e0e0e0;'>
+            <span style='font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #2c3e50;'>{otp}</span>
+        </div>
+        <p><strong>Important:</strong> This verification code will expire in <em>{_otpOptions.ExpiryMinutes} minutes</em>. Please enter it promptly to avoid expiration.</p>
+        <hr style='border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;'>
+        <div style='background-color: #fff3cd; padding: 15px; border-radius: 6px; margin: 15px 0;'>
+            <p style='margin: 0;'><strong>Security Notice:</strong></p>
+            <p style='margin: 10px 0 0 0;'>If you did not request this password reset, please disregard this email. Your password will not be changed, and no further action is required on your part. We recommend that you keep your account secure by not sharing your password with anyone.</p>
+        </div>
+        <p>If you have any questions or require assistance, please contact our support team.</p>
+        <p>Thank you for choosing AI Study Hub.</p>
+        <p>Kind regards,<br><strong>AI Study Hub Support Team</strong></p>
+    </div>
+</body>
+</html>";
+        await _emailService.SendAsync(normalizedEmail, "AI Study Hub - Password Reset OTP", htmlBody, cancellationToken);
     }
 
     public async Task ResetPasswordAsync(ResetPasswordRequestDto request, CancellationToken cancellationToken = default)
@@ -493,8 +545,34 @@ public sealed class AuthService : IAuthService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        var htmlBody = $"<p>Hello {System.Net.WebUtility.HtmlEncode(user.FullName)},</p><p>Your email verification OTP is: <strong>{otp}</strong></p><p>This code expires in {_otpOptions.ExpiryMinutes} minutes.</p><p>If you did not create this account, you can ignore this email.</p>";
-        await _emailService.SendAsync(user.Email!, "Verify your AIStudyHub email", htmlBody, cancellationToken);
+        var htmlBody = $@"
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+</head>
+<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;'>
+    <div style='background-color: #f8f9fa; padding: 30px; border-radius: 8px;'>
+        <h2 style='color: #2c3e50; margin-bottom: 20px;'>Email Verification - AI Study Hub</h2>
+        <p>Dear {System.Net.WebUtility.HtmlEncode(user.FullName)},</p>
+        <p>Thank you for registering with AI Study Hub. To complete your email verification, please use the following one-time verification code:</p>
+        <div style='background-color: #ffffff; padding: 20px; border-radius: 6px; text-align: center; margin: 20px 0; border: 1px solid #e0e0e0;'>
+            <span style='font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #2c3e50;'>{otp}</span>
+        </div>
+        <p><strong>Important:</strong> This verification code will expire in <em>{_otpOptions.ExpiryMinutes} minutes</em>. Please enter it promptly to avoid expiration.</p>
+        <hr style='border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;'>
+        <div style='background-color: #fff3cd; padding: 15px; border-radius: 6px; margin: 15px 0;'>
+            <p style='margin: 0;'><strong>Security Notice:</strong></p>
+            <p style='margin: 10px 0 0 0;'>If you did not initiate this account registration, please disregard this email. No further action is required on your part. Your email address will not be associated with any account without your explicit verification.</p>
+        </div>
+        <p>If you have any questions or require assistance, please contact our support team.</p>
+        <p>Thank you for choosing AI Study Hub.</p>
+        <p>Kind regards,<br><strong>AI Study Hub Support Team</strong></p>
+    </div>
+</body>
+</html>";
+        await _emailService.SendAsync(user.Email!, "AI Study Hub - Email Verification Code", htmlBody, cancellationToken);
     }
 
     private static void EnsureUserIsActive(User user)
