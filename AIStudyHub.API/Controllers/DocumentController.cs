@@ -25,8 +25,22 @@ public sealed class DocumentController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<DocumentResponseDto>>> GetAll(CancellationToken cancellationToken)
     {
-        var result = await _service.GetAllAsync(cancellationToken);
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var result = await _service.GetAllByUserIdAsync(userId, cancellationToken);
         return Ok(result);
+    }
+
+    private Guid GetCurrentUserId()
+    {
+        var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
+            ?? User.FindFirst("sub")
+            ?? User.FindFirst("userId");
+
+        return claim != null && Guid.TryParse(claim.Value, out var userId)
+            ? userId
+            : Guid.Empty;
     }
 
     /// <summary>Lấy thông tin một tài liệu theo ID.</summary>
