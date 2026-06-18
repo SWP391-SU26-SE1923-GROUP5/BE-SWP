@@ -1,4 +1,4 @@
-﻿using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
 using Microsoft.Extensions.Options;
 using OpenAI.Chat;
@@ -170,7 +170,45 @@ namespace AIStudyHub.Business.Services
                 .ToArray();
 
             return embedding;
-          //  return new ReadOnlyMemory<float>();
+        }
+
+        public async Task<List<float[]>> CreateEmbeddingsFromTexts(List<string> messages)
+        {
+            var result = new List<float[]>();
+            int batchSize = 20; // safe batch size for Ollama to avoid 400 Bad Request
+
+            for (int i = 0; i < messages.Count; i += batchSize)
+            {
+                var batch = messages.Skip(i).Take(batchSize).ToList();
+
+                var payload = new
+                {
+                    model = _options.OllamaEmbeddingModel,
+                    input = batch
+                };
+
+                var response = await _httpClient.PostAsJsonAsync(
+                    $"{_options.OllamaUrl}/api/embed",
+                    payload);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var error = await response.Content.ReadAsStringAsync();
+                    throw new InvalidOperationException($"Ollama embedding failed at batch {i/batchSize}: {response.StatusCode} - {error}");
+                }
+
+                using var json = await JsonDocument.ParseAsync(
+                    await response.Content.ReadAsStreamAsync());
+
+                var embeddingsArray = json.RootElement.GetProperty("embeddings");
+
+                foreach (var embeddingElement in embeddingsArray.EnumerateArray())
+                {
+                    result.Add(embeddingElement.EnumerateArray().Select(x => x.GetSingle()).ToArray());
+                }
+            }
+
+            return result;
         }
     }
 }
