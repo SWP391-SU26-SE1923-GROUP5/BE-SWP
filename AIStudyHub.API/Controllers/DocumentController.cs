@@ -69,6 +69,24 @@ public sealed class DocumentController : ControllerBase
     }
 
     /// <summary>
+    /// Lưu danh sách người dùng được chia sẻ tài liệu và cập nhật trạng thái chia sẻ.
+    /// Chỉ chủ sở hữu tài liệu mới có thể thay đổi quyền chia sẻ.
+    /// </summary>
+    [HttpPost("{id:guid}/share")]
+    public async Task<ActionResult<ShareDocumentResponseDto>> Share(
+        Guid id,
+        [FromBody] ShareDocumentRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty)
+            return Unauthorized();
+
+        var result = await _service.ShareDocumentAsync(id, userId, request, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>
     /// Xóa metadata tài liệu khỏi DB.
     /// Lưu ý: Để xóa toàn bộ (file vật lý + chunks + vectors), dùng DELETE /api/DocumentUpload/{id}.
     /// </summary>

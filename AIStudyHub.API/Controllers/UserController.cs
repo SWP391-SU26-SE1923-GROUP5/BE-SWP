@@ -51,6 +51,23 @@ public sealed class UserController : ControllerBase
         return result is null ? NotFound() : Ok(result);
     }
 
+    /// <summary>
+    /// Lấy danh sách người dùng có thể chia sẻ tài liệu (loại trừ người gọi).
+    /// Hỗ trợ tìm kiếm theo tên hoặc email qua query <c>keyword</c>.
+    /// </summary>
+    [HttpGet("shareable")]
+    public async Task<ActionResult<IReadOnlyList<ShareableUserDto>>> GetShareableUsers(
+        [FromQuery] string? keyword,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty)
+            return Unauthorized();
+
+        var result = await _userService.GetShareableUsersAsync(userId, keyword, cancellationToken);
+        return Ok(result);
+    }
+
     /// <summary>Admin: Cập nhật tier của user.</summary>
     [HttpPut("{id:guid}/tier")]
     [Authorize(Roles = "Admin")]

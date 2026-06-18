@@ -28,3 +28,26 @@ public sealed class UpdateDocumentRequestDtoValidator : AbstractValidator<Update
         RuleFor(x => x.ShareStatus).NotEmpty().MaximumLength(20);
     }
 }
+
+public sealed class ShareDocumentRequestDtoValidator : AbstractValidator<ShareDocumentRequestDto>
+{
+    public ShareDocumentRequestDtoValidator()
+    {
+        RuleFor(x => x.ShareStatus)
+            .MaximumLength(20)
+            .Must(BeAValidShareStatus!).When(x => !string.IsNullOrWhiteSpace(x.ShareStatus))
+            .WithMessage("ShareStatus must be one of: private, shared, public.");
+
+        RuleFor(x => x.SharedUserIds)
+            .NotNull()
+            .Must(ids => ids.All(id => id != Guid.Empty))
+            .WithMessage("SharedUserIds cannot contain empty GUIDs.");
+    }
+
+    private static bool BeAValidShareStatus(string status)
+    {
+        if (string.IsNullOrWhiteSpace(status)) return true;
+        var normalized = status.Trim().ToLowerInvariant();
+        return normalized is "private" or "shared" or "public";
+    }
+}

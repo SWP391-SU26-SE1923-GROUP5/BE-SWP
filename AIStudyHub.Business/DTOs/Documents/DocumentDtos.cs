@@ -33,3 +33,22 @@ public sealed record UpdateDocumentRequestDto(
     string? FileExtension,
     string? FileType,
     string ShareStatus);
+
+/// <summary>
+/// Request body for saving a list of users that a document is shared with.
+/// <see cref="ShareStatus"/> may be "private", "shared", or "public".
+/// When <see cref="SharedUserIds"/> is empty and <see cref="ShareStatus"/> is not provided,
+/// the document falls back to "private".
+/// </summary>
+public sealed record ShareDocumentRequestDto(
+    List<Guid> SharedUserIds,
+    string? ShareStatus);
+
+/// <summary>
+/// Response payload returned after a share operation. Includes the parsed
+/// list of shared user ids along with the updated share status.
+/// </summary>
+public sealed record ShareDocumentResponseDto(
+    Guid DocumentId,
+    string ShareStatus,
+    IReadOnlyList<Guid> SharedUserIds);
