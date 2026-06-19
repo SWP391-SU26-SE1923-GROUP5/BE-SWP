@@ -44,7 +44,23 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<UpdateUserRequestDto, User>()
             .ForMember(dest => dest.CurrentAiTokenUsage, opt => opt.MapFrom(src => src.CurrentAiTokenUsage));
 
-        CreateMap<Document, DocumentResponseDto>();
+        CreateMap<Document, DocumentResponseDto>()
+            .ConstructUsing(src => new DocumentResponseDto(
+                src.Id,
+                src.UserId,
+                src.SubjectId,
+                src.Title,
+                src.FileLink,
+                src.FileName,
+                src.FileExtension,
+                src.FileType,
+                src.SharedUsers,
+                src.ShareStatus,
+                src.Status,
+                src.Votes != null ? src.Votes.Count : 0,
+                src.CreatedAt,
+                src.UpdatedAt
+            ));
         CreateMap<CreateDocumentRequestDto, Document>();
         CreateMap<UpdateDocumentRequestDto, Document>();
 
