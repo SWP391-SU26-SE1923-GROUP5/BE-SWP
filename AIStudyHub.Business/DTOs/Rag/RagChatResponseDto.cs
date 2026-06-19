@@ -21,5 +21,4 @@ public sealed record RagChatResponseDto(
     string Answer,
     List<CitationDto> Citations,
     List<ReferenceDto> References,
-    List<NeighborDto> Neighbors,
-    string? Summary = null);
+    List<NeighborDto> Neighbors);

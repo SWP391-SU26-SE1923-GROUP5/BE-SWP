@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
@@ -44,36 +45,58 @@ public sealed class RagChatService : IRagChatService
 
     public async Task<RagChatResponseDto> ChatAsync(RagChatRequestDto request, Guid userId)
     {
-        var relevantChunks = await RetrieveRelevantChunksAsync(request.Message, request.DocumentIds, userId);
+        // State 0: greeting / casual message -> normal chat, never consults documents.
+        if (IsGreetingOrCasualMessage(request.Message))
+        {
+            return BuildNormalChatResponse(
+                await GenerateGeneralChatAnswerAsync(request.Message));
+        }
+
+        // State 1: caller did not provide any documents -> validation message (no LLM call).
+        if (request.DocumentIds is null || request.DocumentIds.Count == 0)
+        {
+            return BuildValidationResponse(
+                "Please provide one or more documents to ask a question about them.");
+        }
+
+        // Verify each requested id exists and is owned by the caller.
+        var requestedIds = request.DocumentIds.Distinct().ToList();
+        var existingIds = await _unitOfWork.Documents
+            .Query()
+            .Where(d => requestedIds.Contains(d.Id) && d.UserId == userId)
+            .Select(d => d.Id)
+            .ToListAsync();
+
+        if (existingIds.Count != requestedIds.Count)
+        {
+            return BuildValidationResponse(
+                "One or more of the selected documents are invalid or no longer available. Please choose valid documents.");
+        }
+
+        // State 2: documents exist. Try to retrieve relevant chunks.
+        var relevantChunks = await RetrieveRelevantChunksAsync(
+            request.Message, existingIds, userId);
 
         if (relevantChunks.Count == 0)
         {
-            return new RagChatResponseDto(
-                "I couldn't find any relevant documents to answer your question. Please upload some documents first.",
-                new List<CitationDto>(),
-                new List<ReferenceDto>(),
-                new List<NeighborDto>()
-            );
+            // State 2a: valid docs but no relevant info -> polite "not in document" message.
+            return BuildNoInfoResponse(
+                await GenerateNoInfoAnswerAsync(request.Message, existingIds));
         }
 
+        // State 2b: valid docs + relevant chunks -> answer from the chunks, no [N] markers.
         var documentIds = relevantChunks.Select(c => c.DocumentId).Distinct().ToList();
         var documentTitles = await GetDocumentTitlesAsync(documentIds);
-        var references = _citationService.CreateReferences(relevantChunks, documentTitles);
-
         var context = BuildContext(relevantChunks, documentTitles);
-        var answer = await GenerateAnswerAsync(request.Message, context);
 
+        var rawAnswer = await GenerateAnswerAsync(request.Message, context);
+        var answer = StripInlineCitations(rawAnswer);
+
+        var references = _citationService.CreateReferences(relevantChunks, documentTitles);
         var citations = _citationService.CreateCitations(references);
-        var formattedAnswer = _citationService.FormatAnswerWithCitations(answer, references);
-
         var neighbors = BuildNeighbors(relevantChunks, documentTitles);
 
-        return new RagChatResponseDto(
-            formattedAnswer,
-            citations,
-            references,
-            neighbors
-        );
+        return new RagChatResponseDto(answer, citations, references, neighbors);
     }
 
     public async Task<string> SummarizeAsync(Guid documentId, Guid userId)
@@ -208,12 +231,18 @@ public sealed class RagChatService : IRagChatService
 
         var queryWords = query.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var scoredChunks = allChunks
-            .Select(c => new
+            .Select(c =>
             {
-                Chunk = c,
-                Score = queryWords.Count(w => (c.ChunkJson ?? "").ToLowerInvariant().Contains(w))
+                var chunkLower = (c.ChunkJson ?? "").ToLowerInvariant();
+                return new
+                {
+                    Chunk = c,
+                    ChunkLower = chunkLower,
+                    Score = queryWords.Count(w => chunkLower.Contains(w))
+                };
             })
-            .Where(x => x.Score > 0)
+            .Where(x => x.Score >= 2
+                || (x.Score >= 1 && queryWords.Any(w => w.Length >= 4 && x.ChunkLower.Contains(w))))
             .OrderByDescending(x => x.Score)
             .ThenByDescending(x => x.Chunk.CreatedAt)
             .Take(_options.TopKChunks)
@@ -300,38 +329,36 @@ public sealed class RagChatService : IRagChatService
 
     private async Task<string> GenerateAnswerAsync(string question, string context)
     {
+        var systemPrompt = """
+            You are a helpful AI assistant that answers questions strictly from the provided sources.
+
+            RULES:
+            1. ONLY answer using information explicitly stated in the sources below.
+            2. If the sources do not contain the answer, reply exactly:
+               "The provided documents do not contain information to answer this question."
+            3. Do NOT insert numeric citations like [1], [2], [3] into the answer text.
+            4. Write in clear, natural prose.
+            5. Keep the answer focused and concise.
+            """;
+
+        var userPrompt = $"""
+            SOURCES:
+            {context}
+
+            QUESTION: {question}
+
+            ANSWER:
+            """;
+
         try
         {
-            var systemPrompt = """
-                You are a helpful AI assistant specialized in answering questions based on provided documents.
-
-                IMPORTANT RULES:
-                1. ONLY answer questions using information from the provided sources.
-                2. If the answer is not found in the sources, clearly state: "I don't have enough information in the provided documents to answer this question."
-                3. Use [1], [2], [3] etc. to cite sources inline where you use information.
-                4. Be concise but thorough in your answers.
-                5. Always attribute information to the correct source number.
-                """;
-
-            var userPrompt = $"""
-                CONTEXT (Sources):
-                {context}
-
-                ---
-
-                QUESTION: {question}
-
-                ANSWER (with citations like [1], [2], [3]):
-                """;
-
             var response = await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
-
-            return response;
+            return (response ?? string.Empty).Trim();
         }
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "LLM server connection failed. URL: {Url}", _options.OllamaUrl);
-            return $"I couldn't connect to the AI server at {_options.OllamaUrl}. Please ensure the local AI server is running.";
+            return "I couldn't generate an answer right now. Please try again.";
         }
         catch (TaskCanceledException ex) when (ex.CancellationToken != CancellationToken.None)
         {
@@ -343,6 +370,93 @@ public sealed class RagChatService : IRagChatService
             _logger.LogError(ex, "Unexpected error during LLM request");
             return "I'm sorry, but I'm having trouble generating a response right now. Please try again.";
         }
+    }
+
+    private async Task<string> GenerateGeneralChatAnswerAsync(string message)
+    {
+        var systemPrompt = """
+            You are a friendly AI assistant. Respond naturally and conversationally.
+            Keep responses concise and helpful.
+            """;
+
+        var userPrompt = $"MESSAGE: {message}\n\nRESPONSE:";
+
+        try
+        {
+            var response = await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
+            return (response ?? string.Empty).Trim();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "LLM call failed in general-chat path");
+            return "Hello! How can I help you today?";
+        }
+    }
+
+    private async Task<string> GenerateNoInfoAnswerAsync(string question, List<Guid> existingIds)
+    {
+        var systemPrompt = """
+            You are a helpful AI assistant.
+            The user asked a question referencing specific document(s), but the documents do not contain
+            information to answer it. Respond politely in one or two sentences telling the user that the
+            referenced document(s) do not contain the information. Do NOT invent an answer. Do NOT use
+            numeric citations.
+            """;
+
+        var userPrompt = $"QUESTION: {question}\n\nANSWER:";
+
+        try
+        {
+            var response = await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
+            return (response ?? string.Empty).Trim();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "LLM call failed in no-info path");
+            return "The provided documents do not contain information to answer this question.";
+        }
+    }
+
+    private static bool IsGreetingOrCasualMessage(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return true;
+
+        var normalized = message.Trim().ToLowerInvariant();
+        var greetings = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "hi", "hello", "hey", "yo", "hiya", "hii", "hiii",
+            "thanks", "thank you", "thx", "ty",
+            "bye", "goodbye", "cya", "see ya",
+            "ok", "okay", "kk", "cool", "great", "nice",
+            "good morning", "good afternoon", "good evening",
+            "how are you", "how's it going", "what's up", "sup"
+        };
+
+        if (greetings.Contains(normalized)) return true;
+
+        var stripped = normalized.TrimEnd('.', '!', '?', ',', ' ');
+        if (greetings.Contains(stripped)) return true;
+
+        var wordCount = stripped.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+        if (wordCount <= 2 && !stripped.Contains('?') && stripped.Length <= 20)
+            return true;
+
+        return false;
+    }
+
+    private static RagChatResponseDto BuildValidationResponse(string message)
+        => new(message, new List<CitationDto>(), new List<ReferenceDto>(), new List<NeighborDto>());
+
+    private static RagChatResponseDto BuildNoInfoResponse(string message)
+        => new(message, new List<CitationDto>(), new List<ReferenceDto>(), new List<NeighborDto>());
+
+    private static RagChatResponseDto BuildNormalChatResponse(string message)
+        => new(message, new List<CitationDto>(), new List<ReferenceDto>(), new List<NeighborDto>());
+
+    private static string StripInlineCitations(string answer)
+    {
+        if (string.IsNullOrEmpty(answer)) return answer;
+        return Regex.Replace(answer, @"\s*\[\s*\d+(?:\s*,\s*\d+)*\s*\]", string.Empty).Trim();
     }
 
     private async Task<Dictionary<Guid, string>> GetDocumentTitlesAsync(List<Guid> documentIds)

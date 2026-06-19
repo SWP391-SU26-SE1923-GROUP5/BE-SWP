@@ -27,6 +27,7 @@ public sealed class DocumentUploadController : ControllerBase
     private readonly IFileStorageService _fileStorage;
     private readonly RagOptions _options;
     private readonly ILogger<DocumentUploadController> _logger;
+    private readonly DocumentStorageOptions _storageOptions;
 
     private readonly IServiceScopeFactory _serviceScopeFactory;
 
@@ -38,7 +39,8 @@ public sealed class DocumentUploadController : ControllerBase
         IFileStorageService fileStorage,
         IOptions<RagOptions> options,
         ILogger<DocumentUploadController> logger,
-        IServiceScopeFactory serviceScopeFactory)
+        IServiceScopeFactory serviceScopeFactory,
+        IOptions<DocumentStorageOptions> storageOptions)
     {
         _unitOfWork = unitOfWork;
         _documentProcessing = documentProcessing;
@@ -48,6 +50,7 @@ public sealed class DocumentUploadController : ControllerBase
         _options = options.Value;
         _logger = logger;
         _serviceScopeFactory = serviceScopeFactory;
+        _storageOptions = storageOptions.Value;
     }
 
     // POST /api/DocumentUpload/upload (Base64) đã bị xóa - dùng POST /api/DocumentUpload/upload/file (multipart/form-data) thay thế
@@ -139,77 +142,8 @@ public sealed class DocumentUploadController : ControllerBase
             _logger.LogInformation("Document {DocumentId} accepted for processing by user {UserId}", document.Id, userId);
 
             // Run heavy extraction and embedding in background
-            _ = Task.Run(async () =>
-            {
-                using var scope = _serviceScopeFactory.CreateScope();
-                var scopedUnitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-                var scopedDocProcessing = scope.ServiceProvider.GetRequiredService<IDocumentProcessingService>();
-                var scopedEmbedding = scope.ServiceProvider.GetRequiredService<IEmbeddingService>();
-                var scopedVectorStore = scope.ServiceProvider.GetRequiredService<IVectorStoreService>();
-                var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<DocumentUploadController>>();
-                var scopedOptions = scope.ServiceProvider.GetRequiredService<IOptions<RagOptions>>().Value;
-
-                try
-                {
-                    var text = await scopedDocProcessing.ExtractTextAsync(fileContent, extension);
-                    if (string.IsNullOrWhiteSpace(text)) throw new Exception("Could not extract text from the document");
-
-                    var chunks = await scopedDocProcessing.ChunkTextAsync(text, scopedOptions.ChunkSize, scopedOptions.ChunkOverlap);
-                    if (chunks.Count == 0) throw new Exception("No content chunks could be created");
-
-                    var embeddings = await scopedEmbedding.GenerateEmbeddingsAsync(chunks);
-
-                    for (var i = 0; i < chunks.Count; i++)
-                    {
-                        var chunk = chunks[i];
-                        var embedding = embeddings[i];
-                        var chunkEntity = new DocumentChunk
-                        {
-                            Id = Guid.NewGuid(),
-                            DocumentId = document.Id,
-                            ChunkJson = chunk,
-                            EmbeddingJson = System.Text.Json.JsonSerializer.Serialize(embedding),
-                            Vector = ConvertToByteArray(embedding),
-                            OrderIndex = i,
-                            CreatedAt = DateTime.UtcNow,
-                            UpdatedAt = DateTime.UtcNow
-                        };
-
-                        await scopedUnitOfWork.DocumentChunks.AddAsync(chunkEntity);
-
-                        await scopedVectorStore.UpsertVectorAsync(
-                            chunkEntity.Id.ToString(),
-                            embedding,
-                            new Dictionary<string, string>
-                            {
-                                ["documentId"] = document.Id.ToString(),
-                                ["userId"] = userId.ToString(),
-                                ["chunkIndex"] = i.ToString(),
-                                ["documentTitle"] = document.Title
-                            });
-                    }
-
-                    var docToUpdate = await scopedUnitOfWork.Documents.GetByIdAsync(document.Id);
-                    if (docToUpdate != null)
-                    {
-                        docToUpdate.Status = DocumentStatus.Published;
-                        scopedUnitOfWork.Documents.Update(docToUpdate);
-                    }
-                    await scopedUnitOfWork.SaveChangesAsync(CancellationToken.None);
-                    scopedLogger.LogInformation("Background processing completed for Document {DocumentId} with {ChunkCount} chunks", document.Id, chunks.Count);
-                }
-                catch (Exception ex)
-                {
-                    scopedLogger.LogError(ex, "Background processing failed for Document {DocumentId}", document.Id);
-                    var docToUpdate = await scopedUnitOfWork.Documents.GetByIdAsync(document.Id);
-                    if (docToUpdate != null)
-                    {
-                        docToUpdate.Status = DocumentStatus.Failed;
-                        scopedUnitOfWork.Documents.Update(docToUpdate);
-                        await scopedUnitOfWork.SaveChangesAsync(CancellationToken.None);
-                    }
-                }
-            });
+            _ = Task.Run(() => RunBackgroundProcessingAsync(
+                _serviceScopeFactory, document, fileContent, extension, userId));
 
             return Accepted(new UploadDocumentResponseDto(
                 document.Id,
@@ -326,6 +260,197 @@ public sealed class DocumentUploadController : ControllerBase
         {
             _logger.LogError(ex, "Failed to delete document {DocumentId}", id);
             return StatusCode(500, "An error occurred while deleting the document");
+        }
+    }
+
+    [HttpPost("{id:guid}/reprocess")]
+    [ProducesResponseType(typeof(UploadDocumentResponseDto), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<UploadDocumentResponseDto>> Reprocess(
+        Guid id, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
+        if (document == null) return NotFound("Document not found");
+        if (document.UserId != userId) return Forbid();
+
+        if (string.IsNullOrEmpty(document.FileLink))
+            return BadRequest("Document has no associated file on disk to re-process");
+
+        var relativePath = document.FileLink.Replace("/uploads/", "");
+        var fullPath = Path.Combine(_storageOptions.BasePath ?? string.Empty, relativePath);
+        if (!System.IO.File.Exists(fullPath))
+            return BadRequest("Source file is missing on disk; cannot re-process");
+
+        byte[] fileContent = await System.IO.File.ReadAllBytesAsync(fullPath, cancellationToken);
+        var extension = (document.FileExtension ?? Path.GetExtension(document.FileName ?? "")).ToLowerInvariant();
+
+        var existing = await _unitOfWork.DocumentChunks
+            .Query()
+            .Where(c => c.DocumentId == id)
+            .ToListAsync(cancellationToken);
+        foreach (var c in existing)
+        {
+            if (!string.IsNullOrEmpty(c.VectorId))
+                await _vectorStoreService.DeleteVectorAsync(c.VectorId);
+            _unitOfWork.DocumentChunks.Remove(c);
+        }
+        await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        document.Status = DocumentStatus.Processing;
+        document.UpdatedAt = DateTime.UtcNow;
+        _unitOfWork.Documents.Update(document);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        _ = Task.Run(() => RunBackgroundProcessingAsync(
+            _serviceScopeFactory, document, fileContent, extension, userId));
+
+        return Accepted(new UploadDocumentResponseDto(id, "processing", 0,
+            "Re-processing in progress"));
+    }
+
+    [HttpGet("{id:guid}/validate")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult> Validate(Guid id, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
+        if (document == null) return NotFound();
+        if (document.UserId != userId) return Forbid();
+
+        var chunks = await _unitOfWork.DocumentChunks
+            .Query()
+            .Where(c => c.DocumentId == id)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        var missingVector = chunks.Count(c => c.Vector == null || c.Vector.Length == 0);
+        var missingVectorId = chunks.Count(c => string.IsNullOrEmpty(c.VectorId));
+        var missingEmbeddingJson = chunks.Count(c => string.IsNullOrEmpty(c.EmbeddingJson));
+        var emptyChunkText = chunks.Count(c => string.IsNullOrWhiteSpace(c.ChunkJson));
+
+        return Ok(new
+        {
+            documentId = id,
+            documentStatus = document.Status.ToString(),
+            chunkCount = chunks.Count,
+            missingVector,
+            missingVectorId,
+            missingEmbeddingJson,
+            emptyChunkText,
+            isHealthy = missingVector == 0 && missingVectorId == 0
+                        && missingEmbeddingJson == 0 && emptyChunkText == 0
+        });
+    }
+
+    private static async Task RunBackgroundProcessingAsync(
+        IServiceScopeFactory serviceScopeFactory,
+        Document document,
+        byte[] fileContent,
+        string extension,
+        Guid userId)
+    {
+        using var scope = serviceScopeFactory.CreateScope();
+        var sp = scope.ServiceProvider;
+        var scopedUnitOfWork = sp.GetRequiredService<IUnitOfWork>();
+        var scopedDocProcessing = sp.GetRequiredService<IDocumentProcessingService>();
+        var scopedEmbedding = sp.GetRequiredService<IEmbeddingService>();
+        var scopedVectorStore = sp.GetRequiredService<IVectorStoreService>();
+        var scopedLogger = sp.GetRequiredService<ILogger<DocumentUploadController>>();
+        var scopedOptions = sp.GetRequiredService<IOptions<RagOptions>>().Value;
+
+        try
+        {
+            var text = await scopedDocProcessing.ExtractTextAsync(fileContent, extension);
+            if (string.IsNullOrWhiteSpace(text))
+                throw new Exception("Could not extract text from the document");
+
+            var chunks = await scopedDocProcessing.ChunkTextAsync(
+                text, scopedOptions.ChunkSize, scopedOptions.ChunkOverlap);
+            if (chunks.Count == 0)
+                throw new Exception("No content chunks could be created");
+
+            var embeddings = await scopedEmbedding.GenerateEmbeddingsAsync(chunks);
+
+            for (var i = 0; i < chunks.Count; i++)
+            {
+                var chunk = chunks[i];
+                var embedding = embeddings[i];
+                var chunkEntity = new DocumentChunk
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentId = document.Id,
+                    ChunkJson = chunk,
+                    EmbeddingJson = System.Text.Json.JsonSerializer.Serialize(embedding),
+                    Vector = ConvertToByteArray(embedding),
+                    OrderIndex = i,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                chunkEntity.VectorId = chunkEntity.Id.ToString();
+
+                await scopedUnitOfWork.DocumentChunks.AddAsync(chunkEntity);
+
+                await scopedVectorStore.UpsertVectorAsync(
+                    chunkEntity.VectorId,
+                    embedding,
+                    new Dictionary<string, string>
+                    {
+                        ["documentId"] = document.Id.ToString(),
+                        ["chunkId"] = chunkEntity.VectorId,
+                        ["userId"] = userId.ToString(),
+                        ["chunkIndex"] = i.ToString(),
+                        ["documentTitle"] = document.Title
+                    });
+            }
+
+            // Verification pass: ensure chunking + embedding actually produced usable data.
+            var writtenChunks = await scopedUnitOfWork.DocumentChunks
+                .Query()
+                .Where(c => c.DocumentId == document.Id)
+                .ToListAsync();
+
+            if (writtenChunks.Count == 0)
+                throw new Exception("Chunking produced zero chunks after save");
+
+            var missingEmbedding = writtenChunks
+                .Where(c => c.Vector == null || c.Vector.Length == 0
+                                       || string.IsNullOrEmpty(c.VectorId))
+                .ToList();
+
+            if (missingEmbedding.Count > 0)
+                throw new Exception(
+                    $"{missingEmbedding.Count} chunks are missing embedding or VectorId");
+
+            var docToUpdate = await scopedUnitOfWork.Documents.GetByIdAsync(document.Id);
+            if (docToUpdate != null)
+            {
+                docToUpdate.Status = DocumentStatus.Published;
+                scopedUnitOfWork.Documents.Update(docToUpdate);
+            }
+            await scopedUnitOfWork.SaveChangesAsync(CancellationToken.None);
+            scopedLogger.LogInformation(
+                "Background processing completed for Document {DocumentId} with {ChunkCount} chunks",
+                document.Id, chunks.Count);
+        }
+        catch (Exception ex)
+        {
+            scopedLogger.LogError(ex, "Background processing failed for Document {DocumentId}", document.Id);
+            var docToUpdate = await scopedUnitOfWork.Documents.GetByIdAsync(document.Id);
+            if (docToUpdate != null)
+            {
+                docToUpdate.Status = DocumentStatus.Failed;
+                scopedUnitOfWork.Documents.Update(docToUpdate);
+                await scopedUnitOfWork.SaveChangesAsync(CancellationToken.None);
+            }
         }
     }
 
