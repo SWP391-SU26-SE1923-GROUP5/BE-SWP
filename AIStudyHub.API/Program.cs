@@ -95,6 +95,7 @@ var app = builder.Build();
 
 await app.Services.SeedConfiguredAdminAsync(app.Configuration);
 
+app.UseSerilogRequestLogging();
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
 if (app.Environment.IsDevelopment())
@@ -102,7 +103,6 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerDocumentation();
 }
 
-app.UseSerilogRequestLogging();
 app.UseHttpsRedirection();
 app.UseStaticFiles(new StaticFileOptions
 {
