@@ -105,7 +105,7 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("datetime")
                         .HasColumnName("create_at");
 
-                    b.Property<Guid>("DocumentId")
+                    b.Property<Guid?>("DocumentId")
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("doc_id");
 
@@ -1077,8 +1077,7 @@ namespace AIStudyHub.Data.Migrations
                     b.HasOne("AIStudyHub.Data.Entities.Document", "Document")
                         .WithMany("ChatSessions")
                         .HasForeignKey("DocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.HasOne("AIStudyHub.Data.Entities.User", "User")
                         .WithMany("ChatSessions")

@@ -47,10 +47,13 @@ public sealed class AIChatService : IAIChatService
     {
         await _createSessionValidator.ValidateAndThrowAsync(request);
 
-        var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId) is not null;
-        if (!documentExists)
+        if (request.DocumentId.HasValue)
         {
-            throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
+            var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId.Value) is not null;
+            if (!documentExists)
+            {
+                throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
+            }
         }
 
         var session = _mapper.Map<ChatSession>(request);
