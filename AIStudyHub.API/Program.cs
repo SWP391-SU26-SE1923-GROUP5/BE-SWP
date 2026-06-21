@@ -98,7 +98,8 @@ var app = builder.Build();
 
 await app.Services.SeedConfiguredAdminAsync(app.Configuration);
 
-var qdrantService = app.Services.GetRequiredService<AIStudyHub.Business.Interfaces.Services.IVectorStoreService>();
+await using var scope = app.Services.CreateAsyncScope();
+var qdrantService = scope.ServiceProvider.GetRequiredService<AIStudyHub.Business.Interfaces.Services.IVectorStoreService>();
 await qdrantService.EnsureCollectionExistsAsync();
 
 app.UseSerilogRequestLogging();
