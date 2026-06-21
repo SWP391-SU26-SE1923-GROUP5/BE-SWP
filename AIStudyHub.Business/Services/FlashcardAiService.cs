@@ -62,64 +62,72 @@ public sealed class FlashcardAiService : IFlashcardAiService
         var flashcards = new List<FlashcardResponseAiDto>(request.NumberOfFlashcards);
         var seenFronts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var totalAttempts = 0;
-        var consecutiveFailures = 0;
+        var remaining = request.NumberOfFlashcards;
+        var batchNumber = 0;
+        var maxBatches = request.NumberOfFlashcards * 3;
+        var consecutiveZeroAdded = 0;
+        const int batchSize = 5;
 
-        // Persistent loop: keep trying until we hit the requested count OR
-        // burn the global attempt budget. Same idea as QuizAiService.
-        while (flashcards.Count < request.NumberOfFlashcards
-               && totalAttempts < MaxTotalAttempts)
+        while (remaining > 0 && batchNumber < maxBatches)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            totalAttempts++;
+            batchNumber++;
+            var wantThisBatch = Math.Min(batchSize, remaining + 2); // Ask for a bit more
 
-            var card = await TryGenerateOneCardAsync(
-                context, flashcards, totalAttempts, cancellationToken);
+            var batchCards = await RunBatchWithRetryAsync(
+                context, flashcards, wantThisBatch, batchNumber, cancellationToken);
 
-            if (card is null)
+            var added = 0;
+            foreach (var card in batchCards)
             {
-                consecutiveFailures++;
-                _logger.LogWarning(
-                    "Flashcard attempt {Attempt} failed (consecutive={Consec})",
-                    totalAttempts, consecutiveFailures);
+                if (flashcards.Count >= request.NumberOfFlashcards) break;
+                
+                // Aggressively normalize front to catch slight variations
+                var normalizedFront = new string(card.Front.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+                if (normalizedFront.Length < 5) continue;
 
-                // If the model is completely broken, give up rather than spin.
-                if (consecutiveFailures >= MaxAttemptsPerCard * 2)
+                if (!seenFronts.Add(normalizedFront))
                 {
-                    _logger.LogError(
-                        "Aborting flashcard generation after {Consec} consecutive failures",
-                        consecutiveFailures);
+                    _logger.LogInformation("Flashcard batch {Batch} produced duplicate, skipping", batchNumber);
+                    continue;
+                }
+
+                flashcards.Add(card);
+                added++;
+            }
+
+            _logger.LogInformation("Flashcard batch {Batch}: wanted {Want}, accepted {Accepted}, total {Total}/{Requested}",
+                batchNumber, wantThisBatch, added, flashcards.Count, request.NumberOfFlashcards);
+
+            if (added == 0)
+            {
+                consecutiveZeroAdded++;
+                if (consecutiveZeroAdded >= 3)
+                {
+                    _logger.LogWarning("Aborting flashcard generation after 3 consecutive zero-yield batches.");
                     break;
                 }
-                continue;
             }
-
-            if (!seenFronts.Add(card.Front))
+            else
             {
-                _logger.LogInformation(
-                    "Flashcard attempt {Attempt} produced duplicate front, skipping",
-                    totalAttempts);
-                continue;
+                consecutiveZeroAdded = 0;
             }
 
-            consecutiveFailures = 0;
-            flashcards.Add(card);
-            _logger.LogInformation(
-                "Flashcard {Got}/{Requested} generated (attempt {Attempt})",
-                flashcards.Count, request.NumberOfFlashcards, totalAttempts);
+            remaining = request.NumberOfFlashcards - flashcards.Count;
         }
 
         _logger.LogInformation(
-            "Finished flashcard generation: {Got}/{Requested} after {Attempts} attempts",
-            flashcards.Count, request.NumberOfFlashcards, totalAttempts);
+            "Finished flashcard generation: {Got}/{Requested} after {Attempts} batches",
+            flashcards.Count, request.NumberOfFlashcards, batchNumber);
 
         return new FlashcardsAiResponseDto(flashcards);
     }
 
-    private async Task<FlashcardResponseAiDto?> TryGenerateOneCardAsync(
+    private async Task<List<FlashcardResponseAiDto>> RunBatchWithRetryAsync(
         string context,
         IReadOnlyList<FlashcardResponseAiDto> existing,
-        int attemptNumber,
+        int wantThisBatch,
+        int batchNumber,
         CancellationToken cancellationToken)
     {
         var avoidBlock = existing.Count == 0
@@ -128,85 +136,175 @@ public sealed class FlashcardAiService : IFlashcardAiService
               string.Join("\n", existing.Select(x => $"- {x.Front}"));
 
         var prompt = $$"""
-You are a JSON API. You generate study flashcards from a CONTEXT.
+Read the following TEXT. Your task is to extract EXACTLY {{wantThisBatch}} different facts from this TEXT and convert them into study flashcards.
 
-Return ONLY a single valid JSON object. No markdown, no prose, no code fences, no commentary.
-
-CONTRACT — STRICT AND NON-NEGOTIABLE:
-- "front" MUST be a QUESTION. It is what the student sees first and tries to answer.
-- "back"  MUST be the ANSWER, written as a short factual statement (1–2 sentences).
-- The card is read in study mode: front = prompt, back = reveal. Do not invert this.
-
-HARD RULES:
-- "front" MUST end with "?" OR start with one of: What, Who, When, Where, Why, How, Which, Define, Explain, Describe, List, Name, In what, On what, According to the context.
-- "front" length: 5–200 characters. "back" length: 1–500 characters.
-- "back" MUST NOT contain a question mark.
-- Both fields must be NON-EMPTY strings.
-- All facts MUST come from CONTEXT.
-- Output ONLY the JSON object. Start with '{' and end with '}'. Nothing else.
-
-EXAMPLE (correct shape, not from CONTEXT):
-{ "front": "What is photosynthesis?", "back": "The process by which plants convert light energy into chemical energy stored in glucose." }
-
-EXAMPLE (wrong shape — do NOT produce this):
-{ "front": "Photosynthesis is the process by which plants convert light energy into chemical energy.", "back": "What is photosynthesis?" }
-^ This is INVERTED. Never do this.
-
-CONTEXT:
+TEXT:
 {{context}}{{avoidBlock}}
+
+Generate the flashcards as a JSON array of objects.
+Do not write anything else. No prose. No markdown. Just the JSON array.
+
+FORMAT:
+[
+  { "front": "Write a question based on the TEXT here?", "back": "Write the short answer based on the TEXT here." },
+  { "front": "Write another question from the TEXT here?", "back": "Write the short answer here." }
+]
+
+RULES:
+- "front" MUST be a QUESTION ending with '?'.
+- "back" MUST be the ANSWER, written as a short factual statement.
+- "back" MUST NOT contain a question mark.
+- All facts MUST come from the TEXT above. Do not invent information.
+- Output ONLY the JSON array. Start with '[' and end with ']'.
 """;
 
-        var aiText = await _localAIService.SendMessageAsync(prompt, 0.2f);
+        const int maxAttempts = 2;
+        var best = new List<FlashcardResponseAiDto>();
 
-        var parsed = TryParseCard(aiText);
-        if (parsed is null) return null;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
 
-        // Enforce front=question, back=answer. The 1B model frequently swaps.
-        var (front, back) = EnforceFrontQuestionBackAnswer(parsed.Value.front, parsed.Value.back);
-        if (string.IsNullOrWhiteSpace(front) || string.IsNullOrWhiteSpace(back))
-            return null;
+            string aiText;
+            try
+            {
+                aiText = await _localAIService.SendMessageAsync(prompt, 0.2f);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Flashcard batch {Batch} attempt {Attempt}: AI call failed", batchNumber, attempt);
+                continue;
+            }
 
-        // Final sanity: front must be question-shaped.
-        if (!LooksLikeQuestion(front)) return null;
-        if (back.Contains('?')) return null;
+            var parsed = ParseFlashcardArray(aiText);
+            
+            if (parsed.Count > best.Count)
+                best = parsed;
 
-        return new FlashcardResponseAiDto(front, back);
+            if (parsed.Count >= Math.Max(1, wantThisBatch / 2))
+                return parsed;
+
+            _logger.LogWarning("Flashcard batch {Batch} attempt {Attempt}: only {Got}/{Want} cards, retrying", batchNumber, attempt, parsed.Count, wantThisBatch);
+        }
+
+        return best;
     }
 
-    private static (string front, string back)? TryParseCard(string aiText)
+    private static List<FlashcardResponseAiDto> ParseFlashcardArray(string aiText)
     {
-        if (string.IsNullOrWhiteSpace(aiText)) return null;
+        if (string.IsNullOrWhiteSpace(aiText)) return new List<FlashcardResponseAiDto>();
 
         var text = aiText.Trim();
         text = Regex.Replace(text, @"^```(?:json)?\s*", "", RegexOptions.IgnoreCase);
         text = Regex.Replace(text, @"\s*```\s*$", "", RegexOptions.IgnoreCase);
 
-        // Find the first balanced {...} in the response. The model may wrap
-        // the JSON in prose on a bad day.
-        var slice = ExtractBalancedObject(text, '{', '}');
-        if (slice is null) return null;
-
-        var sanitized = Regex.Replace(
-            slice, @"[\u0000-\u0008\u000B\u000C\u000E-\u001F]", "");
+        var arraySlice = ExtractBalancedObject(text, '[', ']');
+        if (arraySlice is null) return new List<FlashcardResponseAiDto>();
 
         try
         {
-            using var doc = JsonDocument.Parse(
-                sanitized,
-                new JsonDocumentOptions { AllowTrailingCommas = true });
-            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+            var sanitized = Regex.Replace(arraySlice, @"[\u0000-\u0008\u000B\u000C\u000E-\u001F]", "");
+            using var doc = JsonDocument.Parse(sanitized, new JsonDocumentOptions { AllowTrailingCommas = true });
+            
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return new List<FlashcardResponseAiDto>();
 
-            if (!doc.RootElement.TryGetProperty("front", out var f)
-                || f.ValueKind != JsonValueKind.String) return null;
-            if (!doc.RootElement.TryGetProperty("back", out var b)
-                || b.ValueKind != JsonValueKind.String) return null;
-
-            return (Clean(f.GetString() ?? ""), Clean(b.GetString() ?? ""));
+            return ExtractCardsFromArrayElement(doc.RootElement);
         }
         catch (JsonException)
         {
-            return null;
+            // If the array is malformed, fall back to streaming parser (extracts objects one by one)
+            return ParseArrayStreaming(arraySlice);
         }
+    }
+
+    private static List<FlashcardResponseAiDto> ExtractCardsFromArrayElement(JsonElement array)
+    {
+        var result = new List<FlashcardResponseAiDto>();
+        foreach (var element in array.EnumerateArray())
+        {
+            if (element.ValueKind != JsonValueKind.Object) continue;
+            if (!element.TryGetProperty("front", out var f) || f.ValueKind != JsonValueKind.String) continue;
+            if (!element.TryGetProperty("back", out var b) || b.ValueKind != JsonValueKind.String) continue;
+
+            var front = Clean(f.GetString() ?? "");
+            var back = Clean(b.GetString() ?? "");
+
+            var (finalFront, finalBack) = EnforceFrontQuestionBackAnswer(front, back);
+            if (string.IsNullOrWhiteSpace(finalFront) || string.IsNullOrWhiteSpace(finalBack)) continue;
+            
+            // Be more lenient with LooksLikeQuestion to accept more cards from weak models
+            if (!LooksLikeQuestion(finalFront) && !finalFront.EndsWith('?')) finalFront += "?";
+
+            result.Add(new FlashcardResponseAiDto(finalFront, finalBack));
+        }
+        return result;
+    }
+
+    private static List<FlashcardResponseAiDto> ParseArrayStreaming(string array)
+    {
+        var sanitized = Regex.Replace(array, @"[\u0000-\u0008\u000B\u000C\u000E-\u001F]", "");
+        var result = new List<FlashcardResponseAiDto>();
+        var i = 0;
+        
+        while (i < sanitized.Length)
+        {
+            while (i < sanitized.Length && (char.IsWhiteSpace(sanitized[i]) || sanitized[i] == ',' || sanitized[i] == '[' || sanitized[i] == ']'))
+                i++;
+            if (i >= sanitized.Length) break;
+
+            if (sanitized[i] != '{') { i++; continue; }
+
+            var objStart = i;
+            var depth = 0;
+            var inString = false;
+            var escape = false;
+            var found = false;
+            
+            for (; i < sanitized.Length; i++)
+            {
+                var c = sanitized[i];
+                if (inString)
+                {
+                    if (escape) { escape = false; continue; }
+                    if (c == '\\') { escape = true; continue; }
+                    if (c == '"') inString = false;
+                    continue;
+                }
+                if (c == '"') { inString = true; continue; }
+                if (c == '{') depth++;
+                else if (c == '}')
+                {
+                    depth--;
+                    if (depth == 0) { found = true; i++; break; }
+                }
+            }
+
+            if (!found) break;
+
+            var slice = sanitized.Substring(objStart, i - objStart);
+            try
+            {
+                using var doc = JsonDocument.Parse(slice, new JsonDocumentOptions { AllowTrailingCommas = true });
+                result.AddRange(ExtractCardsFromArrayElement(WrapSingleObject(doc.RootElement.Clone())));
+            }
+            catch (JsonException)
+            {
+                // Skip broken element
+            }
+        }
+        return result;
+    }
+
+    private static JsonElement WrapSingleObject(JsonElement obj)
+    {
+        using var ms = new MemoryStream();
+        using (var w = new Utf8JsonWriter(ms))
+        {
+            w.WriteStartArray();
+            w.WriteRawValue(obj.GetRawText(), skipInputValidation: true);
+            w.WriteEndArray();
+        }
+        return JsonDocument.Parse(ms.ToArray()).RootElement.Clone();
     }
 
     private static (string front, string back) EnforceFrontQuestionBackAnswer(

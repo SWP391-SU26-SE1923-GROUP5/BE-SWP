@@ -61,12 +61,14 @@ public sealed class QuizAiService : IQuizAiService
 
         var remaining = request.numberOfQuestions;
         var batchNumber = 0;
+        var maxBatches = request.numberOfQuestions * 3; // Give it plenty of tries
+        var consecutiveZeroAdded = 0;
         var runningTitle = string.Empty;
 
-        while (remaining > 0)
+        while (remaining > 0 && batchNumber < maxBatches)
         {
             batchNumber++;
-            var wantThisBatch = Math.Min(batchSize, remaining + 1); // +1 to absorb noise
+            var wantThisBatch = Math.Min(batchSize, remaining + 2); // Ask for a bit more to absorb noise
 
             var prompt = BuildBatchPrompt(
                 wantThisBatch,
@@ -86,8 +88,14 @@ public sealed class QuizAiService : IQuizAiService
                 var normalized = NormalizeQuestion(q, allQuestions.Count + 1);
                 if (normalized is null) continue;
 
-                if (!seenTitles.Add(normalized.QuestionTitle))
+                // Aggressively normalize title to catch slight variations
+                var normalizedTitleText = new string(normalized.QuestionTitle.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+                if (normalizedTitleText.Length < 5) continue;
+
+                if (!seenTitles.Add(normalizedTitleText))
+                {
                     continue;
+                }
 
                 allQuestions.Add(normalized);
                 added++;
@@ -98,7 +106,18 @@ public sealed class QuizAiService : IQuizAiService
                 batchNumber, wantThisBatch, batchQuestions.Count, added, allQuestions.Count, request.numberOfQuestions);
 
             if (added == 0)
-                break;
+            {
+                consecutiveZeroAdded++;
+                if (consecutiveZeroAdded >= 3)
+                {
+                    _logger.LogWarning("Aborting quiz generation after 3 consecutive zero-yield batches.");
+                    break;
+                }
+            }
+            else
+            {
+                consecutiveZeroAdded = 0;
+            }
 
             remaining = request.numberOfQuestions - allQuestions.Count;
         }
@@ -155,41 +174,42 @@ public sealed class QuizAiService : IQuizAiService
               string.Join("\n", alreadyGenerated.Select(q => $"- {q.QuestionTitle}"));
 
         return $$"""
-You are a JSON API. You generate multiple-choice quiz questions from a CONTEXT.
+Read the following TEXT. Your task is to extract EXACTLY {{count}} different facts from this TEXT and convert them into a multiple-choice quiz.
 
-Return ONLY a valid JSON object. No markdown, no prose, no code fences, no commentary.
+TEXT:
+{{context}}{{avoidBlock}}
 
-Schema (must match exactly):
+Generate the quiz as a JSON object.
+Do not write anything else. No prose. No markdown. Just the JSON object.
+
+FORMAT:
 {
-  "quizTitle": "<short topic name>",
+  "quizTitle": "Write a short topic title here",
   "questions": [
     {
-      "questionTitle": "<question text ending with ?>",
+      "questionTitle": "Write question 1 based on the TEXT here?",
       "questionType": "SingleChoice",
-      "position": <number>,
+      "position": {{startingPosition}},
       "answers": [
-        { "selectedOption": "<text>", "isCorrect": true },
-        { "selectedOption": "<text>", "isCorrect": false },
-        { "selectedOption": "<text>", "isCorrect": false },
-        { "selectedOption": "<text>", "isCorrect": false }
+        { "selectedOption": "Write the correct answer here", "isCorrect": true },
+        { "selectedOption": "Write a wrong answer here", "isCorrect": false },
+        { "selectedOption": "Write another wrong answer here", "isCorrect": false },
+        { "selectedOption": "Write a third wrong answer here", "isCorrect": false }
       ]
     }
   ]
 }
 
-Strict requirements:
+RULES:
 - Output EXACTLY {{count}} questions in the array.
 - Each question MUST have EXACTLY 4 answers.
 - EXACTLY ONE answer per question must have isCorrect = true; the other three must be false.
 - "position" must start at {{startingPosition}} and increment by 1.
 - "questionType" must be "SingleChoice" for every question.
 - Every "selectedOption" string must be NON-EMPTY and DISTINCT within the same question.
-- Every fact must come from CONTEXT.
+- Every fact must come from the TEXT above. Do not invent information.
 - Each question must cover a DIFFERENT topic from the others.
 - Output ONLY the JSON object. Start with '{' and end with '}'.
-
-CONTEXT:
-{{context}}{{avoidBlock}}
 """;
     }
 
