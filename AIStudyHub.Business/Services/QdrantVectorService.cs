@@ -294,4 +294,69 @@ public sealed class QdrantVectorService : IVectorStoreService
             return new List<(string, float[], Dictionary<string, string>, double)>();
         }
     }
+
+    public async Task<List<Dictionary<string, string>>> GetPayloadsByDocumentIdAsync(Guid documentId)
+    {
+        try
+        {
+            var payload = new
+            {
+                filter = new
+                {
+                    must = new[]
+                    {
+                        new { key = "documentId", match = new { value = documentId.ToString() } }
+                    }
+                },
+                limit = 1000,
+                with_payload = true
+            };
+
+            var uri = new Uri(_options.Url);
+            var restUrl = $"{uri.Scheme}://{uri.Host}:6333/collections/{_options.CollectionName}/points/scroll";
+
+            using var client = new System.Net.Http.HttpClient();
+            var json = System.Text.Json.JsonSerializer.Serialize(payload);
+            var content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            var response = await client.PostAsync(restUrl, content);
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorText = await response.Content.ReadAsStringAsync();
+                _logger.LogError("Qdrant REST scroll error: {StatusCode} {Error}", response.StatusCode, errorText);
+                return new List<Dictionary<string, string>>();
+            }
+
+            var responseString = await response.Content.ReadAsStringAsync();
+            using var doc = System.Text.Json.JsonDocument.Parse(responseString);
+
+            var resultList = new List<Dictionary<string, string>>();
+
+            if (doc.RootElement.TryGetProperty("result", out var resultElement))
+            {
+                if (resultElement.TryGetProperty("points", out var pointsArray) && pointsArray.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var item in pointsArray.EnumerateArray())
+                    {
+                        var meta = new Dictionary<string, string>();
+                        if (item.TryGetProperty("payload", out var payloadElement))
+                        {
+                            foreach (var prop in payloadElement.EnumerateObject())
+                            {
+                                meta[prop.Name] = prop.Value.ToString() ?? "";
+                            }
+                        }
+                        resultList.Add(meta);
+                    }
+                }
+            }
+
+            return resultList;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to retrieve payloads for document {DocumentId} from Qdrant", documentId);
+            return new List<Dictionary<string, string>>();
+        }
+    }
 }

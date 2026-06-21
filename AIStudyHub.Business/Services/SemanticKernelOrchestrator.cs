@@ -30,6 +30,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 {
     private readonly IKernelMemoryService _kernelMemory;
     private readonly IHybridSearchService _searchService;
+    private readonly IVectorStoreService _vectorStoreService;
     private readonly IRerankingService _rerankingService;
     private readonly IFaithfulnessFilter _faithfulnessFilter;
     private readonly IGroundingVerifier _groundingVerifier;
@@ -41,6 +42,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
     public SemanticKernelOrchestrator(
         IKernelMemoryService kernelMemory,
         IHybridSearchService searchService,
+        IVectorStoreService vectorStoreService,
         IRerankingService rerankingService,
         IFaithfulnessFilter faithfulnessFilter,
         IGroundingVerifier groundingVerifier,
@@ -51,6 +53,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
     {
         _kernelMemory = kernelMemory;
         _searchService = searchService;
+        _vectorStoreService = vectorStoreService;
         _rerankingService = rerankingService;
         _faithfulnessFilter = faithfulnessFilter;
         _groundingVerifier = groundingVerifier;
@@ -132,21 +135,30 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
     public async Task<string> SummarizeAsync(Guid documentId, Guid userId, CancellationToken ct = default)
     {
         // 1. Fetch all chunks from Qdrant for this document
-        var filter = new Dictionary<string, object>
-        {
-            { "documentId", documentId.ToString() },
-            { "userId", userId.ToString() }
-        };
-
-        // Qdrant Vector Service expects 1536 size dummy array if we bypass search, but wait,
-        // we can just use _searchService.SearchAsync.
-        var qdrantResults = await _searchService.SearchAsync("Tóm tắt nội dung tài liệu này", userId, 50, ct);
-        // Wait, IHybridSearchService.SearchAsync doesn't support filtering by DocumentId yet, which is part of another plan.
-        // Let's implement it here directly with QdrantVectorService for now.
-        // But since QdrantVectorService.HybridSearchAsync only supports topK, getting all chunks might be truncated.
-        // I'll leave a basic implementation that uses local LLM.
+        var payloads = await _vectorStoreService.GetPayloadsByDocumentIdAsync(documentId);
         
-        var answer = await _localAiService.SendMessageAsync($"Hãy tóm tắt nội dung chính của tài liệu có ID {documentId}");
+        if (payloads.Count == 0)
+        {
+            return "Không tìm thấy nội dung tài liệu để tóm tắt.";
+        }
+
+        // Sort chunks by index if possible
+        var sortedChunks = payloads
+            .OrderBy(p => int.TryParse(p.GetValueOrDefault("chunkIndex", "0"), out var idx) ? idx : 0)
+            .Select(p => p.GetValueOrDefault("text", ""))
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToList();
+
+        var documentContent = string.Join("\n\n", sortedChunks);
+        if (string.IsNullOrWhiteSpace(documentContent))
+        {
+            return "Tài liệu không có văn bản.";
+        }
+
+        var systemPrompt = "Bạn là trợ lý ảo giúp tóm tắt nội dung tài liệu. Hãy tóm tắt văn bản dưới đây một cách ngắn gọn, súc tích và bao quát những ý chính nhất.";
+        var userPrompt = $"VĂN BẢN TÀI LIỆU:\n{documentContent}\n\nYÊU CẦU: Hãy tóm tắt nội dung chính của tài liệu trên.";
+
+        var answer = await _localAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
         return answer ?? "Không thể tóm tắt tài liệu.";
     }
 }

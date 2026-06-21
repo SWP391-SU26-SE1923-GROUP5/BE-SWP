@@ -15,18 +15,18 @@ public sealed class QuizAiService : IQuizAiService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILocalAIService _localAiService;
-    private readonly Microsoft.KernelMemory.IKernelMemory _memory;
+    private readonly IVectorStoreService _vectorStoreService;
     private readonly ILogger<QuizAiService> _logger;
 
     public QuizAiService(
         IUnitOfWork unitOfWork,
         ILocalAIService localAiService,
-        Microsoft.KernelMemory.IKernelMemory memory,
+        IVectorStoreService vectorStoreService,
         ILogger<QuizAiService> logger)
     {
         _unitOfWork = unitOfWork;
         _localAiService = localAiService;
-        _memory = memory;
+        _vectorStoreService = vectorStoreService;
         _logger = logger;
     }
 
@@ -45,13 +45,15 @@ public sealed class QuizAiService : IQuizAiService
         if (document is null)
             throw new KeyNotFoundException("Document not found");
 
-        var searchResult = await _memory.SearchAsync(
-            "",
-            filter: Microsoft.KernelMemory.MemoryFilters.ByDocument(documentId.ToString()),
-            limit: 1000,
-            cancellationToken: cancellationToken);
+        var payloads = await _vectorStoreService.GetPayloadsByDocumentIdAsync(documentId);
 
-        var context = BuildContext(searchResult.Results);
+        var sortedChunks = payloads
+            .OrderBy(p => int.TryParse(p.GetValueOrDefault("chunkIndex", "0"), out var idx) ? idx : 0)
+            .Select(p => p.GetValueOrDefault("text", ""))
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToList();
+
+        var context = string.Join("\n\n", sortedChunks);
 
         // llama3.2:1b can't reliably fill 10 question x 4 answer strings in
         // one shot. Chunk into small batches and retry underfilled batches.
@@ -144,22 +146,6 @@ public sealed class QuizAiService : IQuizAiService
             allQuestions.Count, request.numberOfQuestions, documentId);
 
         return result;
-    }
-
-    private static string BuildContext(IEnumerable<Microsoft.KernelMemory.Citation> citations)
-    {
-        var sb = new StringBuilder();
-        foreach (var citation in citations)
-        {
-            foreach (var partition in citation.Partitions)
-            {
-                if (string.IsNullOrWhiteSpace(partition.Text)) continue;
-                sb.AppendLine(partition.Text);
-                sb.AppendLine();
-                if (sb.Length > 30_000) return sb.ToString();
-            }
-        }
-        return sb.ToString();
     }
 
     private static string BuildBatchPrompt(
