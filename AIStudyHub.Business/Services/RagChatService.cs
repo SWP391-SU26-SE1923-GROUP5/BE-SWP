@@ -130,7 +130,10 @@ public sealed class RagChatService : IRagChatService
                 context.AppendLine(partition.Text);
                 context.AppendLine();
                 hasContent = true;
+
+                if (context.Length > 30_000) break;
             }
+            if (context.Length > 30_000) break;
         }
 
         if (!hasContent)
