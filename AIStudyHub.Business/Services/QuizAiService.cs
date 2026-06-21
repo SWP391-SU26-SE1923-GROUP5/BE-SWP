@@ -15,15 +15,18 @@ public sealed class QuizAiService : IQuizAiService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IRagChatService _ragChatService;
+    private readonly Microsoft.KernelMemory.IKernelMemory _memory;
     private readonly ILogger<QuizAiService> _logger;
 
     public QuizAiService(
         IUnitOfWork unitOfWork,
         IRagChatService ragChatService,
+        Microsoft.KernelMemory.IKernelMemory memory,
         ILogger<QuizAiService> logger)
     {
         _unitOfWork = unitOfWork;
         _ragChatService = ragChatService;
+        _memory = memory;
         _logger = logger;
     }
 
@@ -42,14 +45,13 @@ public sealed class QuizAiService : IQuizAiService
         if (document is null)
             throw new KeyNotFoundException("Document not found");
 
-        var chunks = await _unitOfWork.DocumentChunks
-            .Query()
-            .Where(c => c.DocumentId == documentId)
-            .OrderBy(c => c.OrderIndex)
-            .AsNoTracking()
-            .ToListAsync(cancellationToken);
+        var searchResult = await _memory.SearchAsync(
+            "",
+            filter: Microsoft.KernelMemory.MemoryFilters.ByDocument(documentId.ToString()),
+            limit: 1000,
+            cancellationToken: cancellationToken);
 
-        var context = BuildContext(chunks);
+        var context = BuildContext(searchResult.Results);
 
         // llama3.2:1b can't reliably fill 10 question x 4 answer strings in
         // one shot. Chunk into small batches and retry underfilled batches.
@@ -125,15 +127,18 @@ public sealed class QuizAiService : IQuizAiService
         return result;
     }
 
-    private static string BuildContext(IReadOnlyList<Data.Entities.DocumentChunk> chunks)
+    private static string BuildContext(IEnumerable<Microsoft.KernelMemory.Citation> citations)
     {
         var sb = new StringBuilder();
-        foreach (var c in chunks)
+        foreach (var citation in citations)
         {
-            if (string.IsNullOrWhiteSpace(c.ChunkJson)) continue;
-            sb.AppendLine(c.ChunkJson);
-            sb.AppendLine();
-            if (sb.Length > 30_000) break;
+            foreach (var partition in citation.Partitions)
+            {
+                if (string.IsNullOrWhiteSpace(partition.Text)) continue;
+                sb.AppendLine(partition.Text);
+                sb.AppendLine();
+                if (sb.Length > 30_000) return sb.ToString();
+            }
         }
         return sb.ToString();
     }

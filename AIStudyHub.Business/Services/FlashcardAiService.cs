@@ -14,6 +14,7 @@ public sealed class FlashcardAiService : IFlashcardAiService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILocalAIService _localAIService;
+    private readonly Microsoft.KernelMemory.IKernelMemory _memory;
     private readonly RagOptions _options;
     private readonly ILogger<FlashcardAiService> _logger;
 
@@ -24,11 +25,13 @@ public sealed class FlashcardAiService : IFlashcardAiService
     public FlashcardAiService(
         IUnitOfWork unitOfWork,
         ILocalAIService localAIService,
+        Microsoft.KernelMemory.IKernelMemory memory,
         IOptions<RagOptions> options,
         ILogger<FlashcardAiService> logger)
     {
         _unitOfWork = unitOfWork;
         _localAIService = localAIService;
+        _memory = memory;
         _options = options.Value;
         _logger = logger;
     }
@@ -49,14 +52,13 @@ public sealed class FlashcardAiService : IFlashcardAiService
         if (document is null)
             throw new KeyNotFoundException("Document not found");
 
-        var chunks = await _unitOfWork.DocumentChunks
-            .Query()
-            .Where(c => c.DocumentId == documentId)
-            .OrderBy(c => c.OrderIndex)
-            .AsNoTracking()
-            .ToListAsync(cancellationToken);
+        var searchResult = await _memory.SearchAsync(
+            "",
+            filter: Microsoft.KernelMemory.MemoryFilters.ByDocument(documentId.ToString()),
+            limit: 1000,
+            cancellationToken: cancellationToken);
 
-        var context = BuildContext(chunks);
+        var context = BuildContext(searchResult.Results);
         var flashcards = new List<FlashcardResponseAiDto>(request.NumberOfFlashcards);
         var seenFronts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -271,15 +273,18 @@ CONTEXT:
         return null;
     }
 
-    private static string BuildContext(IReadOnlyList<Data.Entities.DocumentChunk> chunks)
+    private static string BuildContext(IEnumerable<Microsoft.KernelMemory.Citation> citations)
     {
         var sb = new System.Text.StringBuilder();
-        foreach (var c in chunks)
+        foreach (var citation in citations)
         {
-            if (string.IsNullOrWhiteSpace(c.ChunkJson)) continue;
-            sb.AppendLine(c.ChunkJson);
-            sb.AppendLine();
-            if (sb.Length > 30_000) break;
+            foreach (var partition in citation.Partitions)
+            {
+                if (string.IsNullOrWhiteSpace(partition.Text)) continue;
+                sb.AppendLine(partition.Text);
+                sb.AppendLine();
+                if (sb.Length > 30_000) return sb.ToString();
+            }
         }
         return sb.ToString();
     }

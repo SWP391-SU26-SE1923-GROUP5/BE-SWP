@@ -20,6 +20,7 @@ public sealed class RagChatService : IRagChatService
     private readonly RagOptions _options;
     private readonly ILogger<RagChatService> _logger;
     private readonly ILocalAIService _openAiService;
+    private readonly Microsoft.KernelMemory.IKernelMemory _memory;
 
     public RagChatService(
         IUnitOfWork unitOfWork,
@@ -29,6 +30,7 @@ public sealed class RagChatService : IRagChatService
         IHttpClientFactory httpClientFactory,
         ILocalAIService openAIService,
         IOptions<RagOptions> options,
+        Microsoft.KernelMemory.IKernelMemory memory,
         ILogger<RagChatService> logger)
     {
         _unitOfWork = unitOfWork;
@@ -38,6 +40,7 @@ public sealed class RagChatService : IRagChatService
         _citationService = citationService;
         _llmClient = httpClientFactory.CreateClient("LlmClient");
         _options = options.Value;
+        _memory = memory;
         _logger = logger;
 
         _llmClient.BaseAddress = new Uri(_options.OllamaUrl);
@@ -109,24 +112,29 @@ public sealed class RagChatService : IRagChatService
         if (document == null)
             return "Document not found.";
 
-        var chunks = await _unitOfWork.DocumentChunks
-            .Query()
-            .Where(c => c.DocumentId == documentId)
-            .OrderBy(c => c.OrderIndex)
-            .AsNoTracking()
-            .ToListAsync();
-
-        if (chunks.Count == 0)
-            return "No content found in this document.";
+        var searchResult = await _memory.SearchAsync(
+            "",
+            filter: Microsoft.KernelMemory.MemoryFilters.ByDocument(documentId.ToString()),
+            limit: 1000);
 
         var context = new StringBuilder();
         context.AppendLine($"Document: {document.Title}");
         context.AppendLine();
-        foreach (var chunk in chunks)
+
+        var hasContent = false;
+        foreach (var citation in searchResult.Results)
         {
-            context.AppendLine(chunk.ChunkJson);
-            context.AppendLine();
+            foreach (var partition in citation.Partitions)
+            {
+                if (string.IsNullOrWhiteSpace(partition.Text)) continue;
+                context.AppendLine(partition.Text);
+                context.AppendLine();
+                hasContent = true;
+            }
         }
+
+        if (!hasContent)
+            return "No content found in this document.";
 
         var systemPrompt = """
             You are a helpful AI assistant that summarizes documents.
@@ -163,100 +171,47 @@ public sealed class RagChatService : IRagChatService
         }
     }
 
+    // Removed redundant GetChunksFromDatabaseAsync
+
     private async Task<List<ChunkDto>> RetrieveRelevantChunksAsync(
         string query, List<Guid>? documentIds, Guid userId)
     {
-        var queryEmbedding = await _embeddingService.GenerateEmbeddingAsync(query);
-
-        var searchResults = await _vectorStoreService.SearchAsync(
-            queryEmbedding,
-            _options.TopKChunks,
-            documentIds?.Count > 0 ? new Dictionary<string, string> { ["userId"] = userId.ToString() } : null);
-
-        if (searchResults.Count == 0)
+        var filters = new List<Microsoft.KernelMemory.MemoryFilter>();
+        if (documentIds != null && documentIds.Count > 0)
         {
-            return await GetChunksFromDatabaseAsync(query, documentIds, userId);
-        }
-
-        var chunkIds = searchResults
-            .Where(r => r.Metadata.TryGetValue("chunkId", out _))
-            .Select(r => r.Metadata["chunkId"])
-            .ToList();
-
-        var chunks = await _unitOfWork.DocumentChunks
-            .Query()
-            .Include(c => c.Document)
-            .Where(c => chunkIds.Contains(c.Id.ToString()))
-            .AsNoTracking()
-            .ToListAsync();
-
-        var resultDict = searchResults
-            .Where(r => r.Metadata.TryGetValue("chunkId", out _))
-            .ToDictionary(
-                r => r.Metadata["chunkId"],
-                r => r.Score);
-
-        var orderedChunks = chunkIds
-            .Select(id => chunks.FirstOrDefault(c => c.Id.ToString() == id))
-            .Where(c => c != null)
-            .Select(c => new ChunkDto(
-                c!.Id,
-                c.DocumentId,
-                c.ChunkJson ?? "",
-                0,
-                null,
-                resultDict.TryGetValue(c.Id.ToString(), out var score) ? score : 0.0))
-            .ToList();
-
-        return orderedChunks;
-    }
-
-    private async Task<List<ChunkDto>> GetChunksFromDatabaseAsync(
-        string query, List<Guid>? documentIds, Guid userId)
-    {
-        var queryable = _unitOfWork.DocumentChunks
-            .Query()
-            .Include(c => c.Document)
-            .AsNoTracking();
-
-        if (documentIds?.Count > 0)
-        {
-            queryable = queryable.Where(c => documentIds.Contains(c.DocumentId));
-        }
-
-        var allChunks = await queryable.ToListAsync();
-
-        if (allChunks.Count == 0)
-            return new List<ChunkDto>();
-
-        var queryWords = query.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var scoredChunks = allChunks
-            .Select(c =>
+            foreach (var docId in documentIds)
             {
-                var chunkLower = (c.ChunkJson ?? "").ToLowerInvariant();
-                return new
-                {
-                    Chunk = c,
-                    ChunkLower = chunkLower,
-                    Score = queryWords.Count(w => chunkLower.Contains(w))
-                };
-            })
-            .Where(x => x.Score >= 2
-                || (x.Score >= 1 && queryWords.Any(w => w.Length >= 4 && x.ChunkLower.Contains(w))))
-            .OrderByDescending(x => x.Score)
-            .ThenByDescending(x => x.Chunk.CreatedAt)
-            .Take(_options.TopKChunks)
-            .ToList();
+                filters.Add(Microsoft.KernelMemory.MemoryFilters.ByTag("user_id", userId.ToString())
+                    .ByDocument(docId.ToString()));
+            }
+        }
+        else
+        {
+            filters.Add(Microsoft.KernelMemory.MemoryFilters.ByTag("user_id", userId.ToString()));
+        }
 
-        return scoredChunks
-            .Select(x => new ChunkDto(
-                x.Chunk.Id,
-                x.Chunk.DocumentId,
-                x.Chunk.ChunkJson ?? "",
-                0,
-                null,
-                x.Score))
-            .ToList();
+        var searchResult = await _memory.SearchAsync(
+            query,
+            filters: filters,
+            limit: _options.TopKChunks);
+
+        var orderedChunks = new List<ChunkDto>();
+        foreach (var citation in searchResult.Results)
+        {
+            Guid docId = Guid.TryParse(citation.DocumentId, out var id) ? id : Guid.Empty;
+            foreach (var partition in citation.Partitions)
+            {
+                orderedChunks.Add(new ChunkDto(
+                    Guid.NewGuid(), // Chunk ID (not critical for chat mapping)
+                    docId,
+                    partition.Text,
+                    0,
+                    null,
+                    partition.Relevance));
+            }
+        }
+
+        return orderedChunks.OrderByDescending(c => c.Score).ToList();
     }
 
     private static string BuildContext(List<ChunkDto> chunks, Dictionary<Guid, string> documentTitles)
