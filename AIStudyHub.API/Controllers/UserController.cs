@@ -1,5 +1,6 @@
 using AIStudyHub.Business.DTOs.Users;
-using AIStudyHub.Business.Features.Users;
+using AIStudyHub.Business.Features.Users.Commands;
+using AIStudyHub.Business.Features.Users.Queries;
 using AIStudyHub.Business.Interfaces.Services;
 using MediatR;
 using Microsoft.AspNetCore.Authorization;
