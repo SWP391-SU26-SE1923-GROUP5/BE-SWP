@@ -6,4 +6,5 @@ public interface IVectorStoreService
     Task<List<(string Id, float[] Embedding, Dictionary<string, string> Metadata, double Score)>> SearchAsync(float[] queryEmbedding, int topK, Dictionary<string, string>? filterMetadata = null);
     Task DeleteVectorAsync(string id);
     Task DeleteVectorsByDocumentIdAsync(Guid documentId);
+    Task EnsureCollectionExistsAsync();
 }

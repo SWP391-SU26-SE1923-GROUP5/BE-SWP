@@ -37,7 +37,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<IAIChatService, AIChatService>();
         services.AddScoped<IDocumentProcessingService, DocumentProcessingService>();
         services.AddScoped<IEmbeddingService, EmbeddingService>();
-        services.AddScoped<IVectorStoreService, VectorStoreService>();
+        services.AddScoped<IVectorStoreService, QdrantVectorService>();
         services.AddScoped<ICitationService, CitationService>();
         services.AddScoped<ILocalAIService,LocalAIService>();
        // services.AddScoped<IOpenAIService, OpenAIService>();

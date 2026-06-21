@@ -27,11 +27,6 @@ public sealed class RagOptions
 
     public string OpenAIChatModel { get; set; } = "";
 
-    // Pinecone Vector DB Settings
-    public string? PineconeApiKey { get; set; }
-    public string? PineconeEnvironment { get; set; }
-    public string PineconeIndexName { get; set; } = "aistudyhub-docs";
-
     // Chunking Settings
     public int ChunkSize { get; set; } = 512;
     public int ChunkOverlap { get; set; } = 50;
