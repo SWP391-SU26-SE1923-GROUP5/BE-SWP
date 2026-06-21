@@ -6,7 +6,9 @@ using AIStudyHub.Business.Guardrails;
 using AIStudyHub.Business.Search;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.KernelMemory;
+using Microsoft.KernelMemory.AI.Ollama;
 
 namespace AIStudyHub.Business.Services;
 
@@ -58,14 +60,26 @@ public static class BusinessServiceExtensions
 
         // Kernel Memory
         services.Configure<KernelMemorySettings>(configuration.GetSection("KernelMemory"));
+        
         services.AddSingleton<IKernelMemory>(sp =>
         {
             var settings = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<KernelMemorySettings>>().Value;
+            var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("KernelMemory");
+            
+            logger.LogInformation("Configuring KernelMemory with Qdrant at: {Host}, VectorSize: {Size}, Embedding: Ollama/{EmbeddingModel}, Text: Ollama/{GenerationModel}", 
+                settings.Qdrant.Host, settings.Qdrant.VectorSize, settings.Ollama.EmbeddingModel, settings.Ollama.GenerationModel);
+            
+            var ollamaConfig = new OllamaConfig 
+            { 
+                Endpoint = settings.Ollama.Endpoint, 
+                EmbeddingModel = new OllamaModelConfig(settings.Ollama.EmbeddingModel),
+                TextModel = new OllamaModelConfig(settings.Ollama.GenerationModel)
+            };
             
             return new KernelMemoryBuilder()
+                .WithOllamaTextEmbeddingGeneration(ollamaConfig)
+                .WithOllamaTextGeneration(ollamaConfig)
                 .WithQdrantMemoryDb(settings.Qdrant.Host, settings.Qdrant.VectorSize.ToString())
-                .WithOllamaTextGeneration(settings.Ollama.Endpoint, settings.Ollama.GenerationModel)
-                .WithOllamaTextEmbeddingGeneration(settings.Ollama.Endpoint, settings.Ollama.EmbeddingModel)
                 .Build<MemoryServerless>();
         });
         services.AddScoped<IKernelMemoryService, KernelMemoryService>();
