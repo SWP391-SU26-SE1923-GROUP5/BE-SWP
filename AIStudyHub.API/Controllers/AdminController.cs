@@ -1,5 +1,6 @@
 using AIStudyHub.Business.Services;
 using AIStudyHub.Data.Interfaces;
+using AIStudyHub.Business.DTOs.Documents;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
