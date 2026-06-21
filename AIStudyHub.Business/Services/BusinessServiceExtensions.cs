@@ -46,6 +46,12 @@ public static class BusinessServiceExtensions
         services.AddScoped<AIStudyHub.Business.Interfaces.Services.IQuizAiService, AIStudyHub.Business.Services.QuizAiService>();
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
 
+        // Channel-based queue for background document processing
+        services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>();
+
+        // Background processor for document queue
+        services.AddHostedService<DocumentBackgroundProcessor>();
+
         return services;
     }
 }
