@@ -86,6 +86,7 @@ public static class BusinessServiceExtensions
 
         // L3: Search Services
         services.Configure<RetrievalOptions>(configuration.GetSection("Retrieval"));
+        services.AddSingleton<ISparseVectorGenerator, Bm25SparseGenerator>();
         services.AddScoped<IHybridSearchService, HybridSearchService>();
         services.AddScoped<IRerankingService, RerankingService>();
 

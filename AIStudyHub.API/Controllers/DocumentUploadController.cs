@@ -143,10 +143,11 @@ public sealed class DocumentUploadController : ControllerBase
             _logger.LogInformation("Document {DocumentId} accepted for processing by user {UserId}", document.Id, userId);
 
             // Queue document for background processing using Channel
+            var fullPath = Path.GetFullPath(Path.Combine(_storageOptions.BasePath ?? string.Empty, filePath));
             var processRequest = new DocumentProcessRequest(
                 document.Id,
                 userId,
-                filePath,
+                fullPath,
                 request.File.FileName,
                 request.File.ContentType);
             await _processingQueue.EnqueueAsync(processRequest);
@@ -407,6 +408,7 @@ public sealed class DocumentUploadController : ControllerBase
                 await scopedVectorStore.UpsertVectorAsync(
                     chunkEntity.VectorId,
                     embedding,
+                    null, // no sparse vector at this initial step
                     new Dictionary<string, string>
                     {
                         ["documentId"] = document.Id.ToString(),

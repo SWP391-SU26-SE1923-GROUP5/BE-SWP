@@ -5,6 +5,7 @@ using AIStudyHub.Business.Interfaces;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
+using AIStudyHub.Business.Interfaces.Services;
 
 namespace AIStudyHub.Business.Services;
 
@@ -70,6 +71,45 @@ public class DocumentBackgroundProcessor : BackgroundService
                 request.UserId,
                 request.FileName,
                 ct);
+
+            // Fetch the generated chunks from KernelMemory to populate our Custom Hybrid Search Collection
+            var chunks = await kernelMemoryService.SearchAsync("", request.UserId, 1000, ct);
+
+            var sparseGen = services.GetRequiredService<Search.ISparseVectorGenerator>();
+            var qdrant = services.GetRequiredService<IVectorStoreService>();
+            var embeddingService = services.GetRequiredService<IEmbeddingService>();
+
+            // Ensure our custom Hybrid collection is created and configured with Sparse vectors
+            await qdrant.EnsureCollectionExistsAsync();
+
+            int chunkIndex = 0;
+            foreach (var citation in chunks)
+            {
+                if (citation.DocumentId != request.DocumentId.ToString()) continue;
+
+                foreach (var partition in citation.Partitions)
+                {
+                    var text = partition.Text;
+                    if (string.IsNullOrWhiteSpace(text)) continue;
+
+                    // Generate both Dense and Sparse representations
+                    var dense = await embeddingService.GenerateEmbeddingAsync(text);
+                    var sparse = sparseGen.GenerateSparseVector(text);
+
+                    var id = Guid.NewGuid().ToString();
+                    var metadata = new Dictionary<string, string>
+                    {
+                        { "documentId", request.DocumentId.ToString() },
+                        { "userId", request.UserId.ToString() },
+                        { "text", text },
+                        { "fileName", request.FileName },
+                        { "chunkIndex", chunkIndex.ToString() }
+                    };
+
+                    await qdrant.UpsertVectorAsync(id, dense, sparse, metadata);
+                    chunkIndex++;
+                }
+            }
 
             // Update document status in database
             var document = await unitOfWork.Documents.GetByIdAsync(request.DocumentId, ct);

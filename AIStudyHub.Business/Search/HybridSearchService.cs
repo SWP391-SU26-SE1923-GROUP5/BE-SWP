@@ -1,4 +1,5 @@
 using AIStudyHub.Business.Configuration;
+using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -19,16 +20,25 @@ public record SearchResult(
 
 public class HybridSearchService : IHybridSearchService
 {
-    private readonly IKernelMemoryService _kernelMemory;
+    private readonly IVectorStoreService _vectorStore;
+    private readonly IEmbeddingService _embeddingService;
+    private readonly ISparseVectorGenerator _sparseGenerator;
+    private readonly IRerankingService _rerankingService;
     private readonly RetrievalOptions _options;
     private readonly ILogger<HybridSearchService> _logger;
 
     public HybridSearchService(
-        IKernelMemoryService kernelMemory,
+        IVectorStoreService vectorStore,
+        IEmbeddingService embeddingService,
+        ISparseVectorGenerator sparseGenerator,
+        IRerankingService rerankingService,
         IOptions<RetrievalOptions> options,
         ILogger<HybridSearchService> logger)
     {
-        _kernelMemory = kernelMemory;
+        _vectorStore = vectorStore;
+        _embeddingService = embeddingService;
+        _sparseGenerator = sparseGenerator;
+        _rerankingService = rerankingService;
         _options = options.Value;
         _logger = logger;
     }
@@ -39,17 +49,27 @@ public class HybridSearchService : IHybridSearchService
         int topK = 10,
         CancellationToken ct = default)
     {
-        _logger.LogInformation("Performing hybrid search for user {UserId}", userId);
+        _logger.LogInformation("Performing true hybrid search for user {UserId} with query: {Query}", userId, query);
 
-        var citations = await _kernelMemory.SearchAsync(query, userId, topK, ct);
+        // 1. Generate query representations
+        var denseEmbedding = await _embeddingService.GenerateEmbeddingAsync(query);
+        var sparseVector = _sparseGenerator.GenerateSparseVector(query);
 
-        var results = citations.SelectMany(citation => citation.Partitions.Select(partition => new SearchResult(
-            Content: partition.Text,
-            Score: partition.Relevance,
-            Source: citation.SourceName,
-            Metadata: partition.Tags.ToDictionary(t => t.Key, t => string.Join(",", t.Value))
-        )));
+        // 2. Search in Qdrant using RRF
+        var filter = new Dictionary<string, string> { { "userId", userId.ToString() } };
+        var qdrantResults = await _vectorStore.HybridSearchAsync(denseEmbedding, sparseVector, topK * 2, filter);
 
-        return results;
+        // Map to SearchResult
+        var results = qdrantResults.Select(r => new SearchResult(
+            Content: r.Metadata.GetValueOrDefault("text", ""),
+            Score: r.Score,
+            Source: r.Metadata.GetValueOrDefault("fileName", "Unknown"),
+            Metadata: r.Metadata
+        )).ToList();
+
+        // 3. Rerank the fused results
+        var rerankedResults = await _rerankingService.RerankAsync(query, results, topK, ct);
+
+        return rerankedResults;
     }
 }
