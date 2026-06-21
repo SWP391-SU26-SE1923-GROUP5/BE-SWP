@@ -12,12 +12,9 @@ namespace AIStudyHub.API.Controllers;
 public sealed class ChatController : ControllerBase
 {
     private readonly IAIChatService _chatService;
-    private readonly IRagChatService _ragChatService;
-
-    public ChatController(IAIChatService chatService, IRagChatService ragChatService)
+    public ChatController(IAIChatService chatService)
     {
         _chatService = chatService;
-        _ragChatService = ragChatService;
     }
 
     [HttpGet("sessions")]
@@ -48,31 +45,7 @@ public sealed class ChatController : ControllerBase
         return Ok(result);
     }
 
-    [HttpPost("rag")]
-    public async Task<ActionResult<RagChatResponseDto>> RagChat(
-        [FromBody] RagChatRequestDto request,
-        CancellationToken cancellationToken)
-    {
-        var userId = GetCurrentUserId();
-        if (userId == Guid.Empty)
-            return Unauthorized();
 
-        var result = await _ragChatService.ChatAsync(request, userId);
-        return Ok(result);
-    }
-
-    [HttpPost("summarize")]
-    public async Task<ActionResult<SummarizeResponseDto>> Summarize(
-        [FromBody] SummarizeRequestDto request,
-        CancellationToken cancellationToken)
-    {
-        var userId = GetCurrentUserId();
-        if (userId == Guid.Empty)
-            return Unauthorized();
-
-        var summary = await _ragChatService.SummarizeAsync(request.DocumentId, userId);
-        return Ok(new SummarizeResponseDto(summary));
-    }
 
     private Guid GetCurrentUserId()
     {

@@ -8,7 +8,6 @@ public interface IUnitOfWork : IDisposable
     IRepository<Subject> Subjects { get; }
     IRepository<TierMembership> TierMemberships { get; }
     IRepository<Document> Documents { get; }
-    IDocumentChunkRepository DocumentChunks { get; }
     IRepository<Vote> Votes { get; }
     IRepository<Report> Reports { get; }
     IRepository<Flashcard> Flashcards { get; }

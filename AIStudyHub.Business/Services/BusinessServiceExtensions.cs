@@ -44,10 +44,8 @@ public static class BusinessServiceExtensions
         services.AddScoped<IDocumentProcessingService, DocumentProcessingService>();
         services.AddScoped<IEmbeddingService, EmbeddingService>();
         services.AddScoped<IVectorStoreService, QdrantVectorService>();
-        services.AddScoped<ICitationService, CitationService>();
         services.AddScoped<ILocalAIService,LocalAIService>();
        // services.AddScoped<IOpenAIService, OpenAIService>();
-        services.AddScoped<IRagChatService, RagChatService>();
         services.AddScoped<AIStudyHub.Business.Interfaces.Services.IFlashcardAiService, AIStudyHub.Business.Services.FlashcardAiService>();
         services.AddScoped<AIStudyHub.Business.Interfaces.Services.IQuizAiService, AIStudyHub.Business.Services.QuizAiService>();
         services.AddScoped<IFileStorageService, LocalFileStorageService>();

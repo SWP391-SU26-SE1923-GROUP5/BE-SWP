@@ -14,18 +14,18 @@ namespace AIStudyHub.Business.Services;
 public sealed class QuizAiService : IQuizAiService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IRagChatService _ragChatService;
+    private readonly ILocalAIService _localAiService;
     private readonly Microsoft.KernelMemory.IKernelMemory _memory;
     private readonly ILogger<QuizAiService> _logger;
 
     public QuizAiService(
         IUnitOfWork unitOfWork,
-        IRagChatService ragChatService,
+        ILocalAIService localAiService,
         Microsoft.KernelMemory.IKernelMemory memory,
         ILogger<QuizAiService> logger)
     {
         _unitOfWork = unitOfWork;
-        _ragChatService = ragChatService;
+        _localAiService = localAiService;
         _memory = memory;
         _logger = logger;
     }
@@ -229,7 +229,7 @@ RULES:
             string aiText;
             try
             {
-                aiText = await _ragChatService.SendRawPromptAsync(prompt, 0.2f);
+                aiText = await _localAiService.SendMessageAsync(prompt, 0.2f);
             }
             catch (Exception ex)
             {

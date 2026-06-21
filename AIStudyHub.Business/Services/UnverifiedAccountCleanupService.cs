@@ -55,6 +55,7 @@ public sealed class UnverifiedAccountCleanupService : BackgroundService
     {
         using var scope = _serviceProvider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var vectorStoreService = scope.ServiceProvider.GetRequiredService<AIStudyHub.Business.Interfaces.Services.IVectorStoreService>();
 
         var cutoffDate = DateTime.UtcNow.AddDays(-_retentionDays);
 
@@ -80,10 +81,10 @@ public sealed class UnverifiedAccountCleanupService : BackgroundService
             .ToListAsync(cancellationToken);
         var documentIds = documents.Select(d => d.Id).ToList();
 
-        var documentChunks = await dbContext.DocumentChunks
-            .Where(c => documentIds.Contains(c.DocumentId))
-            .ToListAsync(cancellationToken);
-        dbContext.DocumentChunks.RemoveRange(documentChunks);
+        foreach (var docId in documentIds)
+        {
+            await vectorStoreService.DeleteVectorsByDocumentIdAsync(docId);
+        }
 
         dbContext.Documents.RemoveRange(documents);
 

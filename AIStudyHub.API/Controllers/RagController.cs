@@ -54,6 +54,28 @@ public class RagController : ControllerBase
         }
     }
 
+    [HttpPost("summarize")]
+    public async Task<IActionResult> Summarize([FromBody] SummarizeRequest request, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        if (userId == Guid.Empty)
+            return Unauthorized();
+
+        try
+        {
+            _logger.LogInformation("Summarize request for document {DocumentId} from user {UserId}", request.DocumentId, userId);
+            
+            var summary = await _orchestrator.SummarizeAsync(request.DocumentId, userId, ct);
+
+            return Ok(new { summary });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing summarize request for document {DocumentId}", request.DocumentId);
+            return StatusCode(500, "An error occurred while summarizing the document");
+        }
+    }
+
     private Guid GetUserId()
     {
         var claim = User.FindFirst("sub")?.Value 
@@ -64,3 +86,4 @@ public class RagController : ControllerBase
 }
 
 public record AskRequest(string Question);
+public record SummarizeRequest(Guid DocumentId);

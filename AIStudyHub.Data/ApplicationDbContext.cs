@@ -16,7 +16,6 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
     public DbSet<Subject> Subjects => Set<Subject>();
     public DbSet<TierMembership> TierMemberships => Set<TierMembership>();
     public DbSet<Document> Documents => Set<Document>();
-    public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
     public DbSet<Vote> Votes => Set<Vote>();
     public DbSet<Report> Reports => Set<Report>();
     public DbSet<Flashcard> Flashcards => Set<Flashcard>();

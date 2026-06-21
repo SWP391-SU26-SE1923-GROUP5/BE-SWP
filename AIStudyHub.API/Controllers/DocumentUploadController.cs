@@ -195,19 +195,23 @@ public sealed class DocumentUploadController : ControllerBase
         if (document == null)
             return NotFound("Document not found");
 
-        var chunks = await _unitOfWork.DocumentChunks
-            .Query()
-            .Where(c => c.DocumentId == id)
-            .OrderBy(c => c.CreatedAt)
-            .ToListAsync(cancellationToken);
+        // Temporary workaround: since SQL DocumentChunks is deleted, fetch from Vector Store using empty query 
+        // to retrieve up to 1000 chunks for this document.
+        var dummyDense = new float[1536]; // Match Nomic dimensions
+        var dummySparse = (Indices: new List<uint>(), Values: new List<float>());
+        var filter = new Dictionary<string, string> { { "documentId", id.ToString() } };
+        
+        var qdrantResults = await _vectorStoreService.HybridSearchAsync(dummyDense, dummySparse, 1000, filter);
 
-        return Ok(chunks.Select(c => new ChunkDto(
-            c.Id,
-            c.DocumentId,
-            c.ChunkJson ?? "",
-            c.OrderIndex,
+        var chunks = qdrantResults.Select((r, idx) => new ChunkDto(
+            Guid.TryParse(r.Id, out var g) ? g : Guid.NewGuid(),
+            id,
+            r.Metadata.GetValueOrDefault("text", ""),
+            idx,
             null
-        )).ToList());
+        )).ToList();
+
+        return Ok(chunks);
     }
 
     [HttpDelete("{id:guid}")]
@@ -223,20 +227,6 @@ public sealed class DocumentUploadController : ControllerBase
 
         try
         {
-            var chunks = await _unitOfWork.DocumentChunks
-                .Query()
-                .Where(c => c.DocumentId == id)
-                .ToListAsync(cancellationToken);
-
-            foreach (var chunk in chunks)
-            {
-                if (!string.IsNullOrEmpty(chunk.VectorId))
-                {
-                    await _vectorStoreService.DeleteVectorAsync(chunk.VectorId);
-                }
-                _unitOfWork.DocumentChunks.Remove(chunk);
-            }
-
             await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
 
             _unitOfWork.Documents.Remove(document);
@@ -295,18 +285,7 @@ public sealed class DocumentUploadController : ControllerBase
         byte[] fileContent = await System.IO.File.ReadAllBytesAsync(fullPath, cancellationToken);
         var extension = (document.FileExtension ?? Path.GetExtension(document.FileName ?? "")).ToLowerInvariant();
 
-        var existing = await _unitOfWork.DocumentChunks
-            .Query()
-            .Where(c => c.DocumentId == id)
-            .ToListAsync(cancellationToken);
-        foreach (var c in existing)
-        {
-            if (!string.IsNullOrEmpty(c.VectorId))
-                await _vectorStoreService.DeleteVectorAsync(c.VectorId);
-            _unitOfWork.DocumentChunks.Remove(c);
-        }
         await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         document.Status = DocumentStatus.Processing;
         document.UpdatedAt = DateTime.UtcNow;
@@ -326,189 +305,7 @@ public sealed class DocumentUploadController : ControllerBase
             "Re-processing in progress"));
     }
 
-    [HttpGet("{id:guid}/validate")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<ActionResult> Validate(Guid id, CancellationToken cancellationToken)
-    {
-        var userId = GetCurrentUserId();
-        if (userId == Guid.Empty) return Unauthorized();
 
-        var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
-        if (document == null) return NotFound();
-        if (document.UserId != userId) return Forbid();
-
-        var chunks = await _unitOfWork.DocumentChunks
-            .Query()
-            .Where(c => c.DocumentId == id)
-            .AsNoTracking()
-            .ToListAsync(cancellationToken);
-
-        var missingVectorId = chunks.Count(c => string.IsNullOrEmpty(c.VectorId));
-        var emptyChunkText = chunks.Count(c => string.IsNullOrWhiteSpace(c.ChunkJson));
-
-        return Ok(new
-        {
-            documentId = id,
-            documentStatus = document.Status.ToString(),
-            chunkCount = chunks.Count,
-            missingVectorId,
-            emptyChunkText,
-            isHealthy = missingVectorId == 0 && emptyChunkText == 0
-        });
-    }
-
-    private static async Task RunBackgroundProcessingAsync(
-        IServiceScopeFactory serviceScopeFactory,
-        Document document,
-        byte[] fileContent,
-        string extension,
-        Guid userId)
-    {
-        using var scope = serviceScopeFactory.CreateScope();
-        var sp = scope.ServiceProvider;
-        var scopedUnitOfWork = sp.GetRequiredService<IUnitOfWork>();
-        var scopedDocProcessing = sp.GetRequiredService<IDocumentProcessingService>();
-        var scopedEmbedding = sp.GetRequiredService<IEmbeddingService>();
-        var scopedVectorStore = sp.GetRequiredService<IVectorStoreService>();
-        var scopedLogger = sp.GetRequiredService<ILogger<DocumentUploadController>>();
-        var scopedOptions = sp.GetRequiredService<IOptions<RagOptions>>().Value;
-
-        try
-        {
-            var text = await scopedDocProcessing.ExtractTextAsync(fileContent, extension);
-            if (string.IsNullOrWhiteSpace(text))
-                throw new Exception("Could not extract text from the document");
-
-            var chunks = await scopedDocProcessing.ChunkTextAsync(
-                text, scopedOptions.ChunkSize, scopedOptions.ChunkOverlap);
-            if (chunks.Count == 0)
-                throw new Exception("No content chunks could be created");
-
-            var embeddings = await scopedEmbedding.GenerateEmbeddingsAsync(chunks);
-
-            for (var i = 0; i < chunks.Count; i++)
-            {
-                var chunk = chunks[i];
-                var embedding = embeddings[i];
-                var chunkEntity = new DocumentChunk
-                {
-                    Id = Guid.NewGuid(),
-                    DocumentId = document.Id,
-                    ChunkJson = chunk,
-                    OrderIndex = i,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-                chunkEntity.VectorId = chunkEntity.Id.ToString();
-
-                await scopedUnitOfWork.DocumentChunks.AddAsync(chunkEntity);
-
-                await scopedVectorStore.UpsertVectorAsync(
-                    chunkEntity.VectorId,
-                    embedding,
-                    null, // no sparse vector at this initial step
-                    new Dictionary<string, string>
-                    {
-                        ["documentId"] = document.Id.ToString(),
-                        ["chunkId"] = chunkEntity.VectorId,
-                        ["userId"] = userId.ToString(),
-                        ["chunkIndex"] = i.ToString(),
-                        ["documentTitle"] = document.Title
-                    });
-            }
-
-            // Verification pass: ensure chunking + embedding actually produced usable data.
-            var writtenChunks = await scopedUnitOfWork.DocumentChunks
-                .Query()
-                .Where(c => c.DocumentId == document.Id)
-                .ToListAsync();
-
-            if (writtenChunks.Count == 0)
-                throw new Exception("Chunking produced zero chunks after save");
-
-            var missingEmbedding = writtenChunks
-                .Where(c => string.IsNullOrEmpty(c.VectorId))
-                .ToList();
-
-            if (missingEmbedding.Count > 0)
-                throw new Exception(
-                    $"{missingEmbedding.Count} chunks are missing VectorId");
-
-            var docToUpdate = await scopedUnitOfWork.Documents.GetByIdAsync(document.Id);
-            if (docToUpdate != null)
-            {
-                docToUpdate.Status = DocumentStatus.Published;
-                scopedUnitOfWork.Documents.Update(docToUpdate);
-            }
-            await scopedUnitOfWork.SaveChangesAsync(CancellationToken.None);
-            scopedLogger.LogInformation(
-                "Background processing completed for Document {DocumentId} with {ChunkCount} chunks",
-                document.Id, chunks.Count);
-        }
-        catch (Exception ex)
-        {
-            scopedLogger.LogError(ex, "Background processing failed for Document {DocumentId}", document.Id);
-            var docToUpdate = await scopedUnitOfWork.Documents.GetByIdAsync(document.Id);
-            if (docToUpdate != null)
-            {
-                docToUpdate.Status = DocumentStatus.Failed;
-                scopedUnitOfWork.Documents.Update(docToUpdate);
-                await scopedUnitOfWork.SaveChangesAsync(CancellationToken.None);
-            }
-        }
-    }
-
-    [HttpGet("{id:guid}/chunks/search")]
-    [SwaggerOperation(OperationId = "SearchDocumentChunks")]
-    public async Task<ActionResult<List<ChunkDto>>> SearchDocumentChunks(
-        Guid id,
-        [FromQuery] string q,
-        [FromQuery] int top = 5,
-        CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrWhiteSpace(q))
-            return BadRequest("Query parameter 'q' is required");
-
-        var document = await _unitOfWork.Documents.GetByIdAsync(id);
-        if (document == null)
-            return NotFound("Document not found");
-
-        var chunks = await _unitOfWork.DocumentChunks
-            .Query()
-            .Where(c => c.DocumentId == id)
-            .AsNoTracking()
-            .ToListAsync(cancellationToken);
-
-        if (chunks.Count == 0)
-            return Ok(Enumerable.Empty<ChunkDto>());
-
-        var queryEmbedding = await _embeddingService.GenerateEmbeddingAsync(q);
-
-        var searchResults = await _vectorStoreService.SearchAsync(
-            queryEmbedding,
-            top,
-            new Dictionary<string, string> { ["documentId"] = id.ToString() });
-
-        var vectorIds = searchResults.Select(r => r.Id).ToHashSet();
-        var matchedChunks = chunks
-            .Where(c => c.VectorId != null && vectorIds.Contains(c.VectorId))
-            .ToDictionary(c => c.VectorId!);
-
-        var result = searchResults
-            .Where(r => matchedChunks.ContainsKey(r.Id))
-            .Select(r => new ChunkDto(
-                matchedChunks[r.Id].Id,
-                matchedChunks[r.Id].DocumentId,
-                matchedChunks[r.Id].ChunkJson ?? "",
-                matchedChunks[r.Id].OrderIndex,
-                matchedChunks[r.Id].VectorId,
-                r.Score))
-            .ToList();
-
-        return Ok(result);
-    }
 
     private Guid GetCurrentUserId()
     {
