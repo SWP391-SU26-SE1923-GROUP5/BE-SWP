@@ -108,7 +108,6 @@ internal sealed class DocumentChunkConfiguration : IEntityTypeConfiguration<Docu
         builder.Property(x => x.Id).HasColumnName("document_chunk_id");
         builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
         builder.Property(x => x.ChunkJson).HasColumnName("chunk_json");
-        builder.Property(x => x.EmbeddingJson).HasColumnName("embedding_json");
         builder.Property(x => x.VectorId).HasColumnName("vector_id").HasMaxLength(500);
         builder.Property(x => x.OrderIndex).HasColumnName("order_index");
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");

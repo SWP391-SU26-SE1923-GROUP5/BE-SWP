@@ -16,12 +16,7 @@ public sealed class DocumentChunk : BaseEntity
     public string? ChunkJson { get; set; }
 
     /// <summary>
-    /// Gets or sets the serialized embedding payload.
-    /// </summary>
-    public string? EmbeddingJson { get; set; }
-
-    /// <summary>
-    /// Gets or sets the vector store ID (Pinecone or similar).
+    /// Gets or sets the vector store ID (Qdrant).
     /// </summary>
     public string? VectorId { get; set; }
 
@@ -29,12 +24,6 @@ public sealed class DocumentChunk : BaseEntity
     /// Gets or sets the order index within the document.
     /// </summary>
     public int OrderIndex { get; set; }
-
-    /// <summary>
-    /// Gets or sets the vector embedding stored in SQL Server (for local semantic search).
-    /// Stored as binary in SQL Server using native vector type.
-    /// </summary>
-    public byte[]? Vector { get; set; }
 
     /// <summary>
     /// Gets or sets the related document.
