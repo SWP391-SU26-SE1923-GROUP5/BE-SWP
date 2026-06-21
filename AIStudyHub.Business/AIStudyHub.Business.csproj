@@ -16,6 +16,12 @@
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.0.2" />
       <PackageReference Include="PdfPig" Version="0.1.14" />
       <PackageReference Include="DocumentFormat.OpenXml" Version="3.3.0" />
+      <PackageReference Include="Microsoft.SemanticKernel" Version="1.77.0" />
+      <PackageReference Include="Microsoft.KernelMemory.Core" Version="0.40.240501.1" />
+      <PackageReference Include="Microsoft.KernelMemory.MemoryDb.Qdrant" Version="0.40.240501.1" />
+      <PackageReference Include="Microsoft.KernelMemory.AI.Ollama" Version="0.92.241112.1" />
+      <PackageReference Include="Microsoft.SemanticKernel.Connectors.Qdrant" Version="1.60.0-preview" />
+      <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
   </ItemGroup>
 
   <ItemGroup>
