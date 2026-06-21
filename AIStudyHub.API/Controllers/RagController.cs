@@ -1,4 +1,4 @@
-using AIStudyHub.Business.Services;
+using AIStudyHub.Business.Interfaces.AI.Orchestration;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -79,7 +79,7 @@ public class RagController : ControllerBase
     private Guid GetUserId()
     {
         var claim = User.FindFirst("sub")?.Value 
-                 ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                  ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         
         return Guid.TryParse(claim, out var userId) ? userId : Guid.Empty;
     }

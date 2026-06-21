@@ -2,8 +2,21 @@ using AIStudyHub.Business.Options;
 using AIStudyHub.Business.Behaviors;
 using AIStudyHub.Business.Configuration;
 using AIStudyHub.Business.Interfaces.Services;
-using AIStudyHub.Business.Guardrails;
-using AIStudyHub.Business.Search;
+using AIStudyHub.Business.AI.Orchestration;
+using AIStudyHub.Business.AI.Search;
+using AIStudyHub.Business.AI.VectorStore;
+using AIStudyHub.Business.AI.Guardrails;
+using AIStudyHub.Business.AI.LLM;
+using AIStudyHub.Business.AI.Chat;
+using AIStudyHub.Business.Interfaces.AI.Guardrails;
+using AIStudyHub.Business.Interfaces.AI.Search;
+using AIStudyHub.Business.Interfaces.AI.VectorStore;
+using AIStudyHub.Business.Interfaces.AI.Orchestration;
+using AIStudyHub.Business.Interfaces.AI.LLM;
+using AIStudyHub.Business.Interfaces.AI.Chat;
+using AIStudyHub.Business.Interfaces.AI.Generators;
+using AIStudyHub.Business.AI.Generators;
+using AIStudyHub.Business.Workers;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -46,8 +59,8 @@ public static class BusinessServiceExtensions
         services.AddScoped<IVectorStoreService, QdrantVectorService>();
         services.AddScoped<ILocalAIService,LocalAIService>();
        // services.AddScoped<IOpenAIService, OpenAIService>();
-        services.AddScoped<AIStudyHub.Business.Interfaces.Services.IFlashcardAiService, AIStudyHub.Business.Services.FlashcardAiService>();
-        services.AddScoped<AIStudyHub.Business.Interfaces.Services.IQuizAiService, AIStudyHub.Business.Services.QuizAiService>();
+        services.AddScoped<IFlashcardAiService, FlashcardAiService>();
+        services.AddScoped<IQuizAiService, QuizAiService>();
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
 
         // Channel-based queue for background document processing

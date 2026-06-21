@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using AIStudyHub.Business.DTOs.Documents;
 using Microsoft.Extensions.Logging;
 
 namespace AIStudyHub.Business.Services;

@@ -31,6 +31,56 @@ public sealed class DocumentService : IDocumentService
         _mapper = mapper;
     }
 
+    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<DocumentResponseDto>> GetAllPagedAsync(Guid userId, AIStudyHub.Business.DTOs.Common.PaginationParams @params, Guid? subjectId = null, CancellationToken cancellationToken = default)
+    {
+        var query = _unitOfWork.Documents.Query().Include(d => d.Subject).Include(d => d.User).Include(d => d.Votes).Where(d => d.UserId == userId || d.ShareStatus == "public").AsNoTracking();
+        
+        if (subjectId.HasValue)
+        {
+            query = query.Where(d => d.SubjectId == subjectId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
+        {
+            var search = @params.SearchTerm.ToLower();
+            query = query.Where(d => d.Title.ToLower().Contains(search) || (d.Subject != null && d.Subject.SubjectName.ToLower().Contains(search)));
+        }
+
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(@params.SortBy))
+        {
+            query = @params.IsDescending 
+                ? query.OrderByDescending(d => EF.Property<object>(d, @params.SortBy))
+                : query.OrderBy(d => EF.Property<object>(d, @params.SortBy));
+        }
+        else
+        {
+            query = query.OrderByDescending(d => d.CreatedAt);
+        }
+
+        var items = await query.Skip(@params.Offset).Take(@params.Limit).ToListAsync(cancellationToken);
+
+        var dtos = items.Select(d => new DocumentResponseDto(
+            d.Id,
+            d.UserId,
+            d.SubjectId,
+            d.Title,
+            d.FileLink,
+            d.FileName,
+            d.FileExtension,
+            d.FileType,
+            d.SharedUsers,
+            d.ShareStatus,
+            d.Status,
+            d.Votes.Sum(v => v.Type == AIStudyHub.Data.Enums.VoteType.Upvote ? 1 : -1),
+            d.CreatedAt,
+            d.UpdatedAt
+        )).ToList();
+
+        return new AIStudyHub.Business.DTOs.Common.PagedResultDto<DocumentResponseDto>(dtos, totalCount, @params.Offset, @params.Limit);
+    }
+
     public async Task<IReadOnlyList<DocumentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var documents = await _unitOfWork.Documents
@@ -450,6 +500,35 @@ public sealed class FlashcardService : IFlashcardService
         _mapper = mapper;
     }
 
+    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<FlashcardResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken = default)
+    {
+        var query = _unitOfWork.Flashcards.Query().AsNoTracking();
+
+        if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
+        {
+            var search = @params.SearchTerm.ToLower();
+            query = query.Where(f => f.Front.ToLower().Contains(search) || f.Back.ToLower().Contains(search));
+        }
+
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(@params.SortBy))
+        {
+            query = @params.IsDescending 
+                ? query.OrderByDescending(f => EF.Property<object>(f, @params.SortBy))
+                : query.OrderBy(f => EF.Property<object>(f, @params.SortBy));
+        }
+        else
+        {
+            query = query.OrderByDescending(f => f.CreatedAt);
+        }
+
+        var items = await query.Skip(@params.Offset).Take(@params.Limit).ToListAsync(cancellationToken);
+
+        var dtos = items.Select(_mapper.Map<FlashcardResponseDto>).ToList();
+        return new AIStudyHub.Business.DTOs.Common.PagedResultDto<FlashcardResponseDto>(dtos, totalCount, @params.Offset, @params.Limit);
+    }
+
     public async Task<IReadOnlyList<FlashcardResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var flashcards = await _unitOfWork.Flashcards
@@ -540,63 +619,6 @@ public sealed class FlashcardService : IFlashcardService
         return flashcards.Select(_mapper.Map<FlashcardResponseDto>).ToList();
     }
 
-    public async Task<IReadOnlyList<FlashcardResponseDto>> SaveGeneratedBatchAsync(
-        SaveGeneratedFlashcardsRequestDto request,
-        CancellationToken cancellationToken = default)
-    {
-        if (request.Flashcards is null || request.Flashcards.Count == 0)
-            return Array.Empty<FlashcardResponseDto>();
-
-        var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
-        if (!documentExists)
-        {
-            throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
-        }
-
-        var existingFronts = (await _unitOfWork.Flashcards
-            .Query()
-            .Where(f => f.DocumentId == request.DocumentId)
-            .Select(f => f.Front)
-            .ToListAsync(cancellationToken))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        var created = new List<Data.Entities.Flashcard>();
-        foreach (var card in request.Flashcards)
-        {
-            if (string.IsNullOrWhiteSpace(card.Front) || string.IsNullOrWhiteSpace(card.Back))
-                continue;
-
-            var cleanFront = card.Front.Trim();
-            var cleanBack = card.Back.Trim();
-
-            if (!existingFronts.Add(cleanFront))
-                continue;
-
-            created.Add(new Data.Entities.Flashcard
-            {
-                DocumentId = request.DocumentId,
-                Front = cleanFront,
-                Back = cleanBack
-            });
-        }
-
-        if (created.Count == 0)
-            return Array.Empty<FlashcardResponseDto>();
-
-        foreach (var card in created)
-            await _unitOfWork.Flashcards.AddAsync(card, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var ids = created.Select(c => c.Id).ToList();
-        var saved = await _unitOfWork.Flashcards
-            .Query()
-            .Where(f => ids.Contains(f.Id))
-            .AsNoTracking()
-            .ToListAsync(cancellationToken);
-
-        return saved.Select(_mapper.Map<FlashcardResponseDto>).ToList();
-    }
-
     public async Task<IReadOnlyList<FlashcardResponseDto>> CreateBulkAsync(
         IReadOnlyList<CreateFlashcardRequestDto> requests,
         CancellationToken cancellationToken = default)
@@ -644,6 +666,35 @@ public sealed class QuizService : IQuizService
         _mapper = mapper;
     }
 
+    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<QuizResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken = default)
+    {
+        var query = _unitOfWork.Quizzes.Query().AsNoTracking();
+
+        if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
+        {
+            var search = @params.SearchTerm.ToLower();
+            query = query.Where(q => q.Title.ToLower().Contains(search));
+        }
+
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(@params.SortBy))
+        {
+            query = @params.IsDescending 
+                ? query.OrderByDescending(q => EF.Property<object>(q, @params.SortBy))
+                : query.OrderBy(q => EF.Property<object>(q, @params.SortBy));
+        }
+        else
+        {
+            query = query.OrderByDescending(q => q.CreatedAt);
+        }
+
+        var items = await query.Skip(@params.Offset).Take(@params.Limit).ToListAsync(cancellationToken);
+
+        var dtos = items.Select(_mapper.Map<QuizResponseDto>).ToList();
+        return new AIStudyHub.Business.DTOs.Common.PagedResultDto<QuizResponseDto>(dtos, totalCount, @params.Offset, @params.Limit);
+    }
+
     public async Task<IReadOnlyList<QuizResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var quizzes = await _unitOfWork.Quizzes
@@ -660,6 +711,8 @@ public sealed class QuizService : IQuizService
         var quiz = await _unitOfWork.Quizzes
             .Query()
             .Include(q => q.Document)
+            .Include(q => q.Questions)
+                .ThenInclude(q => q.Answers)
             .AsNoTracking()
             .FirstOrDefaultAsync(q => q.Id == id, cancellationToken);
 
@@ -1439,6 +1492,35 @@ public sealed class SubjectService : ISubjectService
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+    }
+
+    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<SubjectResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken = default)
+    {
+        var query = _unitOfWork.Subjects.Query().AsNoTracking();
+
+        if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
+        {
+            var search = @params.SearchTerm.ToLower();
+            query = query.Where(s => s.SubjectName.ToLower().Contains(search) || s.SubjectCode.ToLower().Contains(search));
+        }
+
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(@params.SortBy))
+        {
+            query = @params.IsDescending 
+                ? query.OrderByDescending(s => EF.Property<object>(s, @params.SortBy))
+                : query.OrderBy(s => EF.Property<object>(s, @params.SortBy));
+        }
+        else
+        {
+            query = query.OrderByDescending(s => s.CreatedAt);
+        }
+
+        var items = await query.Skip(@params.Offset).Take(@params.Limit).ToListAsync(cancellationToken);
+
+        var dtos = items.Select(_mapper.Map<SubjectResponseDto>).ToList();
+        return new AIStudyHub.Business.DTOs.Common.PagedResultDto<SubjectResponseDto>(dtos, totalCount, @params.Offset, @params.Limit);
     }
 
     public async Task<IReadOnlyList<SubjectResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)

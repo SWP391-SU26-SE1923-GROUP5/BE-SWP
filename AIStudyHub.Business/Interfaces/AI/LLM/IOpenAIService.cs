@@ -1,0 +1,1 @@
+using AIStudyHub.Business.Interfaces.AI.LLM;using System.Threading; using System.Threading.Tasks;  namespace AIStudyHub.Business.Interfaces.AI.LLM;  public interface IOpenAIService {     Task<string> SendMessageAsync(string message);     Task<ReadOnlyMemory<float>> CreateEmbeddingFromText(string message); }

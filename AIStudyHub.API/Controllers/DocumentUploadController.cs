@@ -1,5 +1,8 @@
+using AIStudyHub.Business.AI.VectorStore;
+using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.API.DTOs;
 using AIStudyHub.API.Swagger;
+using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
