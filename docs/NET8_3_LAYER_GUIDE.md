@@ -193,24 +193,40 @@ AIStudyHub.sln
 |   `-- appsettings.example.json
 |
 |-- AIStudyHub.Business
+|   |-- AI
+|   |   |-- Chat
+|   |   |-- Generators
+|   |   |-- Guardrails
+|   |   |-- LLM
+|   |   |-- Orchestration
+|   |   |-- Search
+|   |   `-- VectorStore
 |   |-- DTOs
 |   |   `-- Courses
 |   |       |-- CourseRequestDtos.cs
 |   |       `-- CourseResponseDtos.cs
 |   |-- Exceptions
 |   |-- Interfaces
+|   |   |-- AI
+|   |   |   |-- Chat
+|   |   |   |-- Generators
+|   |   |   |-- Guardrails
+|   |   |   |-- LLM
+|   |   |   |-- Orchestration
+|   |   |   |-- Search
+|   |   |   `-- VectorStore
 |   |   `-- Services
 |   |       `-- ICourseService.cs
 |   |-- Mappings
 |   |   `-- BusinessMappingProfile.cs
-|   |-- Models
-|   |-- Requests
+|   |-- Options
 |   |-- Services
 |   |   |-- BusinessServiceExtensions.cs
 |   |   `-- CourseService.cs
-|   `-- Validators
-|       `-- Courses
-|           `-- CourseValidators.cs
+|   |-- Validators
+|   |   `-- Courses
+|   |       `-- CourseValidators.cs
+|   `-- Workers
 |
 `-- AIStudyHub.Data
     |-- Configurations
