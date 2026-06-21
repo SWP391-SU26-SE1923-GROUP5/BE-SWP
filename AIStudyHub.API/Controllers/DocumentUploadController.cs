@@ -332,9 +332,7 @@ public sealed class DocumentUploadController : ControllerBase
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
-        var missingVector = chunks.Count(c => c.Vector == null || c.Vector.Length == 0);
         var missingVectorId = chunks.Count(c => string.IsNullOrEmpty(c.VectorId));
-        var missingEmbeddingJson = chunks.Count(c => string.IsNullOrEmpty(c.EmbeddingJson));
         var emptyChunkText = chunks.Count(c => string.IsNullOrWhiteSpace(c.ChunkJson));
 
         return Ok(new
@@ -342,12 +340,9 @@ public sealed class DocumentUploadController : ControllerBase
             documentId = id,
             documentStatus = document.Status.ToString(),
             chunkCount = chunks.Count,
-            missingVector,
             missingVectorId,
-            missingEmbeddingJson,
             emptyChunkText,
-            isHealthy = missingVector == 0 && missingVectorId == 0
-                        && missingEmbeddingJson == 0 && emptyChunkText == 0
+            isHealthy = missingVectorId == 0 && emptyChunkText == 0
         });
     }
 
@@ -389,8 +384,6 @@ public sealed class DocumentUploadController : ControllerBase
                     Id = Guid.NewGuid(),
                     DocumentId = document.Id,
                     ChunkJson = chunk,
-                    EmbeddingJson = System.Text.Json.JsonSerializer.Serialize(embedding),
-                    Vector = ConvertToByteArray(embedding),
                     OrderIndex = i,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
@@ -422,13 +415,12 @@ public sealed class DocumentUploadController : ControllerBase
                 throw new Exception("Chunking produced zero chunks after save");
 
             var missingEmbedding = writtenChunks
-                .Where(c => c.Vector == null || c.Vector.Length == 0
-                                       || string.IsNullOrEmpty(c.VectorId))
+                .Where(c => string.IsNullOrEmpty(c.VectorId))
                 .ToList();
 
             if (missingEmbedding.Count > 0)
                 throw new Exception(
-                    $"{missingEmbedding.Count} chunks are missing embedding or VectorId");
+                    $"{missingEmbedding.Count} chunks are missing VectorId");
 
             var docToUpdate = await scopedUnitOfWork.Documents.GetByIdAsync(document.Id);
             if (docToUpdate != null)
@@ -480,63 +472,28 @@ public sealed class DocumentUploadController : ControllerBase
 
         var queryEmbedding = await _embeddingService.GenerateEmbeddingAsync(q);
 
-        var scored = chunks
-            .Select(c =>
-            {
-                var embedding = DeserializeEmbedding(c.EmbeddingJson);
-                var score = embedding != null ? CosineSimilarity(queryEmbedding, embedding) : 0f;
-                return (Chunk: c, Score: score);
-            })
-            .OrderByDescending(x => x.Score)
-            .Take(top)
-            .ToList();
+        var searchResults = await _vectorStoreService.SearchAsync(
+            queryEmbedding,
+            top,
+            new Dictionary<string, string> { ["documentId"] = id.ToString() });
 
-        var result = scored
-            .Select(x => new ChunkDto(
-                x.Chunk.Id,
-                x.Chunk.DocumentId,
-                x.Chunk.ChunkJson ?? "",
-                x.Chunk.OrderIndex,
-                null))
+        var vectorIds = searchResults.Select(r => r.Id).ToHashSet();
+        var matchedChunks = chunks
+            .Where(c => c.VectorId != null && vectorIds.Contains(c.VectorId))
+            .ToDictionary(c => c.VectorId!);
+
+        var result = searchResults
+            .Where(r => matchedChunks.ContainsKey(r.Id))
+            .Select(r => new ChunkDto(
+                matchedChunks[r.Id].Id,
+                matchedChunks[r.Id].DocumentId,
+                matchedChunks[r.Id].ChunkJson ?? "",
+                matchedChunks[r.Id].OrderIndex,
+                matchedChunks[r.Id].VectorId,
+                r.Score))
             .ToList();
 
         return Ok(result);
-    }
-
-    private static float[]? DeserializeEmbedding(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-            return null;
-
-        try
-        {
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            return doc.RootElement
-                .EnumerateArray()
-                .Select(e => e.GetSingle())
-                .ToArray();
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static float CosineSimilarity(float[] a, float[] b)
-    {
-        if (a.Length != b.Length || a.Length == 0)
-            return 0;
-
-        double dot = 0, normA = 0, normB = 0;
-        for (var i = 0; i < a.Length; i++)
-        {
-            dot += a[i] * b[i];
-            normA += a[i] * a[i];
-            normB += b[i] * b[i];
-        }
-
-        var denominator = Math.Sqrt(normA) * Math.Sqrt(normB);
-        return denominator == 0 ? 0 : (float)(dot / denominator);
     }
 
     private Guid GetCurrentUserId()
@@ -560,12 +517,5 @@ public sealed class DocumentUploadController : ControllerBase
             ".md" => "text/markdown",
             _ => "application/octet-stream"
         };
-    }
-
-    private static byte[] ConvertToByteArray(float[] floats)
-    {
-        var bytes = new byte[floats.Length * sizeof(float)];
-        Buffer.BlockCopy(floats, 0, bytes, 0, bytes.Length);
-        return bytes;
     }
 }

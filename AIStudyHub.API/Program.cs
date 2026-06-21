@@ -62,6 +62,9 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.O
 builder.Services.Configure<RagOptions>(builder.Configuration.GetSection("Rag"));
 builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RagOptions>>().Value);
 
+builder.Services.Configure<QdrantOptions>(builder.Configuration.GetSection("Qdrant"));
+builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<QdrantOptions>>().Value);
+
 builder.Services.Configure<DocumentStorageOptions>(builder.Configuration.GetSection("DocumentStorage"));
 builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<DocumentStorageOptions>>().Value);
 
@@ -94,6 +97,9 @@ builder.Services.AddSingleton(sp =>
 var app = builder.Build();
 
 await app.Services.SeedConfiguredAdminAsync(app.Configuration);
+
+var qdrantService = app.Services.GetRequiredService<AIStudyHub.Business.Interfaces.Services.IVectorStoreService>();
+await qdrantService.EnsureCollectionExistsAsync();
 
 app.UseSerilogRequestLogging();
 app.UseMiddleware<GlobalExceptionMiddleware>();
