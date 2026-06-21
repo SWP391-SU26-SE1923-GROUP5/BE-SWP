@@ -1,8 +1,10 @@
 using AIStudyHub.Business.Options;
 using AIStudyHub.Business.Behaviors;
+using AIStudyHub.Business.Configuration;
 using AIStudyHub.Business.Interfaces.Services;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.KernelMemory;
 
 namespace AIStudyHub.Business.Services;
 
@@ -51,6 +53,20 @@ public static class BusinessServiceExtensions
 
         // Background processor for document queue
         services.AddHostedService<DocumentBackgroundProcessor>();
+
+        // Kernel Memory
+        services.Configure<KernelMemorySettings>(configuration.GetSection("KernelMemory"));
+        services.AddSingleton<IKernelMemory>(sp =>
+        {
+            var settings = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<KernelMemorySettings>>().Value;
+            
+            return new KernelMemoryBuilder()
+                .WithQdrantMemoryDb(settings.Qdrant.Host, settings.Qdrant.VectorSize.ToString())
+                .WithOllamaTextGeneration(settings.Ollama.Endpoint, settings.Ollama.GenerationModel)
+                .WithOllamaTextEmbeddingGeneration(settings.Ollama.Endpoint, settings.Ollama.EmbeddingModel)
+                .Build<MemoryServerless>();
+        });
+        services.AddScoped<IKernelMemoryService, KernelMemoryService>();
 
         return services;
     }
