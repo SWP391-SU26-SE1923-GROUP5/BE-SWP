@@ -18,13 +18,23 @@ namespace AIStudyHub.Business.Services
     public class LocalAIService: ILocalAIService
     {
         private readonly RagOptions _options;
-        private readonly HttpClient _httpClient;
+        // private readonly HttpClient _httpClient;
         private readonly ILogger<LocalAIService> _logger;
-        public LocalAIService(IOptions<RagOptions> options, IHttpClientFactory httpClientFactory, ILogger<LocalAIService> logger)
+        
+        // OpenAI Clients
+        private readonly ChatClient _chatClient;
+        private readonly EmbeddingClient _embeddingClient;
+
+        public LocalAIService(IOptions<RagOptions> options, ILogger<LocalAIService> logger)
         {
             _options = options.Value;
-            _httpClient = httpClientFactory.CreateClient();
+            // _httpClient = httpClientFactory.CreateClient("LlmClient");
+            // _httpClient.Timeout = TimeSpan.FromMinutes(10);
             _logger = logger;
+
+            // Initialize OpenAI clients
+            _chatClient = new ChatClient(_options.OpenAIChatModel, _options.OpenAIApiKey);
+            _embeddingClient = new EmbeddingClient(_options.OpenAIEmbeddingModel, _options.OpenAIApiKey);
         }
         public Task<string> SendMessageAsync(string message)
             => SendMessageAsync(message, 0.2f);
@@ -33,196 +43,110 @@ namespace AIStudyHub.Business.Services
         {
             try
             {
-            //use
-            //_options.OllamaUrl+"/api/chat";
-            //model:  _options.OllamaModel 
-            /* request:
-                        {
-                          "model": "gemma4",
-                          "messages": [
-                            {
-                              "role": "user",
-                              "content": "why is the sky blue?"
-                            }
-                          ]
-                        }
-            response:
-                         {
-                          "model": "<string>",
-                          "created_at": "2023-11-07T05:31:56Z",
-                          "message": {
-                            "role": "assistant",
-                            "content": "<string>",
-                            "thinking": "<string>",
-                            "tool_calls": [
-                              {
-                                "function": {
-                                  "name": "<string>",
-                                  "description": "<string>",
-                                  "arguments": {}
-                                }
-                              }
-                            ],
-                            "images": [
-                              "<string>"
-                            ]
-                          },
-                          "done": true,
-                          "done_reason": "<string>",
-                          "total_duration": 123,
-                          "load_duration": 123,
-                          "prompt_eval_count": 123,
-                          "prompt_eval_duration": 123,
-                          "eval_count": 123,
-                          "eval_duration": 123,
-                          "logprobs": [
-                            {
-                              "token": "<string>",
-                              "logprob": 123,
-                              "bytes": [
-                                123
-                              ],
-                              "top_logprobs": [
-                                {
-                                  "token": "<string>",
-                                  "logprob": 123,
-                                  "bytes": [
-                                    123
-                                  ]
-                                }
-                              ]
-                            }
-                          ]
-                        }
-             */
-            var payload = new
-            {
-                model = _options.OllamaModel,
-                stream = false,
-                temperature = temperature,
-                messages = new[]
-        {
-            new
-            {
-                role = "user",
-                content = message
-            }
-        }
-            };
+                // ----- OLLAMA (COMMENTED OUT) -----
+                /*
+                var payload = new
+                {
+                    model = _options.OllamaModel,
+                    stream = false,
+                    temperature = temperature,
+                    messages = new[]
+                    {
+                        new { role = "user", content = message }
+                    }
+                };
 
-            var response = await _httpClient.PostAsJsonAsync(
-                $"{_options.OllamaUrl}/api/chat",
-                payload);
+                var response = await _httpClient.PostAsJsonAsync($"{_options.OllamaUrl}/api/chat", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorBody = await response.Content.ReadAsStringAsync();
+                    _logger.LogError("Ollama chat failed: {Status}. Body: {Body}", response.StatusCode, errorBody);
+                    return string.Empty;
+                }
 
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorBody = await response.Content.ReadAsStringAsync();
-                _logger.LogError(
-                    "Ollama chat call failed: {Status} {Reason}. Body: {Body}",
-                    (int)response.StatusCode, response.ReasonPhrase, errorBody);
-                return string.Empty;
-            }
+                using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+                return json.RootElement.GetProperty("message").GetProperty("content").GetString() ?? "";
+                */
 
-            using var json = await JsonDocument.ParseAsync(
-                await response.Content.ReadAsStreamAsync());
+                // ----- OPENAI -----
+                var options = new ChatCompletionOptions();
+                
+                // Some models (like o1-mini or custom endpoints aliased as gpt-5-mini) 
+                // strictly reject custom temperatures and require the default (1).
+                if (!_options.OpenAIChatModel.Contains("o1") && !_options.OpenAIChatModel.Contains("gpt-5"))
+                {
+                    options.Temperature = temperature;
+                }
 
-            return json.RootElement
-                .GetProperty("message")
-                .GetProperty("content")
-                .GetString() ?? "";
-       //     return "hmm";
+                var completion = await _chatClient.CompleteChatAsync(
+                    new[] { new UserChatMessage(message) },
+                    options);
+
+                return completion.Value.Content[0].Text;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "LocalAIService.SendMessageAsync failed");
+                _logger.LogError(ex, "LocalAIService.SendMessageAsync failed (OpenAI)");
                 return string.Empty;
             }
         }
         public async Task<ReadOnlyMemory<float>> CreateEmbeddingFromText(string message)
         {
-            //use
-            //_options.OllamaUrl+"/api/embed";
-            //embedding model: _options.OllamaEmbeddingModel
+            // ----- OLLAMA (COMMENTED OUT) -----
             /*
-                          request:
-                {
-                    "model": "embeddinggemma",
-                    "input": "Why is the sky blue?"
-                }
-             response:
-            {
-                "model": "embeddinggemma",
-                "embeddings": [
-                    [
-                        0.010071029,
-                        -0.0017594862,
-                        0.05007221,
-                    ]
-                ],
-                "total_duration": 14143917,
-                "load_duration": 1019500,
-                "prompt_eval_count": 8
-            }
-             */
-            var payload = new
-            {
-                model = _options.OllamaEmbeddingModel,
-                input = message
-            };
-
-            var response = await _httpClient.PostAsJsonAsync(
-                $"{_options.OllamaUrl}/api/embed",
-                payload);
-
+            var payload = new { model = _options.OllamaEmbeddingModel, input = message };
+            var response = await _httpClient.PostAsJsonAsync($"{_options.OllamaUrl}/api/embed", payload);
             response.EnsureSuccessStatusCode();
 
-            using var json = await JsonDocument.ParseAsync(
-                await response.Content.ReadAsStreamAsync());
+            using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
+            var embeddingArray = json.RootElement.GetProperty("embeddings")[0];
 
-            var embeddingArray = json.RootElement
-                .GetProperty("embeddings")[0];
-
-            float[] embedding = embeddingArray
-                .EnumerateArray()
-                .Select(x => x.GetSingle())
-                .ToArray();
-
+            float[] embedding = embeddingArray.EnumerateArray().Select(x => x.GetSingle()).ToArray();
             return embedding;
+            */
+
+            // ----- OPENAI -----
+            var result = await _embeddingClient.GenerateEmbeddingAsync(message);
+            return result.Value.ToFloats();
         }
 
         public async Task<List<float[]>> CreateEmbeddingsFromTexts(List<string> messages)
         {
             var result = new List<float[]>();
-            int batchSize = 20; // safe batch size for Ollama to avoid 400 Bad Request
 
+            // ----- OLLAMA (COMMENTED OUT) -----
+            /*
+            int batchSize = 20; 
             for (int i = 0; i < messages.Count; i += batchSize)
             {
                 var batch = messages.Skip(i).Take(batchSize).ToList();
+                var payload = new { model = _options.OllamaEmbeddingModel, input = batch };
 
-                var payload = new
-                {
-                    model = _options.OllamaEmbeddingModel,
-                    input = batch
-                };
+                var response = await _httpClient.PostAsJsonAsync($"{_options.OllamaUrl}/api/embed", payload);
+                response.EnsureSuccessStatusCode();
 
-                var response = await _httpClient.PostAsJsonAsync(
-                    $"{_options.OllamaUrl}/api/embed",
-                    payload);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    var error = await response.Content.ReadAsStringAsync();
-                    throw new InvalidOperationException($"Ollama embedding failed at batch {i/batchSize}: {response.StatusCode} - {error}");
-                }
-
-                using var json = await JsonDocument.ParseAsync(
-                    await response.Content.ReadAsStreamAsync());
-
+                using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
                 var embeddingsArray = json.RootElement.GetProperty("embeddings");
 
                 foreach (var embeddingElement in embeddingsArray.EnumerateArray())
                 {
                     result.Add(embeddingElement.EnumerateArray().Select(x => x.GetSingle()).ToArray());
+                }
+            }
+            */
+
+            // ----- OPENAI -----
+            // OpenAI handles reasonably large batches up to thousands of texts natively.
+            // Using a conservative batch size of 100 just to be safe.
+            int batchSize = 100;
+            for (int i = 0; i < messages.Count; i += batchSize)
+            {
+                var batch = messages.Skip(i).Take(batchSize).ToList();
+                var response = await _embeddingClient.GenerateEmbeddingsAsync(batch);
+                
+                foreach (var embedding in response.Value)
+                {
+                    result.Add(embedding.ToFloats().ToArray());
                 }
             }
 

@@ -49,11 +49,14 @@ public sealed class QuizAiService : IQuizAiService
 
         var sortedChunks = payloads
             .OrderBy(p => int.TryParse(p.GetValueOrDefault("chunkIndex", "0"), out var idx) ? idx : 0)
-            .Select(p => p.GetValueOrDefault("text", ""))
+            .Select(p => FixMojibake(p.GetValueOrDefault("text", "")))
             .Where(t => !string.IsNullOrWhiteSpace(t))
             .ToList();
 
         var context = string.Join("\n\n", sortedChunks);
+
+        _logger.LogInformation("Quiz context length: {Length} chars from {ChunkCount} chunks",
+            context.Length, sortedChunks.Count);
 
         // llama3.2:1b can't reliably fill 10 question x 4 answer strings in
         // one shot. Chunk into small batches and retry underfilled batches.
@@ -148,6 +151,31 @@ public sealed class QuizAiService : IQuizAiService
         return result;
     }
 
+    // Blacklist of placeholder phrases that the LLM tends to copy verbatim.
+    private static readonly HashSet<string> PlaceholderBlacklist = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "write the correct answer here",
+        "write a wrong answer here",
+        "write another wrong answer here",
+        "write a third wrong answer here",
+        "write question 1 based on the text here",
+        "write a short topic title here",
+        "đáp án chính xác",
+        "đáp án sai thứ nhất",
+        "đáp án sai thứ hai",
+        "đáp án sai thứ ba",
+        "một câu hỏi hoàn chỉnh dựa trên nội dung là gì",
+        "chủ đề bài kiểm tra",
+        "vui lòng chọn đáp án chính xác",
+        "sau đây là một số câu trả lời",
+    };
+
+    private static bool IsPlaceholderText(string text)
+    {
+        var cleaned = text.Trim().TrimEnd('?', '.', '!').Trim();
+        return PlaceholderBlacklist.Contains(cleaned);
+    }
+
     private static string BuildBatchPrompt(
         int count,
         string context,
@@ -160,42 +188,23 @@ public sealed class QuizAiService : IQuizAiService
               string.Join("\n", alreadyGenerated.Select(q => $"- {q.QuestionTitle}"));
 
         return $$"""
-Read the following TEXT. Your task is to extract EXACTLY {{count}} different facts from this TEXT and convert them into a multiple-choice quiz.
+You are a teacher. Read the TEXT below and create a quiz with EXACTLY {{count}} multiple-choice questions.
+Each question must END with a question mark (?).
+Each question must have EXACTLY 4 answer options.
+Only 1 answer is correct per question.
+Write in the SAME language as the TEXT.
 
 TEXT:
 {{context}}{{avoidBlock}}
 
-Generate the quiz as a JSON object.
-Do not write anything else. No prose. No markdown. Just the JSON object.
+Output ONLY valid JSON, nothing else. Use this exact structure:
+{"quizTitle":"...","questions":[{"questionTitle":"What is ...?","questionType":"SingleChoice","position":{{startingPosition}},"answers":[{"selectedOption":"correct answer text","isCorrect":true},{"selectedOption":"wrong 1","isCorrect":false},{"selectedOption":"wrong 2","isCorrect":false},{"selectedOption":"wrong 3","isCorrect":false}]}]}
 
-FORMAT:
-{
-  "quizTitle": "Write a short topic title here",
-  "questions": [
-    {
-      "questionTitle": "Write question 1 based on the TEXT here?",
-      "questionType": "SingleChoice",
-      "position": {{startingPosition}},
-      "answers": [
-        { "selectedOption": "Write the correct answer here", "isCorrect": true },
-        { "selectedOption": "Write a wrong answer here", "isCorrect": false },
-        { "selectedOption": "Write another wrong answer here", "isCorrect": false },
-        { "selectedOption": "Write a third wrong answer here", "isCorrect": false }
-      ]
-    }
-  ]
-}
-
-RULES:
-- Output EXACTLY {{count}} questions in the array.
-- Each question MUST have EXACTLY 4 answers.
-- EXACTLY ONE answer per question must have isCorrect = true; the other three must be false.
-- "position" must start at {{startingPosition}} and increment by 1.
-- "questionType" must be "SingleChoice" for every question.
-- Every "selectedOption" string must be NON-EMPTY and DISTINCT within the same question.
-- Every fact must come from the TEXT above. Do not invent information.
-- Each question must cover a DIFFERENT topic from the others.
-- Output ONLY the JSON object. Start with '{' and end with '}'.
+IMPORTANT:
+- Every questionTitle MUST end with ?
+- Every answer must be a real fact or plausible statement from the TEXT
+- Do NOT copy placeholder words like "correct answer text" or "wrong 1"
+- position starts at {{startingPosition}} and increments by 1
 """;
     }
 
@@ -440,21 +449,23 @@ RULES:
                 answers.Add(new AiGeneratedAnswerDto(opt, isCorrect));
             }
 
-            // The 1B model often emits 4 options but forgets to set isCorrect,
-            // or marks multiple. We accept the question as long as we can
-            // produce a SingleChoice answer. The "correct" flag is best-effort.
-            if (answers.Count < 2) continue;
+            // Filter out placeholder answers the model copied from the prompt
+            answers.RemoveAll(a => IsPlaceholderText(a.SelectedOption));
+
+            // Require exactly 4 answers for quality
+            if (answers.Count < 4) continue;
+
+            // Keep only the first 4 answers if model produced more
+            if (answers.Count > 4)
+                answers = answers.Take(4).ToList();
 
             var correctCount = answers.Count(x => x.IsCorrect);
             if (correctCount == 0)
             {
-                // No answer marked correct: pick the first option. The user can
-                // edit the answer in the UI.
                 answers[0] = answers[0] with { IsCorrect = true };
             }
             else if (correctCount > 1)
             {
-                // Multiple marked correct: keep the first as correct, demote rest.
                 var firstKept = false;
                 for (var i = 0; i < answers.Count; i++)
                 {
@@ -508,11 +519,16 @@ RULES:
     {
         var title = CleanText(raw.QuestionTitle);
         if (string.IsNullOrWhiteSpace(title)) return null;
+        if (title.Length < 10) return null;
 
-        // Just accept any non-trivial title. The model may phrase questions in
-        // many ways (can X?, why does X?, list..., describe...) and the
-        // frontend already shows whatever title we return.
-        if (title.Length < 3) return null;
+        // Reject placeholder titles the model copied from the prompt
+        if (IsPlaceholderText(title)) return null;
+
+        // Auto-append ? if missing — small models often forget it
+        if (!title.TrimEnd().EndsWith("?"))
+        {
+            title = title.TrimEnd('.', '!', ' ') + "?";
+        }
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var answers = new List<AiGeneratedAnswerDto>();
@@ -520,10 +536,15 @@ RULES:
         {
             var opt = CleanText(a.SelectedOption);
             if (string.IsNullOrWhiteSpace(opt)) continue;
+            if (IsPlaceholderText(opt)) continue; // Skip placeholder answers
             if (!seen.Add(opt)) continue;
             answers.Add(new AiGeneratedAnswerDto(opt, a.IsCorrect));
         }
-        if (answers.Count < 2) return null;
+
+        // Accept 3+ answers (small models sometimes only produce 3)
+        if (answers.Count < 3) return null;
+        if (answers.Count > 4)
+            answers = answers.Take(4).ToList();
 
         // SingleChoice invariant: exactly one correct answer.
         var correctCount = answers.Count(x => x.IsCorrect);
@@ -547,6 +568,39 @@ RULES:
             QuestionType.SingleChoice,
             expectedPosition,
             answers);
+    }
+
+    /// <summary>
+    /// Fixes mojibake (UTF-8 bytes misread as Latin-1) commonly found in PDF-extracted Vietnamese text.
+    /// </summary>
+    private static string FixMojibake(string input)
+    {
+        if (string.IsNullOrEmpty(input)) return input;
+
+        // Detect mojibake: if the text contains common mojibake patterns for Vietnamese diacritics
+        // (e.g., "Ã " for "à", "Ä" for "Đ", "áº" sequences), try to fix it.
+        if (!input.Contains("Ã") && !input.Contains("Ä") && !input.Contains("áº"))
+            return input;
+
+        try
+        {
+            // The text was UTF-8 but was decoded as Latin-1 (ISO 8859-1).
+            // To fix: encode back to Latin-1 bytes, then decode as UTF-8.
+            var latin1 = Encoding.GetEncoding("ISO-8859-1");
+            var bytes = latin1.GetBytes(input);
+            var fixed_ = Encoding.UTF8.GetString(bytes);
+
+            // Sanity check: the fixed version should be shorter (multi-byte → single char)
+            // and should not contain replacement characters.
+            if (fixed_.Length < input.Length && !fixed_.Contains('�'))
+                return fixed_;
+        }
+        catch
+        {
+            // If encoding conversion fails, return original
+        }
+
+        return input;
     }
 
     private static string CleanText(string s)
