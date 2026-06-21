@@ -1,6 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using AIStudyHub.Business.Interfaces;
+using AIStudyHub.Data.Entities;
+using AIStudyHub.Data.Enums;
+using AIStudyHub.Data.Interfaces;
 
 namespace AIStudyHub.Business.Services;
 
@@ -51,20 +55,54 @@ public class DocumentBackgroundProcessor : BackgroundService
             request.DocumentId, request.UserId);
 
         using var scope = _scopeFactory.CreateScope();
+        var services = scope.ServiceProvider;
         
-        var scopeLogger = scope.ServiceProvider.GetRequiredService<ILogger<DocumentBackgroundProcessor>>();
-        scopeLogger.LogInformation("Document {DocumentId} processing delegated to KernelMemory", request.DocumentId);
-        
-        // TODO: Wire up to KernelMemoryService in Task 3.1
-        // var kernelMemory = scope.ServiceProvider.GetRequiredService<IKernelMemory>();
-        // await kernelMemory.ImportDocumentAsync(...);
+        var kernelMemoryService = services.GetRequiredService<IKernelMemoryService>();
+        var unitOfWork = services.GetRequiredService<IUnitOfWork>();
+        var logger = services.GetRequiredService<ILogger<DocumentBackgroundProcessor>>();
 
-        _logger.LogInformation("Document {DocumentId} processed successfully", request.DocumentId);
+        try
+        {
+            // Import document to Kernel Memory (handles L1-L2: chunking, embedding, indexing)
+            await kernelMemoryService.ImportDocumentAsync(
+                request.FilePath,
+                request.DocumentId,
+                request.UserId,
+                request.FileName,
+                ct);
+
+            // Update document status in database
+            var document = await unitOfWork.Documents.GetByIdAsync(request.DocumentId, ct);
+            if (document != null)
+            {
+                document.Status = DocumentStatus.Published;
+                document.UpdatedAt = DateTime.UtcNow;
+                unitOfWork.Documents.Update(document);
+                await unitOfWork.SaveChangesAsync(ct);
+            }
+
+            logger.LogInformation("Document {DocumentId} processed and indexed successfully", request.DocumentId);
+        }
+        catch (Exception ex)
+        {
+            // Mark document as failed
+            var document = await unitOfWork.Documents.GetByIdAsync(request.DocumentId, ct);
+            if (document != null)
+            {
+                document.Status = DocumentStatus.Failed;
+                document.UpdatedAt = DateTime.UtcNow;
+                unitOfWork.Documents.Update(document);
+                await unitOfWork.SaveChangesAsync(ct);
+            }
+            
+            logger.LogError(ex, "Failed to process document {DocumentId}", request.DocumentId);
+            throw;
+        }
     }
 
     private Task HandleFailureAsync(DocumentProcessRequest request, Exception ex)
     {
-        _logger.LogWarning("Document {DocumentId} failed: {Error}",
+        _logger.LogWarning("Document {DocumentId} moved to dead-letter: {Error}",
             request.DocumentId, ex.Message);
         return Task.CompletedTask;
     }

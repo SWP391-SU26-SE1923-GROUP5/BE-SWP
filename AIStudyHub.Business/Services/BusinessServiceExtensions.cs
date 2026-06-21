@@ -2,6 +2,8 @@ using AIStudyHub.Business.Options;
 using AIStudyHub.Business.Behaviors;
 using AIStudyHub.Business.Configuration;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Guardrails;
+using AIStudyHub.Business.Search;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.KernelMemory;
@@ -67,6 +69,21 @@ public static class BusinessServiceExtensions
                 .Build<MemoryServerless>();
         });
         services.AddScoped<IKernelMemoryService, KernelMemoryService>();
+
+        // L3: Search Services
+        services.Configure<RetrievalOptions>(configuration.GetSection("Retrieval"));
+        services.AddScoped<IHybridSearchService, HybridSearchService>();
+        services.AddScoped<IRerankingService, RerankingService>();
+
+        // L4: SK Orchestrator
+        services.Configure<SemanticKernelOptions>(configuration.GetSection("SemanticKernel"));
+        services.AddScoped<ISemanticKernelOrchestrator, SemanticKernelOrchestrator>();
+
+        // L5: Guardrails
+        services.Configure<GuardrailsOptions>(configuration.GetSection("Guardrails"));
+        services.AddScoped<IFaithfulnessFilter, FaithfulnessFilter>();
+        services.AddScoped<IGroundingVerifier, GroundingVerifier>();
+        services.AddScoped<IConfidenceScorer, ConfidenceScorer>();
 
         return services;
     }

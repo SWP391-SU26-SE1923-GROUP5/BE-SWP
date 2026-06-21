@@ -3,6 +3,7 @@ using AIStudyHub.API.Swagger;
 using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
+using AIStudyHub.Business.Services;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
@@ -29,7 +30,7 @@ public sealed class DocumentUploadController : ControllerBase
     private readonly ILogger<DocumentUploadController> _logger;
     private readonly DocumentStorageOptions _storageOptions;
 
-    private readonly IServiceScopeFactory _serviceScopeFactory;
+    private readonly IDocumentProcessingQueue _processingQueue;
 
     public DocumentUploadController(
         IUnitOfWork unitOfWork,
@@ -39,7 +40,7 @@ public sealed class DocumentUploadController : ControllerBase
         IFileStorageService fileStorage,
         IOptions<RagOptions> options,
         ILogger<DocumentUploadController> logger,
-        IServiceScopeFactory serviceScopeFactory,
+        IDocumentProcessingQueue processingQueue,
         IOptions<DocumentStorageOptions> storageOptions)
     {
         _unitOfWork = unitOfWork;
@@ -49,7 +50,7 @@ public sealed class DocumentUploadController : ControllerBase
         _fileStorage = fileStorage;
         _options = options.Value;
         _logger = logger;
-        _serviceScopeFactory = serviceScopeFactory;
+        _processingQueue = processingQueue;
         _storageOptions = storageOptions.Value;
     }
 
@@ -141,9 +142,14 @@ public sealed class DocumentUploadController : ControllerBase
 
             _logger.LogInformation("Document {DocumentId} accepted for processing by user {UserId}", document.Id, userId);
 
-            // Run heavy extraction and embedding in background
-            _ = Task.Run(() => RunBackgroundProcessingAsync(
-                _serviceScopeFactory, document, fileContent, extension, userId));
+            // Queue document for background processing using Channel
+            var processRequest = new DocumentProcessRequest(
+                document.Id,
+                userId,
+                filePath,
+                request.File.FileName,
+                request.File.ContentType);
+            await _processingQueue.EnqueueAsync(processRequest);
 
             return Accepted(new UploadDocumentResponseDto(
                 document.Id,
@@ -306,8 +312,14 @@ public sealed class DocumentUploadController : ControllerBase
         _unitOfWork.Documents.Update(document);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        _ = Task.Run(() => RunBackgroundProcessingAsync(
-            _serviceScopeFactory, document, fileContent, extension, userId));
+        // Queue for background processing using Channel
+        var processRequest = new DocumentProcessRequest(
+            document.Id,
+            userId,
+            fullPath,
+            document.FileName ?? "unknown",
+            document.FileType ?? "application/octet-stream");
+        await _processingQueue.EnqueueAsync(processRequest);
 
         return Accepted(new UploadDocumentResponseDto(id, "processing", 0,
             "Re-processing in progress"));
