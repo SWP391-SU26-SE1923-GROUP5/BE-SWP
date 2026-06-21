@@ -21,7 +21,8 @@ public sealed class QdrantVectorService : IVectorStoreService
         _options = options.Value;
         _logger = logger;
 
-        var host = _options.Url.Replace("http://", "").Replace("https://", "");
+        var uri = new Uri(_options.Url);
+        var host = uri.Host;
         _client = new QdrantClient(host, (int)_options.GrpcPort);
     }
 
