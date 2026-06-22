@@ -19,9 +19,9 @@ public sealed class SubjectController : ControllerBase
 
     /// <summary>Lấy danh sách tất cả môn học.</summary>
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<SubjectResponseDto>>> GetAll(CancellationToken cancellationToken)
+    public async Task<ActionResult<AIStudyHub.Business.DTOs.Common.PagedResultDto<SubjectResponseDto>>> GetAll([FromQuery] AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken)
     {
-        var result = await _service.GetAllAsync(cancellationToken);
+        var result = await _service.GetAllPagedAsync(@params, cancellationToken);
         return Ok(result);
     }
 

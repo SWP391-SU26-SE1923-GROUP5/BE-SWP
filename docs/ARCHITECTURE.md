@@ -80,7 +80,51 @@ AIStudyHub.API
 └── AIStudyHub.API.http
 
 AIStudyHub.Business
+├── AI
+│   ├── Chat
+│   ├── Generators
+│   ├── Guardrails
+│   ├── LLM
+│   ├── Orchestration
+│   ├── Search
+│   └── VectorStore
+├── Behaviors
+├── Configuration
 ├── DTOs
+│   ├── AIChat
+│   ├── Answers
+│   ├── Authentication
+│   ├── Common
+│   ├── Documents
+│   ├── Flashcards
+│   ├── Notifications
+│   ├── Payments
+│   ├── Questions
+│   ├── QuizSubmissions
+│   ├── Quizzes
+│   ├── Rag
+│   ├── Reports
+│   ├── Subjects
+│   ├── TierMemberships
+│   ├── Users
+│   └── Votes
+├── Entities
+├── Enums
+├── Features
+├── Interfaces
+│   ├── AI
+│   │   ├── Chat
+│   │   ├── Generators
+│   │   ├── Guardrails
+│   │   ├── LLM
+│   │   ├── Orchestration
+│   │   ├── Search
+│   │   └── VectorStore
+│   └── Services
+├── Mappings
+├── Options
+├── Services
+├── Validators
 │   ├── AIChat
 │   ├── Answers
 │   ├── Authentication
@@ -92,28 +136,10 @@ AIStudyHub.Business
 │   ├── QuizSubmissions
 │   ├── Quizzes
 │   ├── Reports
+│   ├── Subjects
 │   ├── Users
 │   └── Votes
-├── Entities
-├── Enums
-├── Interfaces
-│   └── Services
-├── Mappings
-├── Services
-└── Validators
-    ├── AIChat
-    ├── Answers
-    ├── Authentication
-    ├── Documents
-    ├── Flashcards
-    ├── Notifications
-    ├── Payments
-    ├── Questions
-    ├── QuizSubmissions
-    ├── Quizzes
-    ├── Reports
-    ├── Users
-    └── Votes
+└── Workers
 
 AIStudyHub.Data
 ├── Configurations
@@ -295,24 +321,29 @@ Client -> AuthController -> Identity UserManager/SignInManager -> DbContext
 
 # AI Features Flow
 
-Current AI architecture uses a **Local LLM stack** (Ollama) with `nomic-embed-text` for generating vector embeddings locally, and Pinecone for vector storage.
+Current AI architecture uses a **Local LLM stack** (Ollama) with `nomic-embed-text` for generating vector embeddings locally, and Qdrant for vector storage.
 
 ```mermaid
 flowchart LR
     Upload[Document Upload (multipart/form-data)]
     Extract[Text Extraction & Chunking (Local)]
     Vector[Vectorization via Ollama]
-    Store[Vector Storage via Pinecone]
+    Store[Vector Storage via Qdrant]
 
     Upload --> Extract
     Extract --> Vector
     Vector --> Store
 ```
 
-Future integrations will expand to:
+AI Generators (Quiz and Flashcard):
 
-- Chat interactions leveraging `RagChatService`
-- Automated Flashcard and Quiz generation based on stored vectors
+- Quizzes and Flashcards are generated automatically by the backend orchestrator.
+- Once generated, the backend persists them directly to the SQL Server database.
+- The generated response returned to the frontend contains the fully persisted entities (including their IDs) so the frontend does not need to send a separate API request to save them.
+
+Other Features:
+
+- Chat interactions leveraging `RagPipelineService` and Semantic Kernel orchestrator.
 
 All AI interactions ensure that sensitive prompts and data chunks are managed within the backend.
 

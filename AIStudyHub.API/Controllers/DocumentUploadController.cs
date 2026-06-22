@@ -1,8 +1,12 @@
+using AIStudyHub.Business.AI.VectorStore;
+using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.API.DTOs;
 using AIStudyHub.API.Swagger;
+using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
+using AIStudyHub.Business.Services;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
@@ -27,8 +31,9 @@ public sealed class DocumentUploadController : ControllerBase
     private readonly IFileStorageService _fileStorage;
     private readonly RagOptions _options;
     private readonly ILogger<DocumentUploadController> _logger;
+    private readonly DocumentStorageOptions _storageOptions;
 
-    private readonly IServiceScopeFactory _serviceScopeFactory;
+    private readonly IDocumentProcessingQueue _processingQueue;
 
     public DocumentUploadController(
         IUnitOfWork unitOfWork,
@@ -38,7 +43,8 @@ public sealed class DocumentUploadController : ControllerBase
         IFileStorageService fileStorage,
         IOptions<RagOptions> options,
         ILogger<DocumentUploadController> logger,
-        IServiceScopeFactory serviceScopeFactory)
+        IDocumentProcessingQueue processingQueue,
+        IOptions<DocumentStorageOptions> storageOptions)
     {
         _unitOfWork = unitOfWork;
         _documentProcessing = documentProcessing;
@@ -47,7 +53,8 @@ public sealed class DocumentUploadController : ControllerBase
         _fileStorage = fileStorage;
         _options = options.Value;
         _logger = logger;
-        _serviceScopeFactory = serviceScopeFactory;
+        _processingQueue = processingQueue;
+        _storageOptions = storageOptions.Value;
     }
 
     // POST /api/DocumentUpload/upload (Base64) đã bị xóa - dùng POST /api/DocumentUpload/upload/file (multipart/form-data) thay thế
@@ -138,78 +145,15 @@ public sealed class DocumentUploadController : ControllerBase
 
             _logger.LogInformation("Document {DocumentId} accepted for processing by user {UserId}", document.Id, userId);
 
-            // Run heavy extraction and embedding in background
-            _ = Task.Run(async () =>
-            {
-                using var scope = _serviceScopeFactory.CreateScope();
-                var scopedUnitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-                var scopedDocProcessing = scope.ServiceProvider.GetRequiredService<IDocumentProcessingService>();
-                var scopedEmbedding = scope.ServiceProvider.GetRequiredService<IEmbeddingService>();
-                var scopedVectorStore = scope.ServiceProvider.GetRequiredService<IVectorStoreService>();
-                var scopedLogger = scope.ServiceProvider.GetRequiredService<ILogger<DocumentUploadController>>();
-                var scopedOptions = scope.ServiceProvider.GetRequiredService<IOptions<RagOptions>>().Value;
-
-                try
-                {
-                    var text = await scopedDocProcessing.ExtractTextAsync(fileContent, extension);
-                    if (string.IsNullOrWhiteSpace(text)) throw new Exception("Could not extract text from the document");
-
-                    var chunks = await scopedDocProcessing.ChunkTextAsync(text, scopedOptions.ChunkSize, scopedOptions.ChunkOverlap);
-                    if (chunks.Count == 0) throw new Exception("No content chunks could be created");
-
-                    var embeddings = await scopedEmbedding.GenerateEmbeddingsAsync(chunks);
-
-                    for (var i = 0; i < chunks.Count; i++)
-                    {
-                        var chunk = chunks[i];
-                        var embedding = embeddings[i];
-                        var chunkEntity = new DocumentChunk
-                        {
-                            Id = Guid.NewGuid(),
-                            DocumentId = document.Id,
-                            ChunkJson = chunk,
-                            EmbeddingJson = System.Text.Json.JsonSerializer.Serialize(embedding),
-                            Vector = ConvertToByteArray(embedding),
-                            OrderIndex = i,
-                            CreatedAt = DateTime.UtcNow,
-                            UpdatedAt = DateTime.UtcNow
-                        };
-
-                        await scopedUnitOfWork.DocumentChunks.AddAsync(chunkEntity);
-
-                        await scopedVectorStore.UpsertVectorAsync(
-                            chunkEntity.Id.ToString(),
-                            embedding,
-                            new Dictionary<string, string>
-                            {
-                                ["documentId"] = document.Id.ToString(),
-                                ["userId"] = userId.ToString(),
-                                ["chunkIndex"] = i.ToString(),
-                                ["documentTitle"] = document.Title
-                            });
-                    }
-
-                    var docToUpdate = await scopedUnitOfWork.Documents.GetByIdAsync(document.Id);
-                    if (docToUpdate != null)
-                    {
-                        docToUpdate.Status = DocumentStatus.Published;
-                        scopedUnitOfWork.Documents.Update(docToUpdate);
-                    }
-                    await scopedUnitOfWork.SaveChangesAsync(CancellationToken.None);
-                    scopedLogger.LogInformation("Background processing completed for Document {DocumentId} with {ChunkCount} chunks", document.Id, chunks.Count);
-                }
-                catch (Exception ex)
-                {
-                    scopedLogger.LogError(ex, "Background processing failed for Document {DocumentId}", document.Id);
-                    var docToUpdate = await scopedUnitOfWork.Documents.GetByIdAsync(document.Id);
-                    if (docToUpdate != null)
-                    {
-                        docToUpdate.Status = DocumentStatus.Failed;
-                        scopedUnitOfWork.Documents.Update(docToUpdate);
-                        await scopedUnitOfWork.SaveChangesAsync(CancellationToken.None);
-                    }
-                }
-            });
+            // Queue document for background processing using Channel
+            var fullPath = Path.GetFullPath(Path.Combine(_storageOptions.BasePath ?? string.Empty, filePath));
+            var processRequest = new DocumentProcessRequest(
+                document.Id,
+                userId,
+                fullPath,
+                request.File.FileName,
+                request.File.ContentType);
+            await _processingQueue.EnqueueAsync(processRequest);
 
             return Accepted(new UploadDocumentResponseDto(
                 document.Id,
@@ -254,19 +198,23 @@ public sealed class DocumentUploadController : ControllerBase
         if (document == null)
             return NotFound("Document not found");
 
-        var chunks = await _unitOfWork.DocumentChunks
-            .Query()
-            .Where(c => c.DocumentId == id)
-            .OrderBy(c => c.CreatedAt)
-            .ToListAsync(cancellationToken);
+        // Temporary workaround: since SQL DocumentChunks is deleted, fetch from Vector Store using empty query 
+        // to retrieve up to 1000 chunks for this document.
+        var dummyDense = new float[1536]; // Match Nomic dimensions
+        var dummySparse = (Indices: new List<uint>(), Values: new List<float>());
+        var filter = new Dictionary<string, string> { { "documentId", id.ToString() } };
+        
+        var qdrantResults = await _vectorStoreService.HybridSearchAsync(dummyDense, dummySparse, 1000, filter);
 
-        return Ok(chunks.Select(c => new ChunkDto(
-            c.Id,
-            c.DocumentId,
-            c.ChunkJson ?? "",
-            c.OrderIndex,
+        var chunks = qdrantResults.Select((r, idx) => new ChunkDto(
+            Guid.TryParse(r.Id, out var g) ? g : Guid.NewGuid(),
+            id,
+            r.Metadata.GetValueOrDefault("text", ""),
+            idx,
             null
-        )).ToList());
+        )).ToList();
+
+        return Ok(chunks);
     }
 
     [HttpDelete("{id:guid}")]
@@ -282,20 +230,6 @@ public sealed class DocumentUploadController : ControllerBase
 
         try
         {
-            var chunks = await _unitOfWork.DocumentChunks
-                .Query()
-                .Where(c => c.DocumentId == id)
-                .ToListAsync(cancellationToken);
-
-            foreach (var chunk in chunks)
-            {
-                if (!string.IsNullOrEmpty(chunk.VectorId))
-                {
-                    await _vectorStoreService.DeleteVectorAsync(chunk.VectorId);
-                }
-                _unitOfWork.DocumentChunks.Remove(chunk);
-            }
-
             await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
 
             _unitOfWork.Documents.Remove(document);
@@ -329,90 +263,52 @@ public sealed class DocumentUploadController : ControllerBase
         }
     }
 
-    [HttpGet("{id:guid}/chunks/search")]
-    [SwaggerOperation(OperationId = "SearchDocumentChunks")]
-    public async Task<ActionResult<List<ChunkDto>>> SearchDocumentChunks(
-        Guid id,
-        [FromQuery] string q,
-        [FromQuery] int top = 5,
-        CancellationToken cancellationToken = default)
+    [HttpPost("{id:guid}/reprocess")]
+    [ProducesResponseType(typeof(UploadDocumentResponseDto), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<UploadDocumentResponseDto>> Reprocess(
+        Guid id, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(q))
-            return BadRequest("Query parameter 'q' is required");
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
 
-        var document = await _unitOfWork.Documents.GetByIdAsync(id);
-        if (document == null)
-            return NotFound("Document not found");
+        var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
+        if (document == null) return NotFound("Document not found");
+        if (document.UserId != userId) return Forbid();
 
-        var chunks = await _unitOfWork.DocumentChunks
-            .Query()
-            .Where(c => c.DocumentId == id)
-            .AsNoTracking()
-            .ToListAsync(cancellationToken);
+        if (string.IsNullOrEmpty(document.FileLink))
+            return BadRequest("Document has no associated file on disk to re-process");
 
-        if (chunks.Count == 0)
-            return Ok(Enumerable.Empty<ChunkDto>());
+        var relativePath = document.FileLink.Replace("/uploads/", "");
+        var fullPath = Path.Combine(_storageOptions.BasePath ?? string.Empty, relativePath);
+        if (!System.IO.File.Exists(fullPath))
+            return BadRequest("Source file is missing on disk; cannot re-process");
 
-        var queryEmbedding = await _embeddingService.GenerateEmbeddingAsync(q);
+        byte[] fileContent = await System.IO.File.ReadAllBytesAsync(fullPath, cancellationToken);
+        var extension = (document.FileExtension ?? Path.GetExtension(document.FileName ?? "")).ToLowerInvariant();
 
-        var scored = chunks
-            .Select(c =>
-            {
-                var embedding = DeserializeEmbedding(c.EmbeddingJson);
-                var score = embedding != null ? CosineSimilarity(queryEmbedding, embedding) : 0f;
-                return (Chunk: c, Score: score);
-            })
-            .OrderByDescending(x => x.Score)
-            .Take(top)
-            .ToList();
+        await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
 
-        var result = scored
-            .Select(x => new ChunkDto(
-                x.Chunk.Id,
-                x.Chunk.DocumentId,
-                x.Chunk.ChunkJson ?? "",
-                x.Chunk.OrderIndex,
-                null))
-            .ToList();
+        document.Status = DocumentStatus.Processing;
+        document.UpdatedAt = DateTime.UtcNow;
+        _unitOfWork.Documents.Update(document);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return Ok(result);
+        // Queue for background processing using Channel
+        var processRequest = new DocumentProcessRequest(
+            document.Id,
+            userId,
+            fullPath,
+            document.FileName ?? "unknown",
+            document.FileType ?? "application/octet-stream");
+        await _processingQueue.EnqueueAsync(processRequest);
+
+        return Accepted(new UploadDocumentResponseDto(id, "processing", 0,
+            "Re-processing in progress"));
     }
 
-    private static float[]? DeserializeEmbedding(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-            return null;
 
-        try
-        {
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
-            return doc.RootElement
-                .EnumerateArray()
-                .Select(e => e.GetSingle())
-                .ToArray();
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static float CosineSimilarity(float[] a, float[] b)
-    {
-        if (a.Length != b.Length || a.Length == 0)
-            return 0;
-
-        double dot = 0, normA = 0, normB = 0;
-        for (var i = 0; i < a.Length; i++)
-        {
-            dot += a[i] * b[i];
-            normA += a[i] * a[i];
-            normB += b[i] * b[i];
-        }
-
-        var denominator = Math.Sqrt(normA) * Math.Sqrt(normB);
-        return denominator == 0 ? 0 : (float)(dot / denominator);
-    }
 
     private Guid GetCurrentUserId()
     {
@@ -435,12 +331,5 @@ public sealed class DocumentUploadController : ControllerBase
             ".md" => "text/markdown",
             _ => "application/octet-stream"
         };
-    }
-
-    private static byte[] ConvertToByteArray(float[] floats)
-    {
-        var bytes = new byte[floats.Length * sizeof(float)];
-        Buffer.BlockCopy(floats, 0, bytes, 0, bytes.Length);
-        return bytes;
     }
 }

@@ -1,4 +1,4 @@
-﻿using AIStudyHub.Data.Enums;
+using AIStudyHub.Data.Enums;
 
 namespace AIStudyHub.Data.Entities;
 
@@ -22,6 +22,5 @@ public sealed class Document : BaseEntity
     public ICollection<Report> Reports { get; set; } = new List<Report>();
     public ICollection<Flashcard> Flashcards { get; set; } = new List<Flashcard>();
     public ICollection<Quiz> Quizzes { get; set; } = new List<Quiz>();
-    public ICollection<DocumentChunk> DocumentChunks { get; set; } = new List<DocumentChunk>();
     public ICollection<ChatSession> ChatSessions { get; set; } = new List<ChatSession>();
 }

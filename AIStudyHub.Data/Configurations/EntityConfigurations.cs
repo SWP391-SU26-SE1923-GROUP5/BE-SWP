@@ -99,24 +99,6 @@ internal sealed class DocumentConfiguration : IEntityTypeConfiguration<Document>
     }
 }
 
-internal sealed class DocumentChunkConfiguration : IEntityTypeConfiguration<DocumentChunk>
-{
-    public void Configure(EntityTypeBuilder<DocumentChunk> builder)
-    {
-        builder.ToTable("Document_Chunk");
-        builder.HasKey(x => x.Id);
-        builder.Property(x => x.Id).HasColumnName("document_chunk_id");
-        builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
-        builder.Property(x => x.ChunkJson).HasColumnName("chunk_json");
-        builder.Property(x => x.EmbeddingJson).HasColumnName("embedding_json");
-        builder.Property(x => x.VectorId).HasColumnName("vector_id").HasMaxLength(500);
-        builder.Property(x => x.OrderIndex).HasColumnName("order_index");
-        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
-        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
-        builder.HasOne(x => x.Document).WithMany(x => x.DocumentChunks).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
-    }
-}
-
 internal sealed class VoteConfiguration : IEntityTypeConfiguration<Vote>
 {
     public void Configure(EntityTypeBuilder<Vote> builder)
@@ -280,12 +262,12 @@ internal sealed class ChatSessionConfiguration : IEntityTypeConfiguration<ChatSe
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).HasColumnName("session_id");
         builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
-        builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
+        builder.Property(x => x.DocumentId).HasColumnName("doc_id");
         builder.Property(x => x.SessionTitle).HasColumnName("session_title").HasMaxLength(64).IsRequired();
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.User).WithMany(x => x.ChatSessions).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
-        builder.HasOne(x => x.Document).WithMany(x => x.ChatSessions).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne(x => x.Document).WithMany(x => x.ChatSessions).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.SetNull);
     }
 }
 

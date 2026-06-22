@@ -1,6 +1,6 @@
 using System.Security.Claims;
 using AIStudyHub.Business.DTOs.Authentication;
-using AIStudyHub.Business.Features.Auth;
+using AIStudyHub.Business.Features.Auth.Commands;
 using AIStudyHub.Business.Interfaces.Services;
 using AspNet.Security.OAuth.GitHub;
 using MediatR;

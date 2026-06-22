@@ -23,15 +23,15 @@ public sealed class DocumentController : ControllerBase
 
     /// <summary>Lấy danh sách tất cả tài liệu (có hỗ trợ tìm kiếm và lọc theo môn học).</summary>
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<DocumentResponseDto>>> GetAll(
-        [FromQuery] string? keyword, 
+    public async Task<ActionResult<AIStudyHub.Business.DTOs.Common.PagedResultDto<DocumentResponseDto>>> GetAll(
+        [FromQuery] AIStudyHub.Business.DTOs.Common.PaginationParams @params, 
         [FromQuery] Guid? subjectId, 
         CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
         if (userId == Guid.Empty) return Unauthorized();
 
-        var result = await _service.GetAllByUserIdAsync(userId, keyword, subjectId, cancellationToken);
+        var result = await _service.GetAllPagedAsync(userId, @params, subjectId, cancellationToken);
         return Ok(result);
     }
 

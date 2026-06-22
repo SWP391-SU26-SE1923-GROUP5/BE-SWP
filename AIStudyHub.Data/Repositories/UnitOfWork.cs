@@ -14,7 +14,6 @@ public sealed class UnitOfWork : IUnitOfWork
         Subjects = new GenericRepository<Subject>(_dbContext);
         TierMemberships = new GenericRepository<TierMembership>(_dbContext);
         Documents = new GenericRepository<Document>(_dbContext);
-        DocumentChunks = new DocumentChunkRepository(_dbContext);
         Votes = new GenericRepository<Vote>(_dbContext);
         Reports = new GenericRepository<Report>(_dbContext);
         Flashcards = new GenericRepository<Flashcard>(_dbContext);
@@ -32,7 +31,6 @@ public sealed class UnitOfWork : IUnitOfWork
     public IRepository<Subject> Subjects { get; }
     public IRepository<TierMembership> TierMemberships { get; }
     public IRepository<Document> Documents { get; }
-    public IDocumentChunkRepository DocumentChunks { get; }
     public IRepository<Vote> Votes { get; }
     public IRepository<Report> Reports { get; }
     public IRepository<Flashcard> Flashcards { get; }

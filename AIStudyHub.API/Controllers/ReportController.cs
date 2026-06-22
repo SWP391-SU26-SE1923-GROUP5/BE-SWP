@@ -43,6 +43,12 @@ public sealed class ReportController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
     }
 
-    // PUT    /api/Report/{id} - Đã xóa. Trạng thái report chỉ Admin mới được duyệt (endpoint riêng sau này).
-    // DELETE /api/Report/{id} - Đã xóa. Người dùng không được xóa report đã gửi.
+    /// <summary>Xóa báo cáo vi phạm (Admin only).</summary>
+    [HttpDelete("{id:guid}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
+    {
+        await _service.DeleteAsync(id, cancellationToken);
+        return NoContent();
+    }
 }

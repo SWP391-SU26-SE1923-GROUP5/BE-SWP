@@ -1,8 +1,27 @@
 using AIStudyHub.Business.Options;
 using AIStudyHub.Business.Behaviors;
+using AIStudyHub.Business.Configuration;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.AI.Orchestration;
+using AIStudyHub.Business.AI.Search;
+using AIStudyHub.Business.AI.VectorStore;
+using AIStudyHub.Business.AI.Guardrails;
+using AIStudyHub.Business.AI.LLM;
+using AIStudyHub.Business.AI.Chat;
+using AIStudyHub.Business.Interfaces.AI.Guardrails;
+using AIStudyHub.Business.Interfaces.AI.Search;
+using AIStudyHub.Business.Interfaces.AI.VectorStore;
+using AIStudyHub.Business.Interfaces.AI.Orchestration;
+using AIStudyHub.Business.Interfaces.AI.LLM;
+using AIStudyHub.Business.Interfaces.AI.Chat;
+using AIStudyHub.Business.Interfaces.AI.Generators;
+using AIStudyHub.Business.AI.Generators;
+using AIStudyHub.Business.Workers;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.KernelMemory;
+using Microsoft.KernelMemory.AI.Ollama;
 
 namespace AIStudyHub.Business.Services;
 
@@ -37,14 +56,60 @@ public static class BusinessServiceExtensions
         services.AddScoped<IAIChatService, AIChatService>();
         services.AddScoped<IDocumentProcessingService, DocumentProcessingService>();
         services.AddScoped<IEmbeddingService, EmbeddingService>();
-        services.AddScoped<IVectorStoreService, VectorStoreService>();
-        services.AddScoped<ICitationService, CitationService>();
+        services.AddScoped<IVectorStoreService, QdrantVectorService>();
         services.AddScoped<ILocalAIService,LocalAIService>();
        // services.AddScoped<IOpenAIService, OpenAIService>();
-        services.AddScoped<IRagChatService, RagChatService>();
-        services.AddScoped<AIStudyHub.Business.Interfaces.Services.IFlashcardAiService, AIStudyHub.Business.Services.FlashcardAiService>();
-        services.AddScoped<AIStudyHub.Business.Interfaces.Services.IQuizAiService, AIStudyHub.Business.Services.QuizAiService>();
+        services.AddScoped<IFlashcardAiService, FlashcardAiService>();
+        services.AddScoped<IQuizAiService, QuizAiService>();
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
+
+        // Channel-based queue for background document processing
+        services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>();
+
+        // Background processor for document queue
+        services.AddHostedService<DocumentBackgroundProcessor>();
+
+        // Kernel Memory
+        services.Configure<KernelMemorySettings>(configuration.GetSection("KernelMemory"));
+        
+        services.AddSingleton<IKernelMemory>(sp =>
+        {
+            var settings = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<KernelMemorySettings>>().Value;
+            var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("KernelMemory");
+            
+            logger.LogInformation("Configuring KernelMemory with Qdrant at: {Host}, VectorSize: {Size}, Embedding: Ollama/{EmbeddingModel}, Text: Ollama/{GenerationModel}", 
+                settings.Qdrant.Host, settings.Qdrant.VectorSize, settings.Ollama.EmbeddingModel, settings.Ollama.GenerationModel);
+            
+            var ollamaConfig = new OllamaConfig 
+            { 
+                Endpoint = settings.Ollama.Endpoint, 
+                EmbeddingModel = new OllamaModelConfig(settings.Ollama.EmbeddingModel),
+                TextModel = new OllamaModelConfig(settings.Ollama.GenerationModel)
+            };
+            
+            return new KernelMemoryBuilder()
+                .WithOllamaTextEmbeddingGeneration(ollamaConfig)
+                .WithOllamaTextGeneration(ollamaConfig)
+                .WithQdrantMemoryDb(settings.Qdrant.Host, settings.Qdrant.VectorSize.ToString())
+                .Build<MemoryServerless>();
+        });
+        services.AddScoped<IKernelMemoryService, KernelMemoryService>();
+
+        // L3: Search Services
+        services.Configure<RetrievalOptions>(configuration.GetSection("Retrieval"));
+        services.AddSingleton<ISparseVectorGenerator, Bm25SparseGenerator>();
+        services.AddScoped<IHybridSearchService, HybridSearchService>();
+        services.AddScoped<IRerankingService, RerankingService>();
+
+        // L4: SK Orchestrator
+        services.Configure<SemanticKernelOptions>(configuration.GetSection("SemanticKernel"));
+        services.AddScoped<ISemanticKernelOrchestrator, SemanticKernelOrchestrator>();
+
+        // L5: Guardrails
+        services.Configure<GuardrailsOptions>(configuration.GetSection("Guardrails"));
+        services.AddScoped<IFaithfulnessFilter, FaithfulnessFilter>();
+        services.AddScoped<IGroundingVerifier, GroundingVerifier>();
+        services.AddScoped<IConfidenceScorer, ConfidenceScorer>();
 
         return services;
     }

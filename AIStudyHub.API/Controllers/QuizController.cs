@@ -1,3 +1,5 @@
+using AIStudyHub.Business.Interfaces.AI.Generators;
+using AIStudyHub.Business.AI.Generators;
 using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -20,17 +22,17 @@ public sealed class QuizController : ControllerBase
 
     /// <summary>Lấy danh sách tất cả quiz.</summary>
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<QuizResponseDto>>> GetAll(CancellationToken cancellationToken)
+    public async Task<ActionResult<AIStudyHub.Business.DTOs.Common.PagedResultDto<QuizResponseDto>>> GetAll([FromQuery] AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken)
     {
-        var result = await _service.GetAllAsync(cancellationToken);
+        var result = await _service.GetAllPagedAsync(@params, cancellationToken);
         return Ok(result);
     }
 
     [HttpPost("/api/quiz/document/{docId:guid}/ai-gen")]
-    public async Task<ActionResult<AiGeneratedQuizResponseDto>> GenerateFromDocument(
+    public async Task<ActionResult<QuizResponseDto>> GenerateFromDocument(
         Guid docId,
         [FromBody] CreateQuizRequestViaAIDto dto,
-        [FromServices] AIStudyHub.Business.Interfaces.Services.IQuizAiService quizAiService,
+        [FromServices] IQuizAiService quizAiService,
         CancellationToken cancellationToken)
     {
         var userIdClaim = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier || c.Type == "sub" || c.Type == "userId")?.Value;
@@ -45,10 +47,8 @@ public sealed class QuizController : ControllerBase
             var result = await quizAiService.GenerateAndPersistQuizAsync(
                 docId, dto, userId, cancellationToken);
 
-            if (result.Questions is null || result.Questions.Count == 0)
-                return BadRequest("AI did not return any valid questions.");
-
-            return Ok(result);
+            var fullQuiz = await _service.GetByIdAsync(result.Id, cancellationToken);
+            return Ok(fullQuiz);
         }
         catch (KeyNotFoundException ex)
         {

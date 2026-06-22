@@ -1,0 +1,1 @@
+using AIStudyHub.Business.Interfaces.AI.Generators;using AIStudyHub.Business.DTOs.Flashcards;  namespace AIStudyHub.Business.Interfaces.AI.Generators;  public interface IFlashcardAiService {     Task<IReadOnlyList<FlashcardResponseDto>> GenerateFlashcardsAsync(Guid documentId, CreateFlashcardsViaAiRequestDto request, Guid userId, CancellationToken cancellationToken = default); }

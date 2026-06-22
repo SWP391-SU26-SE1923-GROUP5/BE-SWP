@@ -1,3 +1,5 @@
+using AIStudyHub.Business.Interfaces.AI.Generators;
+using AIStudyHub.Business.AI.Generators;
 using AIStudyHub.Business.DTOs.Flashcards;
 using AIStudyHub.Business.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -11,24 +13,23 @@ namespace AIStudyHub.API.Controllers;
 public sealed class FlashcardController : ControllerBase
 {
     private readonly IFlashcardService _service;
-        private readonly AIStudyHub.Business.Interfaces.Services.IFlashcardAiService _flashcardAiService;
+        private readonly IFlashcardAiService _flashcardAiService;
 
-    public FlashcardController(IFlashcardService service, AIStudyHub.Business.Interfaces.Services.IFlashcardAiService flashcardAiService)
+    public FlashcardController(IFlashcardService service, IFlashcardAiService flashcardAiService)
     {
         _service = service;
         _flashcardAiService = flashcardAiService;
     }
 
     [HttpPost("/api/flashcard/document/{docId:guid}/ai-gen")]
-    public async Task<ActionResult<IReadOnlyList<FlashcardResponseAiDto>>> GenerateFromDocument(Guid docId, [FromBody] CreateFlashcardsViaAiRequestDto request, CancellationToken cancellationToken)
+    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> GenerateFromDocument(Guid docId, [FromBody] CreateFlashcardsViaAiRequestDto request, CancellationToken cancellationToken)
     {
         var userIdClaim = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier || c.Type == "sub" || c.Type == "userId")?.Value;
         if (!Guid.TryParse(userIdClaim, out var userId))
             return Forbid();
 
-        // Generate via AI but do NOT persist to the database.
         var aiResult = await _flashcardAiService.GenerateFlashcardsAsync(docId, request, userId, cancellationToken);
-        return Ok(aiResult.Flashcards);
+        return Ok(aiResult);
     }
 
     [HttpGet("/api/flashcard/document/{docId:guid}")]
@@ -40,20 +41,13 @@ public sealed class FlashcardController : ControllerBase
         return Ok(result);
     }
 
-    [HttpPost("/api/flashcard/ai-save")]
-    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> SaveGenerated(
-        [FromBody] SaveGeneratedFlashcardsRequestDto request,
-        CancellationToken cancellationToken)
-    {
-        var saved = await _service.SaveGeneratedBatchAsync(request, cancellationToken);
-        return Ok(saved);
-    }
+
 
     /// <summary>Lấy danh sách tất cả flashcard.</summary>
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> GetAll(CancellationToken cancellationToken)
+    public async Task<ActionResult<AIStudyHub.Business.DTOs.Common.PagedResultDto<FlashcardResponseDto>>> GetAll([FromQuery] AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken)
     {
-        var result = await _service.GetAllAsync(cancellationToken);
+        var result = await _service.GetAllPagedAsync(@params, cancellationToken);
         return Ok(result);
     }
 

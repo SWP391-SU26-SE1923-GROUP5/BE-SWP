@@ -105,7 +105,7 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("datetime")
                         .HasColumnName("create_at");
 
-                    b.Property<Guid>("DocumentId")
+                    b.Property<Guid?>("DocumentId")
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("doc_id");
 
@@ -207,52 +207,6 @@ namespace AIStudyHub.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("Document", (string)null);
-                });
-
-            modelBuilder.Entity("AIStudyHub.Data.Entities.DocumentChunk", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("document_chunk_id");
-
-                    b.Property<string>("ChunkJson")
-                        .HasColumnType("nvarchar(max)")
-                        .HasColumnName("chunk_json");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime")
-                        .HasColumnName("create_at");
-
-                    b.Property<Guid>("DocumentId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("doc_id");
-
-                    b.Property<string>("EmbeddingJson")
-                        .HasColumnType("nvarchar(max)")
-                        .HasColumnName("embedding_json");
-
-                    b.Property<int>("OrderIndex")
-                        .HasColumnType("int")
-                        .HasColumnName("order_index");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime")
-                        .HasColumnName("update_at");
-
-                    b.Property<byte[]>("Vector")
-                        .HasColumnType("varbinary(max)");
-
-                    b.Property<string>("VectorId")
-                        .HasMaxLength(500)
-                        .HasColumnType("nvarchar(500)")
-                        .HasColumnName("vector_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("DocumentId");
-
-                    b.ToTable("Document_Chunk", (string)null);
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.Flashcard", b =>
@@ -709,7 +663,7 @@ namespace AIStudyHub.Data.Migrations
                         {
                             Id = new Guid("11111111-1111-1111-1111-111111111111"),
                             AiTokens = 10000,
-                            CreatedAt = new DateTime(2026, 6, 18, 8, 49, 35, 39, DateTimeKind.Utc).AddTicks(514),
+                            CreatedAt = new DateTime(2026, 6, 21, 13, 57, 27, 762, DateTimeKind.Utc).AddTicks(8645),
                             StorageLimitMb = 1024,
                             TierName = "Free"
                         },
@@ -717,7 +671,7 @@ namespace AIStudyHub.Data.Migrations
                         {
                             Id = new Guid("55555555-5555-5555-5555-555555555555"),
                             AiTokens = 30000,
-                            CreatedAt = new DateTime(2026, 6, 18, 8, 49, 35, 39, DateTimeKind.Utc).AddTicks(519),
+                            CreatedAt = new DateTime(2026, 6, 21, 13, 57, 27, 762, DateTimeKind.Utc).AddTicks(8647),
                             StorageLimitMb = 3072,
                             TierName = "Premium"
                         });
@@ -1077,8 +1031,7 @@ namespace AIStudyHub.Data.Migrations
                     b.HasOne("AIStudyHub.Data.Entities.Document", "Document")
                         .WithMany("ChatSessions")
                         .HasForeignKey("DocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.SetNull);
 
                     b.HasOne("AIStudyHub.Data.Entities.User", "User")
                         .WithMany("ChatSessions")
@@ -1108,17 +1061,6 @@ namespace AIStudyHub.Data.Migrations
                     b.Navigation("Subject");
 
                     b.Navigation("User");
-                });
-
-            modelBuilder.Entity("AIStudyHub.Data.Entities.DocumentChunk", b =>
-                {
-                    b.HasOne("AIStudyHub.Data.Entities.Document", "Document")
-                        .WithMany("DocumentChunks")
-                        .HasForeignKey("DocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Document");
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.Flashcard", b =>
@@ -1332,8 +1274,6 @@ namespace AIStudyHub.Data.Migrations
             modelBuilder.Entity("AIStudyHub.Data.Entities.Document", b =>
                 {
                     b.Navigation("ChatSessions");
-
-                    b.Navigation("DocumentChunks");
 
                     b.Navigation("Flashcards");
 

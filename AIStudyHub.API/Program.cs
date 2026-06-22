@@ -1,3 +1,6 @@
+using AIStudyHub.Business.Interfaces.AI.VectorStore;
+using AIStudyHub.Business.Workers;
+using Microsoft.OpenApi.Models;
 using AIStudyHub.API.Extensions;
 using AIStudyHub.API.Middleware;
 using AIStudyHub.Business.Mappings;
@@ -62,6 +65,9 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.O
 builder.Services.Configure<RagOptions>(builder.Configuration.GetSection("Rag"));
 builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<RagOptions>>().Value);
 
+builder.Services.Configure<QdrantOptions>(builder.Configuration.GetSection("Qdrant"));
+builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<QdrantOptions>>().Value);
+
 builder.Services.Configure<DocumentStorageOptions>(builder.Configuration.GetSection("DocumentStorage"));
 builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<DocumentStorageOptions>>().Value);
 
@@ -95,6 +101,11 @@ var app = builder.Build();
 
 await app.Services.SeedConfiguredAdminAsync(app.Configuration);
 
+await using var scope = app.Services.CreateAsyncScope();
+var qdrantService = scope.ServiceProvider.GetRequiredService<IVectorStoreService>();
+await qdrantService.EnsureCollectionExistsAsync();
+
+app.UseSerilogRequestLogging();
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
 if (app.Environment.IsDevelopment())
@@ -102,7 +113,6 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerDocumentation();
 }
 
-app.UseSerilogRequestLogging();
 app.UseHttpsRedirection();
 app.UseStaticFiles(new StaticFileOptions
 {
