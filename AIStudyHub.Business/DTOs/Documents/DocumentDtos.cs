@@ -1,4 +1,4 @@
-﻿using AIStudyHub.Data.Enums;
+using AIStudyHub.Data.Enums;
 
 namespace AIStudyHub.Business.DTOs.Documents;
 
@@ -11,6 +11,7 @@ public sealed record DocumentResponseDto(
     string? FileName,
     string? FileExtension,
     string? FileType,
+    long FileSizeBytes,
     string? SharedUsers,
     string ShareStatus,
     DocumentStatus? Status,
