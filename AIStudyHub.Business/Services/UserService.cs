@@ -3,7 +3,6 @@ using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
-using FluentValidation;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,21 +13,15 @@ public sealed class UserService : IUserService
     private readonly IUnitOfWork _unitOfWork;
     private readonly UserManager<User> _userManager;
     private readonly IMapper _mapper;
-    private readonly IValidator<CreateUserRequestDto> _createValidator;
-    private readonly IValidator<UpdateUserRequestDto> _updateValidator;
 
     public UserService(
         IUnitOfWork unitOfWork,
         UserManager<User> userManager,
-        IMapper mapper,
-        IValidator<CreateUserRequestDto> createValidator,
-        IValidator<UpdateUserRequestDto> updateValidator)
+        IMapper mapper)
     {
         _unitOfWork = unitOfWork;
         _userManager = userManager;
         _mapper = mapper;
-        _createValidator = createValidator;
-        _updateValidator = updateValidator;
     }
 
     public async Task<IReadOnlyList<UserResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -142,8 +135,6 @@ public sealed class UserService : IUserService
 
     public async Task<UserResponseDto> CreateAsync(CreateUserRequestDto request, CancellationToken cancellationToken = default)
     {
-        await _createValidator.ValidateAndThrowAsync(request, cancellationToken);
-
         var normalizedEmail = NormalizeEmail(request.Email);
         var existingUser = await _userManager.FindByEmailAsync(normalizedEmail);
 
@@ -179,8 +170,6 @@ public sealed class UserService : IUserService
 
     public async Task<UserResponseDto> UpdateAsync(Guid id, UpdateUserRequestDto request, CancellationToken cancellationToken = default)
     {
-        await _updateValidator.ValidateAndThrowAsync(request, cancellationToken);
-
         var user = await _userManager.FindByIdAsync(id.ToString())
             ?? throw new KeyNotFoundException("User not found.");
 

@@ -9,7 +9,6 @@ using AIStudyHub.Business.Options;
 using AIStudyHub.Data;
 using AIStudyHub.Data.Entities;
 using AutoMapper;
-using FluentValidation;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
@@ -22,9 +21,6 @@ public sealed class AuthService : IAuthService
     private readonly UserManager<User> _userManager;
     private readonly ApplicationDbContext _dbContext;
     private readonly IMapper _mapper;
-    private readonly IValidator<RegisterRequestDto> _registerValidator;
-    private readonly IValidator<LoginRequestDto> _loginValidator;
-    private readonly IValidator<RefreshTokenRequestDto> _refreshTokenValidator;
     private readonly JwtOptions _jwtOptions;
     private readonly IEmailService _emailService;
     private readonly EmailVerificationOptions _emailVerificationOptions;
@@ -34,9 +30,6 @@ public sealed class AuthService : IAuthService
         UserManager<User> userManager,
         ApplicationDbContext dbContext,
         IMapper mapper,
-        IValidator<RegisterRequestDto> registerValidator,
-        IValidator<LoginRequestDto> loginValidator,
-        IValidator<RefreshTokenRequestDto> refreshTokenValidator,
         JwtOptions jwtOptions,
         IEmailService emailService,
         EmailVerificationOptions emailVerificationOptions,
@@ -45,9 +38,6 @@ public sealed class AuthService : IAuthService
         _userManager = userManager;
         _dbContext = dbContext;
         _mapper = mapper;
-        _registerValidator = registerValidator;
-        _loginValidator = loginValidator;
-        _refreshTokenValidator = refreshTokenValidator;
         _jwtOptions = jwtOptions;
         _emailService = emailService;
         _emailVerificationOptions = emailVerificationOptions;
@@ -56,8 +46,6 @@ public sealed class AuthService : IAuthService
 
     public async Task<RegisterResultDto> RegisterAsync(RegisterRequestDto request, CancellationToken cancellationToken = default)
     {
-        await _registerValidator.ValidateAndThrowAsync(request, cancellationToken);
-
         var normalizedEmail = NormalizeEmail(request.Email);
         var existingUser = await _userManager.FindByEmailAsync(normalizedEmail);
 
@@ -78,8 +66,6 @@ public sealed class AuthService : IAuthService
 
     public async Task<AuthResponseDto> LoginAsync(LoginRequestDto request, CancellationToken cancellationToken = default)
     {
-        await _loginValidator.ValidateAndThrowAsync(request, cancellationToken);
-
         var normalizedEmail = NormalizeEmail(request.Email);
         var user = await _userManager.FindByEmailAsync(normalizedEmail);
 
@@ -99,8 +85,6 @@ public sealed class AuthService : IAuthService
 
     public async Task<AuthResponseDto> RefreshTokenAsync(RefreshTokenRequestDto request, CancellationToken cancellationToken = default)
     {
-        await _refreshTokenValidator.ValidateAndThrowAsync(request, cancellationToken);
-
         var tokenHash = HashRefreshToken(request.RefreshToken);
         var storedToken = await _dbContext.RefreshTokens
             .Include(refreshToken => refreshToken.User)

@@ -1,5 +1,4 @@
 using AIStudyHub.Business.Options;
-using AIStudyHub.Business.Behaviors;
 using AIStudyHub.Business.Configuration;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.AI.Orchestration;
@@ -33,7 +32,6 @@ public static class BusinessServiceExtensions
         {
             configuration.RegisterServicesFromAssembly(typeof(BusinessServiceExtensions).Assembly);
         });
-        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
 
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IEmailService, EmailService>();

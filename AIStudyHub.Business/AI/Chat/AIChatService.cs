@@ -7,7 +7,6 @@ using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
-using FluentValidation;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,21 +16,15 @@ public sealed class AIChatService : IAIChatService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
-    private readonly IValidator<CreateChatSessionRequestDto> _createSessionValidator;
-    private readonly IValidator<CreateChatMessageRequestDto> _createMessageValidator;
     private readonly ILocalAIService _localAIService;
     public AIChatService(
         IUnitOfWork unitOfWork,
         IMapper mapper,
-        IValidator<CreateChatSessionRequestDto> createSessionValidator,
-        IValidator<CreateChatMessageRequestDto> createMessageValidator,
         ILocalAIService openAiService)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _localAIService = openAiService;
-        _createSessionValidator = createSessionValidator;
-        _createMessageValidator = createMessageValidator;
     }
 
     public async Task<IReadOnlyList<ChatSessionResponseDto>> GetSessionsAsync()
@@ -49,8 +42,6 @@ public sealed class AIChatService : IAIChatService
 
     public async Task<ChatSessionResponseDto> CreateSessionAsync(CreateChatSessionRequestDto request)
     {
-        await _createSessionValidator.ValidateAndThrowAsync(request);
-
         if (request.DocumentId.HasValue)
         {
             var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId.Value) is not null;
@@ -94,8 +85,6 @@ public sealed class AIChatService : IAIChatService
 
     public async Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request)
     {
-        await _createMessageValidator.ValidateAndThrowAsync(request);
-
         var sessionExists = await _unitOfWork.ChatSessions.GetByIdAsync(request.SessionId) is not null;
         if (!sessionExists)
         {
