@@ -11,3 +11,13 @@ public sealed record UpdatePaymentRequestDto(string PaymentInfo, PaymentStatus? 
 public sealed record CreatePaymentLinkRequestDto(Guid TierId);
 
 public sealed record PaymentLinkResponseDto(string PaymentUrl);
+
+public sealed record VnpayReturnResponseDto(bool Success, string Message, string? Status);
+
+public sealed class VnpayReturnResult
+{
+    public bool IsValidSignature { get; init; } = true;
+    public bool IsSuccess { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public string? Status { get; init; }
+}

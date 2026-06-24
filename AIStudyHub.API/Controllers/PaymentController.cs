@@ -69,15 +69,16 @@ public sealed class PaymentController : ControllerBase
 
     [HttpGet("vnpay-return")]
     [AllowAnonymous]
-    public IActionResult PaymentReturn()
+    public async Task<ActionResult<VnpayReturnResponseDto>> PaymentReturn(CancellationToken cancellationToken)
     {
-        // Giao diện web hiển thị kết quả cho user sau khi thanh toán trên cổng VNPay
-        var responseCode = Request.Query["vnp_ResponseCode"];
-        if (responseCode == "00")
+        var result = await _service.HandleVnpayReturnAsync(Request.Query, cancellationToken);
+
+        if (!result.IsValidSignature)
         {
-            return Ok("Thanh toán thành công. Cảm ơn bạn!");
+            return BadRequest(new VnpayReturnResponseDto(false, "Invalid signature", null));
         }
-        return BadRequest("Thanh toán thất bại hoặc đã bị hủy.");
+
+        return Ok(new VnpayReturnResponseDto(result.IsSuccess, result.Message, result.Status));
     }
 
     [HttpGet("vnpay-ipn")]
