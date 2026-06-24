@@ -34,7 +34,8 @@ public sealed class VnPayService : IVnPayService
             { "vnp_OrderInfo", orderInfo },
             { "vnp_OrderType", "other" },
             { "vnp_ReturnUrl", _options.ReturnUrl },
-            { "vnp_TxnRef", paymentId.ToString() } // Reference to Payment record
+            { "vnp_TxnRef", paymentId.ToString() }, // Reference to Payment record
+            { "vnp_IpnUrl", _options.IpnUrl } // Backend endpoint for server-to-server notification
         };
 
         var queryString = BuildQueryString(vnpayData);
