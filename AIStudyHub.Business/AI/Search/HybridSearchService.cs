@@ -35,6 +35,7 @@ public class HybridSearchService : IHybridSearchService
     public async Task<IEnumerable<SearchResult>> SearchAsync(
         string query,
         Guid userId,
+        Guid? documentId,
         int topK = 10,
         CancellationToken ct = default)
     {
@@ -46,6 +47,10 @@ public class HybridSearchService : IHybridSearchService
 
         // 2. Search in Qdrant using RRF
         var filter = new Dictionary<string, string> { { "userId", userId.ToString() } };
+        if (documentId.HasValue)
+        {
+            filter.Add("documentId", documentId.Value.ToString());
+        }
         var qdrantResults = await _vectorStore.HybridSearchAsync(denseEmbedding, sparseVector, topK * 2, filter);
 
         // Map to SearchResult

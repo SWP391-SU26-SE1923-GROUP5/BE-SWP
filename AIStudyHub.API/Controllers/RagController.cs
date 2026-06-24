@@ -38,7 +38,7 @@ public class RagController : ControllerBase
         {
             _logger.LogInformation("RAG query from user {UserId}: {Question}", userId, request.Question);
             
-            var response = await _orchestrator.AskAsync(userId, request.Question, ct);
+            var response = await _orchestrator.AskAsync(userId, null, request.Question, new List<AIStudyHub.Data.Entities.ChatMessage>(), ct);
 
             return Ok(new
             {
