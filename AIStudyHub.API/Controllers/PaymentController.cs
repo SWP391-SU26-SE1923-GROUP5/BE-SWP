@@ -67,18 +67,23 @@ public sealed class PaymentController : ControllerBase
         return Ok(response);
     }
 
+    /// <summary>
+    /// VNPay redirects user here after payment. 
+    /// This endpoint ONLY redirects to frontend - DO NOT update DB here.
+    /// Database is updated via IPN (server-to-server) which is reliable.
+    /// </summary>
     [HttpGet("vnpay-return")]
     [AllowAnonymous]
-    public async Task<ActionResult<VnpayReturnResponseDto>> PaymentReturn(CancellationToken cancellationToken)
+    public IActionResult PaymentReturn()
     {
-        var result = await _service.HandleVnpayReturnAsync(Request.Query, cancellationToken);
-
-        if (!result.IsValidSignature)
-        {
-            return BadRequest(new VnpayReturnResponseDto(false, "Invalid signature", null));
-        }
-
-        return Ok(new VnpayReturnResponseDto(result.IsSuccess, result.Message, result.Status));
+        // VNPay returns query params: vnp_ResponseCode, vnp_TransactionNo, vnp_TxnRef, etc.
+        var responseCode = Request.Query["vnp_ResponseCode"].ToString();
+        var transactionId = Request.Query["vnp_TransactionNo"].ToString();
+        
+        // Frontend will call /api/Payment/my to get actual payment status from DB
+        var frontendUrl = $"http://localhost:5173/pricing/vnpay-return?code={responseCode}&txn={transactionId}";
+        
+        return Redirect(frontendUrl);
     }
 
     [HttpGet("vnpay-ipn")]
