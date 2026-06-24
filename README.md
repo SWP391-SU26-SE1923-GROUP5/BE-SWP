@@ -156,7 +156,7 @@ erDiagram
         string NormalizedUserName
         string PhoneNumber
         string PasswordHash
-        datetime? LockoutEnd
+        datetime LockoutEnd
         bool TwoFactorEnabled
         bool LockoutEnabled
         int AccessFailedCount
