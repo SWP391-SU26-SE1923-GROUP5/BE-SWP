@@ -426,72 +426,269 @@ erDiagram
 
 ## AI Architecture
 
-### RAG Pipeline (L1-L5)
+### RAG & AI Generation Flows
+
+#### L1 — Document Ingestion Pipeline
 
 ```mermaid
-flowchart TD
-    subgraph L1["L1 - Ingestion"]
-        Upload[Document Upload<br/>multipart/form-data]
-        Extract[Text Extraction<br/>PdfPig / OpenXML]
-        Chunk[Chunking<br/>sentence-split, overlapping]
-        KM[Kernel Memory Import<br/>tagged by user_id]
-        Embed[Embedding via Ollama<br/>nomic-embed-text]
-        Sparse[BM25 Sparse Vector]
-        Qdrant[Qdrant Upsert<br/>dense + sparse]
+sequenceDiagram
+    participant Client
+    participant Controller as DocumentUploadController
+    participant Storage as LocalFileStorageService
+    participant DocSvc as DocumentService
+    participant Queue as DocumentProcessingQueue
+    participant Processor as DocumentBackgroundProcessor
+    participant KM as KernelMemoryService
+    participant EmbedSvc as EmbeddingService
+    participant SparseGen as Bm25SparseGenerator
+    participant Qdrant as QdrantVectorService
+    participant DB as DbContext
+
+    Client->>Controller: POST /api/Document/upload (multipart/form-data)
+    Controller->>Storage: SaveFileAsync(file)
+    Storage-->>Controller: filePath
+
+    Controller->>DocSvc: CreateAsync(dto)
+    DocSvc->>DB: Insert Document (Status=Processing)
+    DocSvc-->>Controller: documentId
+
+    Controller->>Queue: EnqueueAsync(request)
+    Controller-->>Client: 202 Accepted (documentId)
+
+    par Async Background Processing
+        Processor->>Processor: DequeueAsync() — blocking loop
+
+        Processor->>KM: ImportDocumentAsync(filePath, docId, userId, fileName)
+        Note over KM: PdfPig / OpenXML<br/>Extracts raw text
+        Note over KM: Splits into chunks<br/>(sentence-split, overlapping)
+        Note over KM: Tags: user_id, file_name<br/>Stores in configured backend
+
+        Processor->>KM: SearchAsync("", userId, limit=1000)
+        Note over KM: Returns Citation[] with<br/>DocumentId + Partitions[]
+
+        loop For each Citation (one per source file)
+            loop For each Partition (one per chunk)
+                Processor->>EmbedSvc: GenerateEmbeddingAsync(chunkText)
+                Note over EmbedSvc: Calls LocalAIService<br/>OpenAI embeddings API
+                Note over EmbedSvc: Returns float[] dense vector
+
+                Processor->>SparseGen: GenerateSparseVector(chunkText)
+                Note over SparseGen: FNV-1a word hashing<br/>Sub-linear TF scoring
+
+                Processor->>Qdrant: EnsureCollectionExistsAsync()
+                Note over Qdrant: Creates collection if missing<br/>Registers sparse-text named vector
+
+                Processor->>Qdrant: UpsertVectorAsync(id, dense, sparse, metadata)
+                Note over Qdrant: Stores: dense "" vector +<br/>sparse "sparse-text" named vector<br/>Payload: documentId, userId, text,<br/>fileName, chunkIndex
+            end
+        end
+
+        Processor->>DB: Update Document (Status=Published)
+    end
+```
+
+#### L2-L5 — RAG Query Flow (Chat with Document)
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Controller as RagController
+    participant Orch as SemanticKernelOrchestrator
+    participant Hybrid as HybridSearchService
+    participant EmbedSvc as EmbeddingService
+    participant SparseGen as Bm25SparseGenerator
+    participant Qdrant as QdrantVectorService
+    participant Rerank as RerankingService
+    participant LLM as LocalAIService
+    participant Faith as FaithfulnessFilter
+    participant Ground as GroundingVerifier
+    participant Score as ConfidenceScorer
+
+    Client->>Controller: POST /api/Rag/chat { question, documentIds? }
+    Controller->>Orch: AskAsync(userId, question)
+
+    rect rgb(235, 245, 255)
+        Note over Orch,Qdrant: L2 — Retrieval (Hybrid Search + Reranking)
+
+        Orch->>Hybrid: SearchAsync(question, userId, topK=10)
+
+        par Hybrid Search
+            Hybrid->>EmbedSvc: GenerateEmbeddingAsync(question)
+            Note over EmbedSvc: OpenAI embedding API<br/>Returns float[] dense vector
+
+            Hybrid->>SparseGen: GenerateSparseVector(question)
+            Note over SparseGen: BM25 sparse: FNV-1a hashes<br/>+ sub-linear TF values
+        end
+
+        Hybrid->>Qdrant: HybridSearchAsync(dense, sparse, topK=20, filter)
+        Note over Qdrant: Sends to Qdrant REST API:<br/>prefetch[0]: dense query<br/>prefetch[1]: sparse query<br/>query.fusion = "rrf"<br/>Returns fused + scored results
+
+        Hybrid-->>Orch: List<SearchResult> (20 items)
+
+        Orch->>Rerank: RerankAsync(question, results, topK=5)
+        Note over Rerank: Sorts by score descending<br/>Applies positional decay:<br/>Score × (1.0 - index × 0.1)
+        Rerank-->>Orch: List<SearchResult> (5 items, adjusted scores)
+
+        alt No relevant results
+            Orch-->>Controller: RagResponse("no info found", confidence=0)
+        end
     end
 
-    subgraph L2["L2 - Retrieval"]
-        Query[User Query]
-        DenseEmb[Query Embedding]
-        HybridSearch[Hybrid Search<br/>RRF fusion]
-        Rerank[Reranking<br/>positional decay]
-        TopK[Top-K Chunks]
+    rect rgb(240, 255, 240)
+        Note over Orch,LLM: L3 — Generation (LLM Prompt Assembly)
+
+        Orch->>Orch: Build context string<br/>"--- Source: fileName ---\nchunkText"
+        Orch->>Orch: Build system prompt:<br/>- Answer ONLY from SOURCES<br/>- Guide on AIStudyHub features<br/>- Never reveal backend details<br/>- Vietnamese by default
+        Orch->>Orch: Build user prompt:<br/>"SOURCES: [chunks]\nQUESTION: [question]"
+
+        Orch->>LLM: SendMessageAsync(systemPrompt + userPrompt)
+        Note over LLM: OpenAI Chat Completions API<br/>Sends full prompt to configured model
+        LLM-->>Orch: answer (string)
     end
 
-    subgraph L3["L3 - Generation"]
-        SK[Semantic Kernel<br/>Prompt Assembly]
-        LLM[Ollama LLM<br/>llama3.2:3b]
+    rect rgb(255, 245, 230)
+        Note over Orch,Score: L4 — Guardrails (Faithfulness + Grounding + Confidence)
+
+        Orch->>Faith: ValidateAsync(answer, sourceContents)
+        Note over Faith: Checks for evasive phrases<br/>("cannot find", "I don't know")<br/>Returns: bool isFaithful
+
+        Orch->>Ground: VerifyAsync(answer, searchResults)
+        Note over Ground: Word-overlap scoring:<br/>Counts answer words found in source<br/>Coverage = grounded / total<br/>Returns: GroundingResult
+
+        Orch->>Score: Score(answer, groundingResult, isFaithful)
+        Note over Score: Base = grounding.Score<br/>× 0.5 if not faithful<br/>× 0.8 if answer < 50 chars<br/>+ 0.1 if above threshold<br/>Clamp(0, 1)
+        Score-->>Orch: confidence (double)
     end
 
-    subgraph L4["L4 - Guardrails"]
-        Faith[Faithfulness Filter]
-        Ground[Grounding Verifier]
-        Conf[Confidence Scorer]
+    rect rgb(250, 240, 255)
+        Note over Orch,Client: L5 — Response
+
+        Orch->>Orch: Build CitationInfo[]<br/>from searchResults
+        Orch-->>Controller: RagResponse(answer, citations, confidence)
+        Controller-->>Client: 200 OK
+    end
+```
+
+#### L6 — Flashcard Generation Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Controller as FlashcardController
+    participant FlashSvc as FlashcardAiService
+    participant KM as KernelMemoryService
+    participant LLM as LocalAIService
+    participant DB as DbContext
+
+    Client->>Controller: POST /api/Flashcard/generate-ai { numberOfFlashcards }
+    Controller->>FlashSvc: GenerateFlashcardsAsync(docId, request, userId)
+
+    FlashSvc->>FlashSvc: Validate document ownership
+
+    FlashSvc->>KM: SearchAsync("", filter=documentId, limit=1000)
+    Note over KM: Retrieves all chunks for document
+    KM-->>FlashSvc: MemoryAnswer.Results[]
+
+    FlashSvc->>FlashSvc: BuildContext(citations)
+    Note over FlashSvc: Concatenates all partition.Text<br/>Limited to 30,000 chars
+
+    loop Batch generation (batchSize=5, maxAttempts=80)
+        FlashSvc->>LLM: SendMessageAsync(batchPrompt, temp=0.2)
+        Note over LLM: System: Extract N facts → JSON flashcards<br/>"front": question ending with ?<br/>"back": short factual answer
+
+        LLM-->>FlashSvc: aiText (raw JSON string)
+
+        FlashSvc->>FlashSvc: ParseFlashcardArray(aiText)
+        Note over FlashSvc: 3-stage parser:<br/>1. Extract balanced [...] JSON array<br/>2. JsonDocument.Parse<br/>3. Streaming fallback for malform
+
+        FlashSvc->>FlashSvc: Normalize & dedupe<br/>Enforce: front=question, back=answer<br/>Reject placeholders
     end
 
-    subgraph L5["L5 - Response"]
-        Resp[Response + Citations]
+    FlashSvc->>DB: Insert Flashcard entities
+    FlashSvc-->>Controller: FlashcardResponseDto[]
+    Controller-->>Client: 200 OK
+```
+
+#### L6 — Quiz Generation Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Controller as QuizController
+    participant QuizSvc as QuizAiService
+    participant Qdrant as QdrantVectorService
+    participant LLM as LocalAIService
+    participant DB as DbContext
+
+    Client->>Controller: POST /api/Quiz/generate-ai { numberOfQuestions }
+    Controller->>QuizSvc: GenerateAndPersistQuizAsync(docId, request, userId)
+
+    QuizSvc->>QuizSvc: Validate document + ownership
+
+    QuizSvc->>Qdrant: GetPayloadsByDocumentIdAsync(documentId)
+    Note over Qdrant: REST scroll API<br/>Returns all payload dicts for doc
+    Qdrant-->>QuizSvc: List<Dictionary<string,string>>
+
+    QuizSvc->>QuizSvc: Sort by chunkIndex<br/>Fix Mojibake (UTF-8→Latin-1→UTF-8)
+    Note over QuizSvc: Mojibake pattern detection:<br/>"Ã", "Ä", "áº" sequences
+
+    QuizSvc->>QuizSvc: Concatenate chunks as context
+
+    loop Batch generation (batchSize=3, maxAttempts=60)
+        QuizSvc->>LLM: SendMessageAsync(batchPrompt, temp=0.2)
+        Note over LLM: System: Read TEXT → JSON quiz<br/>Exactly N questions<br/>Each: questionTitle + 4 answers<br/>Exactly 1 isCorrect=true
+
+        LLM-->>QuizSvc: aiText (raw JSON string)
+
+        QuizSvc->>QuizSvc: ParseQuizPayload(aiText)
+        Note over QuizSvc: 3-stage parser:<br/>1. Extract balanced {...} object<br/>2. JsonDocument.Parse<br/>3. Streaming per question fallback
+
+        QuizSvc->>QuizSvc: Normalize & dedupe<br/>Reject placeholders, enforce 1 correct
     end
 
-    Upload --> Extract --> Chunk --> KM --> Embed --> Sparse --> Qdrant
-    Query --> DenseEmb --> HybridSearch --> Rerank --> TopK --> SK
-    SK --> LLM --> Faith --> Ground --> Conf --> Resp
+    QuizSvc->>DB: Insert Quiz → Questions → Answers
+    QuizSvc-->>Controller: QuizResponseDto
+    Controller-->>Client: 200 OK
 ```
 
 ### AI Components
 
 | Component | Implementation | Purpose |
 |-----------|---------------|---------|
-| `IEmbeddingService` | `EmbeddingService` | Wraps `ILocalAIService`, generates dense embeddings |
-| `IVectorStoreService` | `QdrantVectorService` | Dense/sparse upsert, ANN search, hybrid RRF search, collection mgmt |
-| `ISparseVectorGenerator` | `Bm25SparseGenerator` | BM25 sparse vectors via FNV-1a hashing + sub-linear TF |
-| `IHybridSearchService` | `HybridSearchService` | Orchestrates dense + sparse search with RRF |
-| `IRerankingService` | `RerankingService` | Positional decay re-ranking |
-| `IKernelMemoryService` | `KernelMemoryService` | Document import, search, Q&A via Kernel Memory |
-| `ISemanticKernelOrchestrator` | `SemanticKernelOrchestrator` | Full L3-L5 pipeline orchestration |
-| `ILocalAIService` | `LocalAIService` | Chat completion and embedding via OpenAI SDK (configured for Ollama) |
-| `IFaithfulnessFilter` | `FaithfulnessFilter` | Detects evasive/uncertain answers |
-| `IGroundingVerifier` | `GroundingVerifier` | Word-overlap grounding score |
-| `IConfidenceScorer` | `ConfidenceScorer` | Combined confidence from grounding + faithfulness + length |
-| `IQuizAiService` | `QuizAiService` | Batch-prompt quiz generation with JSON parsing + retry |
-| `IFlashcardAiService` | `FlashcardAiService` | Batch-prompt flashcard generation, auto-deduplicated |
+| `ILocalAIService` | `LocalAIService` | Chat completion + embeddings via OpenAI SDK (`ChatClient`, `EmbeddingClient`) |
+| `IEmbeddingService` | `EmbeddingService` | Wraps `ILocalAIService.CreateEmbeddingsFromTexts` for dense vector generation |
+| `IVectorStoreService` | `QdrantVectorService` | Dense/sparse upsert, ANN search, hybrid RRF search via REST API, collection management |
+| `ISparseVectorGenerator` | `Bm25SparseGenerator` | BM25 sparse vectors via FNV-1a 32-bit word hashing + sub-linear TF-IDF scoring |
+| `IHybridSearchService` | `HybridSearchService` | Orchestrates dense + sparse search with prefetch RRF fusion in Qdrant |
+| `IRerankingService` | `RerankingService` | Positional decay re-ranking: `Score × (1.0 - index × 0.1)` |
+| `IKernelMemoryService` | `KernelMemoryService` | Document import (chunking + tagging), search, Q&A via `Microsoft.KernelMemory` |
+| `ISemanticKernelOrchestrator` | `SemanticKernelOrchestrator` | Full L2–L5 RAG pipeline orchestration (search → rerank → LLM → guardrails → response) |
+| `IFaithfulnessFilter` | `FaithfulnessFilter` | Detects evasive answers ("cannot find", "I don't know") despite available context |
+| `IGroundingVerifier` | `GroundingVerifier` | Word-overlap grounding score (source words vs answer words coverage) |
+| `IConfidenceScorer` | `ConfidenceScorer` | Combined confidence: grounding × faithfulness × length × threshold bonus, clamped [0,1] |
+| `IQuizAiService` | `QuizAiService` | Batch-prompt quiz generation (3 questions/batch, 3 duplicate-then-abort policy, 3-stage JSON parser) |
+| `IFlashcardAiService` | `FlashcardAiService` | Batch-prompt flashcard generation (5 cards/batch, Kernel Memory context, deduplication) |
+| `IDocumentProcessingService` | `DocumentProcessingService` | Text extraction from PDF (PdfPig), DOCX (OpenXML), TXT/MD; sentence-split chunking with overlap |
+| `IDocumentProcessingQueue` | `DocumentProcessingQueue` | In-memory channel-based async job queue for document processing |
+| `DocumentBackgroundProcessor` | `DocumentBackgroundProcessor` | `BackgroundService` — dequeues jobs, calls KernelMemory import + generates dense/sparse vectors → Qdrant |
 
-### Local AI Stack
+### AI / LLM Configuration
 
-- **Embedding Model:** `nomic-embed-text` (768 dimensions) via Ollama
-- **LLM Model:** `llama3.2:3b` (configurable) via Ollama
-- **Vector DB:** Qdrant at `http://localhost:6333`
-- **Ollama:** Running at `http://localhost:11434`
+Configuration file: `AIStudyHub.API/appsettings.json` → `RagOptions`.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `OpenAIApiKey` | *(required)* | API key for OpenAI-compatible endpoint |
+| `OpenAIChatModel` | `gpt-4o-mini` | Chat completion model (supports o1, gpt-5 families with special temperature handling) |
+| `OpenAIEmbeddingModel` | `text-embedding-3-small` | Embedding model via OpenAI SDK |
+| `OllamaUrl` | `http://localhost:11434` | *(legacy — commented out)* Ollama base URL |
+| `OllamaModel` | `llama3.2:3b` | *(legacy)* Ollama chat model name |
+| `OllamaEmbeddingModel` | `nomic-embed-text` | *(legacy)* Ollama embedding model name |
+| `VectorDbUrl` | `http://localhost:6333` | Qdrant REST URL |
+| `VectorDbCollectionName` | `ai-study-hub` | Qdrant collection name |
+| `VectorDbVectorSize` | `1536` | Dense vector dimension (matches `text-embedding-3-small` output) |
+
+**Vector DB:** Qdrant at `http://localhost:6333` with hybrid (dense + sparse named vector) collection support.
 
 ## Request Flow
 
@@ -509,37 +706,11 @@ Client -> Controller -> MediatR -> Command/Query Handler -> Repository -> DbCont
 
 ### AI Document Ingestion Flow
 
-```text
-Upload (multipart/form-data)
-  -> DocumentUploadController
-  -> LocalFileStorageService (save file)
-  -> DocumentService (create DB record, status=Processing)
-  -> DocumentProcessingQueue (enqueue job)
-  -> DocumentBackgroundProcessor (dequeue)
-    -> DocumentProcessingService (extract text)
-    -> KernelMemoryService (import, tag by user_id)
-    -> EmbeddingService (dense embedding)
-    -> Bm25SparseGenerator (sparse vector)
-    -> QdrantVectorService (upsert dense + sparse)
-  -> DocumentService (update status=Published)
-```
+See **L1 — Document Ingestion Pipeline** sequence diagram above.
 
 ### AI Query Flow (RAG)
 
-```text
-User Question
-  -> RagController / ChatController
-  -> HybridSearchService (embed query + BM25 sparse)
-  -> QdrantVectorService (hybrid RRF search)
-  -> RerankingService (positional decay)
-  -> SemanticKernelOrchestrator
-    -> Assemble prompt with top-K chunks
-    -> LocalAIService (LLM call)
-    -> FaithfulnessFilter (validate)
-    -> GroundingVerifier (validate)
-    -> ConfidenceScorer (score)
-  -> Response with citations
-```
+See **L2-L5 — RAG Query Flow (Chat with Document)** sequence diagram above.
 
 ## Authentication Flow
 
