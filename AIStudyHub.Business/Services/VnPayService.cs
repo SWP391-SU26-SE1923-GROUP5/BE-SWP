@@ -20,13 +20,12 @@ public sealed class VnPayService : IVnPayService
 
     public string CreatePaymentUrl(HttpContext context, Guid paymentId, decimal amount, string orderInfo)
     {
-        var tick = DateTime.UtcNow.Ticks.ToString();
         var vnpayData = new SortedList<string, string>(new VnPayCompare())
         {
             { "vnp_Version", "2.1.0" },
             { "vnp_Command", "pay" },
             { "vnp_TmnCode", _options.TmnCode },
-            { "vnp_Amount", ((long)(amount * 100)).ToString() }, // Amount in VND, multiplied by 100
+            { "vnp_Amount", ((long)(amount * 100)).ToString() },
             { "vnp_CreateDate", DateTime.UtcNow.AddHours(7).ToString("yyyyMMddHHmmss") },
             { "vnp_CurrCode", "VND" },
             { "vnp_IpAddr", GetIpAddress(context) },
@@ -34,14 +33,13 @@ public sealed class VnPayService : IVnPayService
             { "vnp_OrderInfo", orderInfo },
             { "vnp_OrderType", "other" },
             { "vnp_ReturnUrl", _options.ReturnUrl },
-            { "vnp_TxnRef", paymentId.ToString() }, // Reference to Payment record
-            { "vnp_IpnUrl", _options.IpnUrl } // Backend endpoint for server-to-server notification
+            { "vnp_TxnRef", paymentId.ToString() }
         };
 
         var queryString = BuildQueryString(vnpayData);
         var signData = queryString;
         var vnpSecureHash = HmacSHA512(_options.HashSecret, signData);
-        
+
         return $"{_options.BaseUrl}?{queryString}&vnp_SecureHash={vnpSecureHash}";
     }
 
@@ -66,6 +64,11 @@ public sealed class VnPayService : IVnPayService
 
         var signData = BuildQueryString(vnpayData);
         var checkSum = HmacSHA512(_options.HashSecret, signData);
+
+        // DEBUG: In ra để so sánh với chữ ký VNPay gửi
+        Console.WriteLine($"[VNPay DEBUG] vnp_SecureHash from VNPay: {vnp_SecureHash}");
+        Console.WriteLine($"[VNPay DEBUG] signData: {signData}");
+        Console.WriteLine($"[VNPay DEBUG] calculated checksum: {checkSum}");
 
         return checkSum.Equals(vnp_SecureHash, StringComparison.InvariantCultureIgnoreCase);
     }

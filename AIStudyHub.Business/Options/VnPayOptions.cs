@@ -7,5 +7,4 @@ public sealed class VnPayOptions
     public string HashSecret { get; set; } = string.Empty;
     public string BaseUrl { get; set; } = string.Empty;
     public string ReturnUrl { get; set; } = "http://localhost:3000/pricing/vnpay-return";
-    public string IpnUrl { get; set; } = "http://localhost:5171/api/payment/vnpay-ipn";
 }

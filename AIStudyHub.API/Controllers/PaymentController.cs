@@ -68,36 +68,24 @@ public sealed class PaymentController : ControllerBase
     }
 
     /// <summary>
-    /// VNPay redirects user here after payment. 
-    /// This endpoint ONLY redirects to frontend - DO NOT update DB here.
-    /// Database is updated via IPN (server-to-server) which is reliable.
+    /// VNPay redirects user here after payment.
+    /// Updates DB directly and redirects to frontend.
     /// </summary>
     [HttpGet("vnpay-return")]
     [AllowAnonymous]
-    public IActionResult PaymentReturn()
+    public async Task<IActionResult> PaymentReturn(CancellationToken cancellationToken)
     {
-        // VNPay returns query params: vnp_ResponseCode, vnp_TransactionNo, vnp_TxnRef, etc.
-        var responseCode = Request.Query["vnp_ResponseCode"].ToString();
-        var transactionId = Request.Query["vnp_TransactionNo"].ToString();
-        
-        // Frontend will call /api/Payment/my to get actual payment status from DB
-        var frontendUrl = $"http://localhost:5173/pricing/vnpay-return?code={responseCode}&txn={transactionId}";
-        
-        return Redirect(frontendUrl);
-    }
+        var result = await _service.HandleVnpayReturnAsync(Request.Query, cancellationToken);
 
-    [HttpGet("vnpay-ipn")]
-    [AllowAnonymous]
-    public async Task<IActionResult> PaymentIpn(CancellationToken cancellationToken)
-    {
-        // VNPay gọi ngầm API này để cập nhật trạng thái đơn hàng
-        var success = await _service.ProcessVnPayWebhookAsync(Request.Query, cancellationToken);
-        if (success)
+        if (!result.IsValidSignature)
         {
-            return Ok(new { RspCode = "00", Message = "Confirm Success" });
+            return Redirect($"http://localhost:5173/pricing/vnpay-return?success=false&message=invalid_signature");
         }
-        
-        return Ok(new { RspCode = "97", Message = "Invalid Signature or Payment failed" });
+
+        var success = result.IsSuccess ? "true" : "false";
+        var message = Uri.EscapeDataString(result.Message ?? "");
+        var status = Uri.EscapeDataString(result.Status ?? "");
+        return Redirect($"http://localhost:5173/pricing/vnpay-return?success={success}&message={message}&status={status}");
     }
 
     private Guid GetCurrentUserId()
