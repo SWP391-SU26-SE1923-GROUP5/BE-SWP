@@ -68,25 +68,28 @@ public sealed class PaymentController : ControllerBase
     }
 
     /// <summary>
-    /// VNPay redirects user here after payment.
-    /// Updates DB directly and redirects to frontend.
+    /// Frontend fetches this after VNPay redirects to it.
+    /// Returns JSON instead of Redirect to avoid CORS.
     /// </summary>
     [HttpGet("vnpay-return")]
     [AllowAnonymous]
     public async Task<IActionResult> PaymentReturn(CancellationToken cancellationToken)
     {
         var result = await _service.HandleVnpayReturnAsync(Request.Query, cancellationToken);
-
         if (!result.IsValidSignature)
         {
-            return Redirect($"http://localhost:5173/pricing/vnpay-return?success=false&message=invalid_signature");
+            return BadRequest(new { success = false, message = "Invalid signature" });
         }
 
-        var success = result.IsSuccess ? "true" : "false";
-        var message = Uri.EscapeDataString(result.Message ?? "");
-        var status = Uri.EscapeDataString(result.Status ?? "");
-        return Redirect($"http://localhost:5173/pricing/vnpay-return?success={success}&message={message}&status={status}");
+        return Ok(new
+        {
+            success = result.IsSuccess,
+            message = result.Message,
+            status = result.Status
+        });
     }
+
+
 
     private Guid GetCurrentUserId()
     {

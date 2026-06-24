@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
+using Microsoft.Extensions.Logging;
 using System.Text;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
@@ -12,10 +13,12 @@ namespace AIStudyHub.Business.Services;
 public sealed class VnPayService : IVnPayService
 {
     private readonly VnPayOptions _options;
+    private readonly Microsoft.Extensions.Logging.ILogger<VnPayService> _logger;
 
-    public VnPayService(IOptions<VnPayOptions> options)
+    public VnPayService(IOptions<VnPayOptions> options, Microsoft.Extensions.Logging.ILogger<VnPayService> logger)
     {
         _options = options.Value;
+        _logger = logger;
     }
 
     public string CreatePaymentUrl(HttpContext context, Guid paymentId, decimal amount, string orderInfo)
@@ -66,9 +69,9 @@ public sealed class VnPayService : IVnPayService
         var checkSum = HmacSHA512(_options.HashSecret, signData);
 
         // DEBUG: In ra để so sánh với chữ ký VNPay gửi
-        Console.WriteLine($"[VNPay DEBUG] vnp_SecureHash from VNPay: {vnp_SecureHash}");
-        Console.WriteLine($"[VNPay DEBUG] signData: {signData}");
-        Console.WriteLine($"[VNPay DEBUG] calculated checksum: {checkSum}");
+        _logger.LogInformation($"[VNPay DEBUG] vnp_SecureHash from VNPay: {vnp_SecureHash}");
+        _logger.LogInformation($"[VNPay DEBUG] signData: {signData}");
+        _logger.LogInformation($"[VNPay DEBUG] calculated checksum: {checkSum}");
 
         return checkSum.Equals(vnp_SecureHash, StringComparison.InvariantCultureIgnoreCase);
     }

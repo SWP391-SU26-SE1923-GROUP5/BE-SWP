@@ -1465,6 +1465,7 @@ public sealed class PaymentService : IPaymentService
         if (responseCode == "00")
         {
             payment.Status = Data.Enums.PaymentStatus.Completed;
+            _unitOfWork.Payments.Update(payment);
 
             var user = await _unitOfWork.Users.GetByIdAsync(payment.UserId, cancellationToken);
             if (user is not null && payment.TierId.HasValue)
@@ -1488,6 +1489,7 @@ public sealed class PaymentService : IPaymentService
         }
 
         payment.Status = Data.Enums.PaymentStatus.Failed;
+        _unitOfWork.Payments.Update(payment);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return new VnpayReturnResult
