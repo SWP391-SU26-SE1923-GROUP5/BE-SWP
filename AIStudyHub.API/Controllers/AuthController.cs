@@ -5,6 +5,7 @@ using AIStudyHub.Business.Interfaces.Services;
 using AspNet.Security.OAuth.GitHub;
 using MediatR;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.Google;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -99,12 +100,13 @@ public sealed class AuthController : ControllerBase
     [HttpGet("external-login/{provider}")]
     public IActionResult ExternalLogin(string provider)
     {
-        if (!SupportedProviders.Contains(provider))
+        var actualProvider = SupportedProviders.FirstOrDefault(p => p.Equals(provider, StringComparison.OrdinalIgnoreCase));
+        if (actualProvider == null)
         {
             return BadRequest("Unsupported external provider.");
         }
 
-        var redirectUrl = Url.Action(nameof(ExternalCallback), new { provider });
+        var redirectUrl = Url.Action(nameof(ExternalCallback), new { provider = actualProvider });
         if (string.IsNullOrWhiteSpace(redirectUrl))
         {
             throw new InvalidOperationException("Unable to generate external login callback URL.");
@@ -115,18 +117,19 @@ public sealed class AuthController : ControllerBase
             RedirectUri = redirectUrl
         };
 
-        return Challenge(properties, provider);
+        return Challenge(properties, actualProvider);
     }
 
     [HttpGet("external-callback/{provider}")]
     public async Task<ActionResult<AuthResponseDto>> ExternalCallback(string provider, CancellationToken cancellationToken)
     {
-        if (!SupportedProviders.Contains(provider))
+        var actualProvider = SupportedProviders.FirstOrDefault(p => p.Equals(provider, StringComparison.OrdinalIgnoreCase));
+        if (actualProvider == null)
         {
             return BadRequest("Unsupported external provider.");
         }
 
-        var authenticateResult = await HttpContext.AuthenticateAsync(provider);
+        var authenticateResult = await HttpContext.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         if (!authenticateResult.Succeeded || authenticateResult.Principal is null)
         {
             return Unauthorized();
@@ -139,7 +142,7 @@ public sealed class AuthController : ControllerBase
             ?? principal.FindFirstValue("name")
             ?? string.Empty;
 
-        var result = await _authService.LoginExternalAsync(new ExternalLoginRequestDto(provider, email ?? string.Empty, fullName), cancellationToken);
+        var result = await _authService.LoginExternalAsync(new ExternalLoginRequestDto(actualProvider, email ?? string.Empty, fullName), cancellationToken);
         return Ok(result);
     }
 }

@@ -681,9 +681,7 @@ Configuration file: `AIStudyHub.API/appsettings.json` → `RagOptions`.
 | `OpenAIApiKey` | *(required)* | API key for OpenAI-compatible endpoint |
 | `OpenAIChatModel` | `gpt-4o-mini` | Chat completion model (supports o1, gpt-5 families with special temperature handling) |
 | `OpenAIEmbeddingModel` | `text-embedding-3-small` | Embedding model via OpenAI SDK |
-| `OllamaUrl` | `http://localhost:11434` | *(legacy — commented out)* Ollama base URL |
-| `OllamaModel` | `llama3.2:3b` | *(legacy)* Ollama chat model name |
-| `OllamaEmbeddingModel` | `nomic-embed-text` | *(legacy)* Ollama embedding model name |
+
 | `VectorDbUrl` | `http://localhost:6333` | Qdrant REST URL |
 | `VectorDbCollectionName` | `ai-study-hub` | Qdrant collection name |
 | `VectorDbVectorSize` | `1536` | Dense vector dimension (matches `text-embedding-3-small` output) |
@@ -858,7 +856,7 @@ Recommended evolution paths:
 - Add caching (Redis) for frequently accessed public document metadata.
 - Add integration tests with a test database.
 - Add unit tests for validators, business rules, and repository behavior.
-- Add health checks for SQL Server, Qdrant, and Ollama.
+- Add health checks for SQL Server and Qdrant.
 - Add rate limiting on AI and upload endpoints.
 - Add API versioning before public clients depend on the API.
 - Add observability with metrics (Prometheus) and distributed tracing.

@@ -3,7 +3,7 @@ namespace AIStudyHub.Business.Configuration;
 public class KernelMemoryOptions
 {
     public QdrantOptions Qdrant { get; set; } = new();
-    public OllamaOptions Ollama { get; set; } = new();
+
     public ChunkingOptions Chunking { get; set; } = new();
 }
 
@@ -14,12 +14,7 @@ public class QdrantOptions
     public string CollectionName { get; set; } = "aistudyhub";
 }
 
-public class OllamaOptions
-{
-    public string Endpoint { get; set; } = "http://localhost:11434";
-    public string EmbeddingModel { get; set; } = "nomic-embed-text";
-    public string GenerationModel { get; set; } = "llama3.1";
-}
+
 
 public class ChunkingOptions
 {

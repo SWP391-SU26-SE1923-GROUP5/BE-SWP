@@ -8,10 +8,10 @@ AI Study Hub is a production-ready ASP.NET Core 8 Web API for AI-assisted learni
 |----------|-----------|
 | Framework | ASP.NET Core 8 Web API |
 | Database | SQL Server + Entity Framework Core 8 Code First |
-| AI - Embedding | OpenAI SDK (`EmbeddingClient`) or Ollama (`nomic-embed-text`) |
+| AI - Embedding | OpenAI SDK (`EmbeddingClient` / `text-embedding-3-small`) |
 | AI - Vector Store | Qdrant (local vector DB) |
 | AI - LLM Orchestration | Semantic Kernel + Microsoft Kernel Memory |
-| AI - Generators | OpenAI SDK (`ChatClient`) or Ollama LLM (quiz & flashcard generation) |
+| AI - Generators | OpenAI SDK (`ChatClient` / `gpt-4o-mini`) |
 | AI - Search | Hybrid search (dense embeddings + BM25 sparse, reranked with Reciprocal Rank Fusion) |
 | AI - Guardrails | Faithfulness filter, grounding verifier, confidence scorer |
 | Authentication | JWT Bearer + Refresh Tokens + OTP (email verification / password reset) |
@@ -505,7 +505,7 @@ erDiagram
 
 ## Background Workers
 
-1. **DocumentBackgroundProcessor** — dequeues uploaded documents, extracts text, chunks, embeds via Ollama, upserts to Qdrant, updates DB status
+1. **DocumentBackgroundProcessor** — dequeues uploaded documents, extracts text, chunks, embeds via OpenAI, upserts to Qdrant, updates DB status
 2. **TierExpirationCleanupService** — runs every 24h, downgrades expired subscriptions to Free tier
 3. **UnverifiedAccountCleanupService** — runs daily, removes accounts older than 7 days that are still unverified
 
@@ -513,7 +513,7 @@ erDiagram
 
 - .NET 8 SDK
 - SQL Server
-- [Ollama](https://ollama.com) running locally with `nomic-embed-text` and `llama3.2:3b` models
+- OpenAI API Key for embedding and chat models
 - [Qdrant](https://qdrant.tech) running locally (`docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant`)
 - EF Core CLI tools (optional)
 
@@ -533,10 +533,10 @@ Create `AIStudyHub.API/appsettings.json` from the example. Key sections:
     "ExpirationMinutes": 60,
     "RefreshTokenExpirationDays": 7
   },
-  "Ollama": {
-    "Endpoint": "http://localhost:11434",
-    "EmbeddingModel": "nomic-embed-text",
-    "GenerationModel": "llama3.2:3b"
+  "Rag": {
+    "OpenAIApiKey": "sk-...",
+    "OpenAIChatModel": "gpt-5-mini",
+    "OpenAIEmbeddingModel": "text-embedding-3-small"
   },
   "Qdrant": {
     "Url": "http://localhost:6333",

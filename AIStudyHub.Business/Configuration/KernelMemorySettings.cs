@@ -3,8 +3,16 @@ namespace AIStudyHub.Business.Configuration;
 public class KernelMemorySettings
 {
     public QdrantSettings Qdrant { get; set; } = new();
-    public OllamaSettings Ollama { get; set; } = new();
+
+    public OpenAISettings OpenAI { get; set; } = new();
     public ChunkingSettings Chunking { get; set; } = new();
+}
+
+public class OpenAISettings
+{
+    public string ApiKey { get; set; } = string.Empty;
+    public string EmbeddingModel { get; set; } = "text-embedding-3-small";
+    public string TextModel { get; set; } = "gpt-4o-mini";
 }
 
 public class QdrantSettings
@@ -14,12 +22,7 @@ public class QdrantSettings
     public string CollectionName { get; set; } = "aistudyhub";
 }
 
-public class OllamaSettings
-{
-    public string Endpoint { get; set; } = "http://localhost:11434";
-    public string EmbeddingModel { get; set; } = "nomic-embed-text";
-    public string GenerationModel { get; set; } = "llama3.1";
-}
+
 
 public class ChunkingSettings
 {

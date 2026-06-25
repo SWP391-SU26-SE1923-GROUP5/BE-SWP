@@ -45,30 +45,7 @@ namespace AIStudyHub.Business.AI.LLM
         {
             try
             {
-                // ----- OLLAMA (COMMENTED OUT) -----
-                /*
-                var payload = new
-                {
-                    model = _options.OllamaModel,
-                    stream = false,
-                    temperature = temperature,
-                    messages = new[]
-                    {
-                        new { role = "user", content = message }
-                    }
-                };
 
-                var response = await _httpClient.PostAsJsonAsync($"{_options.OllamaUrl}/api/chat", payload);
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorBody = await response.Content.ReadAsStringAsync();
-                    _logger.LogError("Ollama chat failed: {Status}. Body: {Body}", response.StatusCode, errorBody);
-                    return string.Empty;
-                }
-
-                using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
-                return json.RootElement.GetProperty("message").GetProperty("content").GetString() ?? "";
-                */
 
                 // ----- OPENAI -----
                 var options = new ChatCompletionOptions();
@@ -94,18 +71,7 @@ namespace AIStudyHub.Business.AI.LLM
         }
         public async Task<ReadOnlyMemory<float>> CreateEmbeddingFromText(string message)
         {
-            // ----- OLLAMA (COMMENTED OUT) -----
-            /*
-            var payload = new { model = _options.OllamaEmbeddingModel, input = message };
-            var response = await _httpClient.PostAsJsonAsync($"{_options.OllamaUrl}/api/embed", payload);
-            response.EnsureSuccessStatusCode();
 
-            using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
-            var embeddingArray = json.RootElement.GetProperty("embeddings")[0];
-
-            float[] embedding = embeddingArray.EnumerateArray().Select(x => x.GetSingle()).ToArray();
-            return embedding;
-            */
 
             // ----- OPENAI -----
             var result = await _embeddingClient.GenerateEmbeddingAsync(message);
@@ -116,26 +82,7 @@ namespace AIStudyHub.Business.AI.LLM
         {
             var result = new List<float[]>();
 
-            // ----- OLLAMA (COMMENTED OUT) -----
-            /*
-            int batchSize = 20; 
-            for (int i = 0; i < messages.Count; i += batchSize)
-            {
-                var batch = messages.Skip(i).Take(batchSize).ToList();
-                var payload = new { model = _options.OllamaEmbeddingModel, input = batch };
 
-                var response = await _httpClient.PostAsJsonAsync($"{_options.OllamaUrl}/api/embed", payload);
-                response.EnsureSuccessStatusCode();
-
-                using var json = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
-                var embeddingsArray = json.RootElement.GetProperty("embeddings");
-
-                foreach (var embeddingElement in embeddingsArray.EnumerateArray())
-                {
-                    result.Add(embeddingElement.EnumerateArray().Select(x => x.GetSingle()).ToArray());
-                }
-            }
-            */
 
             // ----- OPENAI -----
             // OpenAI handles reasonably large batches up to thousands of texts natively.
