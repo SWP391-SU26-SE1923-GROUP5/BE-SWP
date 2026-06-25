@@ -88,6 +88,11 @@ public static class BusinessServiceExtensions
                 .WithOpenAITextEmbeddingGeneration(openAiConfig)
                 .WithOpenAITextGeneration(openAiConfig)
                 .WithQdrantMemoryDb(settings.Qdrant.Host, settings.Qdrant.VectorSize.ToString())
+                .WithCustomTextPartitioningOptions(new Microsoft.KernelMemory.Configuration.TextPartitioningOptions
+                {
+                    MaxTokensPerParagraph = settings.Chunking.MaxTokensPerChunk,
+                    OverlappingTokens = settings.Chunking.OverlapTokens
+                })
                 .Build<MemoryServerless>(new KernelMemoryBuilderBuildOptions
                 {
                     AllowMixingVolatileAndPersistentData = true
