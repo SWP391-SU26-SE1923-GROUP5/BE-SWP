@@ -122,7 +122,7 @@ public class DocumentBackgroundProcessor : BackgroundService
             var document = await unitOfWork.Documents.GetByIdAsync(request.DocumentId, ct);
             if (document != null)
             {
-                document.Status = DocumentStatus.Published;
+                document.Status = DocumentStatus.Done;
                 document.UpdatedAt = DateTime.UtcNow;
                 unitOfWork.Documents.Update(document);
                 await unitOfWork.SaveChangesAsync(ct);

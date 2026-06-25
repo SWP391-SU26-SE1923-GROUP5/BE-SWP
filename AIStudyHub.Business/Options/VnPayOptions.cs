@@ -6,5 +6,5 @@ public sealed class VnPayOptions
     public string TmnCode { get; set; } = string.Empty;
     public string HashSecret { get; set; } = string.Empty;
     public string BaseUrl { get; set; } = string.Empty;
-    public string ReturnUrl { get; set; } = string.Empty;
+    public string ReturnUrl { get; set; } = "http://localhost:3000/pricing/vnpay-return";
 }

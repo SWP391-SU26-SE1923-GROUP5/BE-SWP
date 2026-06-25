@@ -67,32 +67,29 @@ public sealed class PaymentController : ControllerBase
         return Ok(response);
     }
 
+    /// <summary>
+    /// Frontend fetches this after VNPay redirects to it.
+    /// Returns JSON instead of Redirect to avoid CORS.
+    /// </summary>
     [HttpGet("vnpay-return")]
     [AllowAnonymous]
-    public IActionResult PaymentReturn()
+    public async Task<IActionResult> PaymentReturn(CancellationToken cancellationToken)
     {
-        // Giao diện web hiển thị kết quả cho user sau khi thanh toán trên cổng VNPay
-        var responseCode = Request.Query["vnp_ResponseCode"];
-        if (responseCode == "00")
+        var result = await _service.HandleVnpayReturnAsync(Request.Query, cancellationToken);
+        if (!result.IsValidSignature)
         {
-            return Ok("Thanh toán thành công. Cảm ơn bạn!");
+            return BadRequest(new { success = false, message = "Invalid signature" });
         }
-        return BadRequest("Thanh toán thất bại hoặc đã bị hủy.");
+
+        return Ok(new
+        {
+            success = result.IsSuccess,
+            message = result.Message,
+            status = result.Status
+        });
     }
 
-    [HttpGet("vnpay-ipn")]
-    [AllowAnonymous]
-    public async Task<IActionResult> PaymentIpn(CancellationToken cancellationToken)
-    {
-        // VNPay gọi ngầm API này để cập nhật trạng thái đơn hàng
-        var success = await _service.ProcessVnPayWebhookAsync(Request.Query, cancellationToken);
-        if (success)
-        {
-            return Ok(new { RspCode = "00", Message = "Confirm Success" });
-        }
-        
-        return Ok(new { RspCode = "97", Message = "Invalid Signature or Payment failed" });
-    }
+
 
     private Guid GetCurrentUserId()
     {

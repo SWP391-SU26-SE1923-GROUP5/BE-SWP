@@ -1,4 +1,5 @@
 using AIStudyHub.Business.AI.Guardrails;
+using AIStudyHub.Data.Entities;
 using AIStudyHub.Business.Interfaces.AI.Orchestration;
 using AIStudyHub.Business.Interfaces.AI.Search;
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
@@ -48,18 +49,18 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _logger = logger;
     }
 
-    public async Task<RagResponse> AskAsync(Guid userId, string question, CancellationToken ct = default)
+    public async Task<RagResponse> AskAsync(Guid userId, Guid? documentId, string question, IReadOnlyList<ChatMessage> history, CancellationToken ct = default)
     {
         _logger.LogInformation("Processing RAG query for user {UserId}", userId);
 
         // L3: Retrieval with hybrid search and reranking
-        var searchResults = await _searchService.SearchAsync(question, userId, 10, ct);
+        var searchResults = await _searchService.SearchAsync(question, userId, documentId, 10, ct);
         var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 5, ct);
         
         var resultList = rerankedResults.ToList();
         if (!resultList.Any())
         {
-            return new RagResponse("I couldn't find relevant information in your documents.", new(), 0.0);
+            return new RagResponse("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", new(), 0.0);
         }
 
         // L4: Generate answer using Custom LLM Prompt (Avoids duplicate KernelMemory search)
@@ -94,6 +95,9 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var userPrompt = $"""
             SOURCES:
             {contextBuilder}
+
+            CHAT HISTORY:
+            {string.Join("\n", history.Select(m => $"{m.Sender}: {m.Content}"))}
 
             QUESTION: {question}
 

@@ -7,11 +7,6 @@ public sealed class CreateChatSessionRequestDtoValidator : AbstractValidator<Cre
 {
     public CreateChatSessionRequestDtoValidator()
     {
-        RuleFor(x => x.UserId).NotEmpty();
-        RuleFor(x => x.DocumentId)
-            .NotEqual(Guid.Empty)
-            .When(x => x.DocumentId.HasValue)
-            .WithMessage("DocumentId, if provided, must not be empty.");
         RuleFor(x => x.SessionTitle).NotEmpty().MaximumLength(64);
     }
 }
@@ -20,7 +15,9 @@ public sealed class CreateChatMessageRequestDtoValidator : AbstractValidator<Cre
 {
     public CreateChatMessageRequestDtoValidator()
     {
-        RuleFor(x => x.SessionId).NotEmpty();
+        RuleFor(x => x.SessionId)
+            .NotEqual(Guid.Empty)
+            .When(x => x.SessionId.HasValue);
         RuleFor(x => x.Message).NotEmpty();
     }
 }

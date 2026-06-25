@@ -1,8 +1,10 @@
+using AIStudyHub.Data.Entities;
+
 namespace AIStudyHub.Business.Interfaces.AI.Orchestration;
 
 public interface ISemanticKernelOrchestrator
 {
-    Task<RagResponse> AskAsync(Guid userId, string question, CancellationToken ct = default);
+    Task<RagResponse> AskAsync(Guid userId, Guid? documentId, string question, IReadOnlyList<ChatMessage> history, CancellationToken ct = default);
     Task<string> SummarizeAsync(Guid documentId, Guid userId, CancellationToken ct = default);
 }
 

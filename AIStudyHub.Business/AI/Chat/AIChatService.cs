@@ -7,8 +7,8 @@ using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
-using FluentValidation;
 using Microsoft.AspNetCore.Builder;
+using AIStudyHub.Business.Interfaces.AI.Orchestration;
 using Microsoft.EntityFrameworkCore;
 
 namespace AIStudyHub.Business.AI.Chat;
@@ -17,21 +17,19 @@ public sealed class AIChatService : IAIChatService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
-    private readonly IValidator<CreateChatSessionRequestDto> _createSessionValidator;
-    private readonly IValidator<CreateChatMessageRequestDto> _createMessageValidator;
     private readonly ILocalAIService _localAIService;
+    private readonly ISemanticKernelOrchestrator _orchestrator;
+    
     public AIChatService(
         IUnitOfWork unitOfWork,
         IMapper mapper,
-        IValidator<CreateChatSessionRequestDto> createSessionValidator,
-        IValidator<CreateChatMessageRequestDto> createMessageValidator,
-        ILocalAIService openAiService)
+        ILocalAIService openAiService,
+        ISemanticKernelOrchestrator orchestrator)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _localAIService = openAiService;
-        _createSessionValidator = createSessionValidator;
-        _createMessageValidator = createMessageValidator;
+        _orchestrator = orchestrator;
     }
 
     public async Task<IReadOnlyList<ChatSessionResponseDto>> GetSessionsAsync()
@@ -47,20 +45,13 @@ public sealed class AIChatService : IAIChatService
         return sessions.Select(_mapper.Map<ChatSessionResponseDto>).ToList();
     }
 
-    public async Task<ChatSessionResponseDto> CreateSessionAsync(CreateChatSessionRequestDto request)
+    public async Task<ChatSessionResponseDto> CreateSessionAsync(CreateChatSessionRequestDto request, Guid userId)
     {
-        await _createSessionValidator.ValidateAndThrowAsync(request);
-
-        if (request.DocumentId.HasValue)
+        var session = new ChatSession
         {
-            var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId.Value) is not null;
-            if (!documentExists)
-            {
-                throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
-            }
-        }
-
-        var session = _mapper.Map<ChatSession>(request);
+            UserId = userId,
+            SessionTitle = request.SessionTitle
+        };
         await _unitOfWork.ChatSessions.AddAsync(session);
         await _unitOfWork.SaveChangesAsync();
 
@@ -92,29 +83,72 @@ public sealed class AIChatService : IAIChatService
         return messages.Select(_mapper.Map<ChatMessageResponseDto>).ToList();
     }
 
-    public async Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request)
+    public async Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request, Guid userId, CancellationToken ct = default)
     {
-        await _createMessageValidator.ValidateAndThrowAsync(request);
-
-        var sessionExists = await _unitOfWork.ChatSessions.GetByIdAsync(request.SessionId) is not null;
-        if (!sessionExists)
+        ChatSession session;
+        if (!request.SessionId.HasValue)
         {
-            throw new KeyNotFoundException($"Chat session with ID {request.SessionId} not found.");
+            var title = request.Message.Length > 50 ? request.Message.Substring(0, 47) + "..." : request.Message;
+            session = new ChatSession
+            {
+                UserId = userId,
+                DocumentId = request.DocumentId,
+                SessionTitle = title
+            };
+            await _unitOfWork.ChatSessions.AddAsync(session);
+            await _unitOfWork.SaveChangesAsync();
+        }
+        else
+        {
+            session = await _unitOfWork.ChatSessions.GetByIdAsync(request.SessionId.Value);
+            if (session == null || session.UserId != userId)
+            {
+                throw new KeyNotFoundException($"Chat session with ID {request.SessionId} not found or access denied.");
+            }
+
+            if (request.DocumentId.HasValue && session.DocumentId == null)
+            {
+                session.DocumentId = request.DocumentId.Value;
+                _unitOfWork.ChatSessions.Update(session);
+                await _unitOfWork.SaveChangesAsync();
+            }
         }
 
-        // Save user message
-        var userMessage = _mapper.Map<ChatMessage>(request);
-        userMessage.Sender = userMessage.Sender ?? "user";
+        var userMessage = new ChatMessage
+        {
+            ChatSessionId = session.Id,
+            Sender = "user",
+            Content = request.Message
+        };
         await _unitOfWork.ChatMessages.AddAsync(userMessage);
         await _unitOfWork.SaveChangesAsync();
 
-        // Call OpenAI to get assistant response
-        var aiResponse = await _localAIService.SendMessageAsync(request.Message);
+        var history = await _unitOfWork.ChatMessages
+            .Query()
+            .Where(m => m.ChatSessionId == session.Id)
+            .OrderByDescending(m => m.CreatedAt)
+            .Take(10)
+            .ToListAsync(ct);
+        history.Reverse();
 
-        // Persist assistant message
+        var activeDocumentId = request.DocumentId ?? session.DocumentId;
+        string aiResponse;
+
+        if (activeDocumentId.HasValue)
+        {
+            var ragResponse = await _orchestrator.AskAsync(userId, activeDocumentId.Value, request.Message, history, ct);
+            aiResponse = ragResponse.Answer;
+        }
+        else
+        {
+            var historyText = string.Join("\n", history.Select(m => $"{m.Sender}: {m.Content}"));
+            var prompt = $"CHAT HISTORY:\n{historyText}\n\nUSER: {request.Message}\nASSISTANT:";
+            aiResponse = await _localAIService.SendMessageAsync(prompt) ?? "Xin lỗi, tôi không thể trả lời lúc này.";
+        }
+
         var assistantMessage = new ChatMessage
         {
-            ChatSessionId = request.SessionId,
+            ChatSessionId = session.Id,
             Sender = "assistant",
             Content = aiResponse
         };
@@ -125,7 +159,7 @@ public sealed class AIChatService : IAIChatService
         var created = await _unitOfWork.ChatMessages
             .Query()
             .AsNoTracking()
-            .FirstAsync(chatMessage => chatMessage.Id == assistantMessage.Id);
+            .FirstAsync(chatMessage => chatMessage.Id == assistantMessage.Id, ct);
 
         return _mapper.Map<ChatMessageResponseDto>(created);
     }

@@ -1391,64 +1391,6 @@ public sealed class PaymentService : IPaymentService
         return new PaymentLinkResponseDto(url);
     }
 
-    public async Task<bool> ProcessVnPayWebhookAsync(IQueryCollection query, CancellationToken cancellationToken = default)
-    {
-        if (!_vnPayService.ValidateSignature(query))
-        {
-            return false;
-        }
-
-        var paymentIdString = query["vnp_TxnRef"].ToString();
-        var responseCode = query["vnp_ResponseCode"].ToString();
-        var transactionId = query["vnp_TransactionNo"].ToString();
-
-        if (string.IsNullOrEmpty(paymentIdString) || !Guid.TryParse(paymentIdString, out var paymentId))
-        {
-            return false;
-        }
-
-        var payment = await _unitOfWork.Payments.GetByIdAsync(paymentId, cancellationToken);
-        if (payment is null)
-        {
-            return false;
-        }
-
-        payment.TransactionId = transactionId;
-
-        if (responseCode == "00") // Success
-        {
-            payment.Status = Data.Enums.PaymentStatus.Completed;
-
-            if (payment.TierId.HasValue)
-            {
-                var user = await _unitOfWork.Users.GetByIdAsync(payment.UserId, cancellationToken);
-                if (user is not null)
-                {
-                    var tier = await _unitOfWork.TierMemberships.GetByIdAsync(payment.TierId.Value, cancellationToken);
-                    user.TierId = payment.TierId.Value;
-                    if (tier is not null && !tier.TierName.Equals("Free", StringComparison.OrdinalIgnoreCase))
-                    {
-                        user.TierExpireAt = DateTime.UtcNow.AddDays(30);
-                    }
-                    else
-                    {
-                        user.TierExpireAt = null;
-                    }
-                    _unitOfWork.Users.Update(user);
-                }
-            }
-        }
-        else
-        {
-            payment.Status = Data.Enums.PaymentStatus.Failed;
-        }
-
-        _unitOfWork.Payments.Update(payment);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        return true;
-    }
-
     public async Task<IReadOnlyList<PaymentResponseDto>> GetUserPaymentsAsync(Guid userId, CancellationToken cancellationToken = default)
     {
         var payments = await _unitOfWork.Payments
@@ -1484,6 +1426,78 @@ public sealed class PaymentService : IPaymentService
         payment.Status = Data.Enums.PaymentStatus.Refunded;
         _unitOfWork.Payments.Update(payment);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<VnpayReturnResult> HandleVnpayReturnAsync(IQueryCollection query, CancellationToken cancellationToken = default)
+    {
+        if (!_vnPayService.ValidateSignature(query))
+        {
+            return new VnpayReturnResult { IsValidSignature = false };
+        }
+
+        var paymentIdString = query["vnp_TxnRef"].ToString();
+        var responseCode = query["vnp_ResponseCode"].ToString();
+        var transactionId = query["vnp_TransactionNo"].ToString();
+
+        if (!Guid.TryParse(paymentIdString, out var paymentId))
+        {
+            return new VnpayReturnResult { Message = "Invalid payment ID" };
+        }
+
+        var payment = await _unitOfWork.Payments.GetByIdAsync(paymentId, cancellationToken);
+        if (payment is null)
+        {
+            return new VnpayReturnResult { Message = "Payment not found" };
+        }
+
+        if (payment.Status != Data.Enums.PaymentStatus.Pending)
+        {
+            return new VnpayReturnResult
+            {
+                IsSuccess = payment.Status == Data.Enums.PaymentStatus.Completed,
+                Message = "Payment already processed",
+                Status = payment.Status.ToString()
+            };
+        }
+
+        payment.TransactionId = transactionId;
+
+        if (responseCode == "00")
+        {
+            payment.Status = Data.Enums.PaymentStatus.Completed;
+            _unitOfWork.Payments.Update(payment);
+
+            var user = await _unitOfWork.Users.GetByIdAsync(payment.UserId, cancellationToken);
+            if (user is not null && payment.TierId.HasValue)
+            {
+                var tier = await _unitOfWork.TierMemberships.GetByIdAsync(payment.TierId.Value, cancellationToken);
+                user.TierId = payment.TierId.Value;
+                user.TierExpireAt = tier is not null && !tier.TierName.Equals("Free", StringComparison.OrdinalIgnoreCase)
+                    ? DateTime.UtcNow.AddDays(30)
+                    : null;
+                _unitOfWork.Users.Update(user);
+            }
+
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            return new VnpayReturnResult
+            {
+                IsSuccess = true,
+                Message = "Thanh toán thành công",
+                Status = Data.Enums.PaymentStatus.Completed.ToString()
+            };
+        }
+
+        payment.Status = Data.Enums.PaymentStatus.Failed;
+        _unitOfWork.Payments.Update(payment);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return new VnpayReturnResult
+        {
+            IsSuccess = false,
+            Message = "Thanh toán thất bại hoặc bị hủy",
+            Status = Data.Enums.PaymentStatus.Failed.ToString()
+        };
     }
 }
 

@@ -1,11 +1,13 @@
 using AIStudyHub.Business.DTOs.Payments;
+using Microsoft.AspNetCore.Http;
+using System;
 
 namespace AIStudyHub.Business.Interfaces.Services;
 
 public interface IPaymentService : ICrudService<PaymentResponseDto, CreatePaymentRequestDto, UpdatePaymentRequestDto>
 {
-    System.Threading.Tasks.Task<PaymentLinkResponseDto> CreatePaymentUrlAsync(CreatePaymentLinkRequestDto request, Microsoft.AspNetCore.Http.HttpContext context, System.Threading.CancellationToken cancellationToken = default);
-    System.Threading.Tasks.Task<bool> ProcessVnPayWebhookAsync(Microsoft.AspNetCore.Http.IQueryCollection query, System.Threading.CancellationToken cancellationToken = default);
-    System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<PaymentResponseDto>> GetUserPaymentsAsync(Guid userId, System.Threading.CancellationToken cancellationToken = default);
-    System.Threading.Tasks.Task RefundPaymentAsync(Guid paymentId, System.Threading.CancellationToken cancellationToken = default);
+    Task<PaymentLinkResponseDto> CreatePaymentUrlAsync(CreatePaymentLinkRequestDto request, HttpContext context, CancellationToken cancellationToken = default);
+    Task<System.Collections.Generic.IReadOnlyList<PaymentResponseDto>> GetUserPaymentsAsync(Guid userId, CancellationToken cancellationToken = default);
+    Task RefundPaymentAsync(Guid paymentId, CancellationToken cancellationToken = default);
+    Task<VnpayReturnResult> HandleVnpayReturnAsync(IQueryCollection query, CancellationToken cancellationToken = default);
 }

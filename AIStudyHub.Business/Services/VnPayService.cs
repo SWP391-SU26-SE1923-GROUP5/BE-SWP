@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
+using Microsoft.Extensions.Logging;
 using System.Text;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
@@ -12,21 +13,22 @@ namespace AIStudyHub.Business.Services;
 public sealed class VnPayService : IVnPayService
 {
     private readonly VnPayOptions _options;
+    private readonly Microsoft.Extensions.Logging.ILogger<VnPayService> _logger;
 
-    public VnPayService(IOptions<VnPayOptions> options)
+    public VnPayService(IOptions<VnPayOptions> options, Microsoft.Extensions.Logging.ILogger<VnPayService> logger)
     {
         _options = options.Value;
+        _logger = logger;
     }
 
     public string CreatePaymentUrl(HttpContext context, Guid paymentId, decimal amount, string orderInfo)
     {
-        var tick = DateTime.UtcNow.Ticks.ToString();
         var vnpayData = new SortedList<string, string>(new VnPayCompare())
         {
             { "vnp_Version", "2.1.0" },
             { "vnp_Command", "pay" },
             { "vnp_TmnCode", _options.TmnCode },
-            { "vnp_Amount", ((long)(amount * 100)).ToString() }, // Amount in VND, multiplied by 100
+            { "vnp_Amount", ((long)(amount * 100)).ToString() },
             { "vnp_CreateDate", DateTime.UtcNow.AddHours(7).ToString("yyyyMMddHHmmss") },
             { "vnp_CurrCode", "VND" },
             { "vnp_IpAddr", GetIpAddress(context) },
@@ -34,13 +36,13 @@ public sealed class VnPayService : IVnPayService
             { "vnp_OrderInfo", orderInfo },
             { "vnp_OrderType", "other" },
             { "vnp_ReturnUrl", _options.ReturnUrl },
-            { "vnp_TxnRef", paymentId.ToString() } // Reference to Payment record
+            { "vnp_TxnRef", paymentId.ToString() }
         };
 
         var queryString = BuildQueryString(vnpayData);
         var signData = queryString;
         var vnpSecureHash = HmacSHA512(_options.HashSecret, signData);
-        
+
         return $"{_options.BaseUrl}?{queryString}&vnp_SecureHash={vnpSecureHash}";
     }
 
@@ -65,6 +67,11 @@ public sealed class VnPayService : IVnPayService
 
         var signData = BuildQueryString(vnpayData);
         var checkSum = HmacSHA512(_options.HashSecret, signData);
+
+        // DEBUG: In ra để so sánh với chữ ký VNPay gửi
+        _logger.LogInformation($"[VNPay DEBUG] vnp_SecureHash from VNPay: {vnp_SecureHash}");
+        _logger.LogInformation($"[VNPay DEBUG] signData: {signData}");
+        _logger.LogInformation($"[VNPay DEBUG] calculated checksum: {checkSum}");
 
         return checkSum.Equals(vnp_SecureHash, StringComparison.InvariantCultureIgnoreCase);
     }
