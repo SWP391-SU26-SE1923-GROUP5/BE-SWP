@@ -202,21 +202,15 @@ public sealed class DocumentUploadController : ControllerBase
         if (document == null)
             return NotFound("Document not found");
 
-        // Temporary workaround: since SQL DocumentChunks is deleted, fetch from Vector Store using empty query 
-        // to retrieve up to 1000 chunks for this document.
-        var dummyDense = new float[1536]; // Match Nomic dimensions
-        var dummySparse = (Indices: new List<uint>(), Values: new List<float>());
-        var filter = new Dictionary<string, string> { { "documentId", id.ToString() } };
-        
-        var qdrantResults = await _vectorStoreService.HybridSearchAsync(dummyDense, dummySparse, 1000, filter);
+        var payloads = await _vectorStoreService.GetPayloadsByDocumentIdAsync(id);
 
-        var chunks = qdrantResults.Select((r, idx) => new ChunkDto(
-            Guid.TryParse(r.Id, out var g) ? g : Guid.NewGuid(),
+        var chunks = payloads.Select(p => new ChunkDto(
+            Guid.NewGuid(), // Vector Id is not critical here, just return a new Guid
             id,
-            r.Metadata.GetValueOrDefault("text", ""),
-            idx,
+            p.GetValueOrDefault("text", ""),
+            int.TryParse(p.GetValueOrDefault("chunkIndex", "0"), out var idx) ? idx : 0,
             null
-        )).ToList();
+        )).OrderBy(c => c.OrderIndex).ToList();
 
         return Ok(chunks);
     }
