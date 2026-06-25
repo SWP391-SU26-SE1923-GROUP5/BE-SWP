@@ -16,7 +16,7 @@ Technology stack:
 
 - ASP.NET Core 8 Web API
 - SQL Server + Entity Framework Core 8 Code First
-- Ollama + nomic-embed-text + Qdrant (local AI stack)
+- OpenAI + Qdrant (AI stack)
 - Semantic Kernel + Microsoft Kernel Memory (RAG orchestration)
 - Hybrid Search (dense embeddings + BM25 sparse, RRF reranking)
 - AI Guardrails (faithfulness, grounding, confidence)
@@ -30,7 +30,7 @@ Technology stack:
 ## Business Goals
 
 - Allow students to upload, manage, search, and study learning documents.
-- Use local AI (Ollama) for chat, flashcards, quizzes, RAG Q&A, and summarization.
+- Use AI (OpenAI) for chat, flashcards, quizzes, RAG Q&A, and summarization.
 - Support community quality signals through voting and reporting.
 - Provide subscription tiers (storage + AI token quotas) and payment integration.
 - Keep API architecture maintainable, testable, and production-ready.
@@ -246,7 +246,7 @@ Core entities:
 
 ## AI Pipeline Rules
 
-- AI embedding: use `IEmbeddingService` which wraps `ILocalAIService` (Ollama `nomic-embed-text`).
+- AI embedding: use `IEmbeddingService` which wraps `ILocalAIService` (OpenAI SDK).
 - Vector storage: use `IVectorStoreService` (Qdrant) — never call Qdrant directly from services.
 - Hybrid search: use `IHybridSearchService` — combines dense + sparse (BM25) via RRF.
 - Reranking: use `IRerankingService` — applies positional decay after initial retrieval.
@@ -295,6 +295,6 @@ Core entities:
 ## Current Implementation Status
 
 - **Implemented:** Authentication (JWT + OTP + OAuth), User management, Document management (upload/chunk/vectorize), RAG pipeline (hybrid search + reranking + SK orchestration + guardrails), Flashcard generation, Quiz generation, Quiz submission with auto-grading, AI Chat, Notifications, Payments (VNPay), Tier memberships, Admin reindexing, 3 background workers.
-- **AI Stack:** Ollama (`nomic-embed-text` for embeddings, configurable LLM for generation) + Qdrant vector store + Semantic Kernel orchestration + local BM25 sparse search.
+- **AI Stack:** OpenAI (`text-embedding-3-small` for embeddings, `gpt-4o-mini` for generation) + Qdrant vector store + Semantic Kernel orchestration + local BM25 sparse search.
 - **Pending:** Integration tests, unit tests for validators and business rules.
 - **Pre-production checklist:** Review `appsettings.json`, move all secrets to user secrets / environment variables, configure real SMTP, configure real VNPay credentials, set correct CORS origins.
