@@ -51,7 +51,12 @@ public sealed class DocumentController : ControllerBase
     public async Task<ActionResult<DocumentResponseDto>> GetById(Guid id, CancellationToken cancellationToken)
     {
         var result = await _service.GetByIdAsync(id, cancellationToken);
-        return result is null ? NotFound() : Ok(result);
+        if (result == null) return NotFound();
+
+        var userId = GetCurrentUserId();
+        if (result.UserId != userId && result.ShareStatus != "public") return Forbid();
+
+        return Ok(result);
     }
 
     // POST   /api/Document - Đã xóa. Dùng POST /api/DocumentUpload/upload/file để upload và tạo Document (có AI pipeline).
@@ -64,8 +69,14 @@ public sealed class DocumentController : ControllerBase
     [HttpPut("{id:guid}")]
     public async Task<ActionResult<DocumentResponseDto>> Update(Guid id, [FromBody] UpdateDocumentRequestDto request, CancellationToken cancellationToken)
     {
+        var document = await _service.GetByIdAsync(id, cancellationToken);
+        if (document == null) return NotFound();
+
+        var userId = GetCurrentUserId();
+        if (document.UserId != userId) return Forbid();
+
         var result = await _service.UpdateAsync(id, request, cancellationToken);
-        return result is null ? NotFound() : Ok(result);
+        return Ok(result);
     }
 
     /// <summary>
@@ -93,6 +104,12 @@ public sealed class DocumentController : ControllerBase
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
+        var document = await _service.GetByIdAsync(id, cancellationToken);
+        if (document == null) return NotFound();
+
+        var userId = GetCurrentUserId();
+        if (document.UserId != userId) return Forbid();
+
         await _service.DeleteAsync(id, cancellationToken);
         return NoContent();
     }
@@ -103,8 +120,10 @@ public sealed class DocumentController : ControllerBase
     public async Task<IActionResult> Download(Guid id, CancellationToken cancellationToken)
     {
         var document = await _service.GetByIdAsync(id, cancellationToken);
-        if (document is null)
-            return NotFound();
+        if (document is null) return NotFound();
+
+        var userId = GetCurrentUserId();
+        if (document.UserId != userId && document.ShareStatus != "public") return Forbid();
 
         if (string.IsNullOrEmpty(document.FileLink))
             return NotFound("No file associated with this document");
@@ -128,8 +147,10 @@ public sealed class DocumentController : ControllerBase
     public async Task<IActionResult> Preview(Guid id, CancellationToken cancellationToken)
     {
         var document = await _service.GetByIdAsync(id, cancellationToken);
-        if (document is null)
-            return NotFound();
+        if (document is null) return NotFound();
+
+        var userId = GetCurrentUserId();
+        if (document.UserId != userId && document.ShareStatus != "public") return Forbid();
 
         if (string.IsNullOrEmpty(document.FileLink))
             return NotFound("No file associated with this document");

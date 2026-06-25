@@ -504,9 +504,12 @@ public sealed class FlashcardService : IFlashcardService
         _mapper = mapper;
     }
 
-    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<FlashcardResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken = default)
+    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<FlashcardResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, Guid userId, CancellationToken cancellationToken = default)
     {
-        var query = _unitOfWork.Flashcards.Query().AsNoTracking();
+        var query = _unitOfWork.Flashcards.Query()
+            .Include(f => f.Document)
+            .Where(f => f.Document.UserId == userId || f.Document.ShareStatus == "public")
+            .AsNoTracking();
 
         if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
         {
@@ -611,11 +614,13 @@ public sealed class FlashcardService : IFlashcardService
 
     public async Task<IReadOnlyList<FlashcardResponseDto>> GetByDocumentAsync(
         Guid documentId,
+        Guid userId,
         CancellationToken cancellationToken = default)
     {
         var flashcards = await _unitOfWork.Flashcards
             .Query()
-            .Where(f => f.DocumentId == documentId)
+            .Include(f => f.Document)
+            .Where(f => f.DocumentId == documentId && (f.Document.UserId == userId || f.Document.ShareStatus == "public"))
             .OrderBy(f => f.CreatedAt)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
@@ -670,9 +675,12 @@ public sealed class QuizService : IQuizService
         _mapper = mapper;
     }
 
-    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<QuizResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken = default)
+    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<QuizResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, Guid userId, CancellationToken cancellationToken = default)
     {
-        var query = _unitOfWork.Quizzes.Query().AsNoTracking();
+        var query = _unitOfWork.Quizzes.Query()
+            .Include(q => q.Document)
+            .Where(q => q.Document.UserId == userId || q.Document.ShareStatus == "public")
+            .AsNoTracking();
 
         if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
         {
