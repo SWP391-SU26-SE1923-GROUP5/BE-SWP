@@ -5,6 +5,7 @@ using AIStudyHub.API.Swagger;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Interfaces.AI.Orchestration;
 using AIStudyHub.Business.Options;
 using AIStudyHub.Business.Services;
 using AIStudyHub.Data.Entities;
@@ -34,6 +35,7 @@ public sealed class DocumentUploadController : ControllerBase
     private readonly DocumentStorageOptions _storageOptions;
 
     private readonly IDocumentProcessingQueue _processingQueue;
+    private readonly IKernelMemoryService _kernelMemoryService;
 
     public DocumentUploadController(
         IUnitOfWork unitOfWork,
@@ -44,7 +46,8 @@ public sealed class DocumentUploadController : ControllerBase
         IOptions<RagOptions> options,
         ILogger<DocumentUploadController> logger,
         IDocumentProcessingQueue processingQueue,
-        IOptions<DocumentStorageOptions> storageOptions)
+        IOptions<DocumentStorageOptions> storageOptions,
+        IKernelMemoryService kernelMemoryService)
     {
         _unitOfWork = unitOfWork;
         _documentProcessing = documentProcessing;
@@ -55,6 +58,7 @@ public sealed class DocumentUploadController : ControllerBase
         _logger = logger;
         _processingQueue = processingQueue;
         _storageOptions = storageOptions.Value;
+        _kernelMemoryService = kernelMemoryService;
     }
 
     // POST /api/DocumentUpload/upload (Base64) đã bị xóa - dùng POST /api/DocumentUpload/upload/file (multipart/form-data) thay thế
@@ -230,6 +234,7 @@ public sealed class DocumentUploadController : ControllerBase
 
         try
         {
+            await _kernelMemoryService.DeleteDocumentAsync(id, cancellationToken);
             await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
 
             _unitOfWork.Documents.Remove(document);
@@ -288,6 +293,7 @@ public sealed class DocumentUploadController : ControllerBase
         byte[] fileContent = await System.IO.File.ReadAllBytesAsync(fullPath, cancellationToken);
         var extension = (document.FileExtension ?? Path.GetExtension(document.FileName ?? "")).ToLowerInvariant();
 
+        await _kernelMemoryService.DeleteDocumentAsync(id, cancellationToken);
         await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
 
         document.Status = DocumentStatus.Processing;

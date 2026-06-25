@@ -82,4 +82,10 @@ public class KernelMemoryService : IKernelMemoryService
 
         return result;
     }
+    public async Task DeleteDocumentAsync(Guid documentId, CancellationToken ct = default)
+    {
+        _logger.LogInformation("Deleting document {DocumentId} from Kernel Memory", documentId);
+        await _memory.DeleteDocumentAsync(documentId: documentId.ToString(), cancellationToken: ct);
+        _logger.LogInformation("Document {DocumentId} deleted from Kernel Memory successfully", documentId);
+    }
 }
