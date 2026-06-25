@@ -98,12 +98,18 @@ public sealed class AuthController : ControllerBase
     }
 
     [HttpGet("external-login/{provider}")]
-    public IActionResult ExternalLogin(string provider)
+    public async Task<IActionResult> ExternalLogin(string provider, [FromServices] Microsoft.AspNetCore.Authentication.IAuthenticationSchemeProvider schemeProvider)
     {
         var actualProvider = SupportedProviders.FirstOrDefault(p => p.Equals(provider, StringComparison.OrdinalIgnoreCase));
         if (actualProvider == null)
         {
             return BadRequest("Unsupported external provider.");
+        }
+
+        var scheme = await schemeProvider.GetSchemeAsync(actualProvider);
+        if (scheme == null)
+        {
+            return BadRequest($"{actualProvider} authentication is not configured on this server.");
         }
 
         var redirectUrl = Url.Action(nameof(ExternalCallback), new { provider = actualProvider });
