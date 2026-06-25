@@ -47,53 +47,53 @@ public sealed class EmbeddingService : IEmbeddingService
         return 10;
     }
 
-    private async Task<List<float[]>> GenerateOllamaEmbeddingsAsync(List<string> texts)
-    {
-        var embeddings = new List<float[]>();
+    // private async Task<List<float[]>> GenerateOllamaEmbeddingsAsync(List<string> texts)
+    // {
+    //     var embeddings = new List<float[]>();
 
-        foreach (var text in texts)
-        {
-            var payload = new
-            {
-                model = _options.OllamaModel,
-                prompt = text
-            };
+    //     foreach (var text in texts)
+    //     {
+    //         var payload = new
+    //         {
+    //             model = _options.OllamaModel,
+    //             prompt = text
+    //         };
 
-            var content = new StringContent(
-                JsonSerializer.Serialize(payload),
-                Encoding.UTF8,
-                "application/json");
+    //         var content = new StringContent(
+    //             JsonSerializer.Serialize(payload),
+    //             Encoding.UTF8,
+    //             "application/json");
 
-            _httpClient.DefaultRequestHeaders.Clear();
-            var requestUrl = $"{_options.OllamaUrl!.TrimEnd('/')}/api/embeddings";
-            var response = await _httpClient.PostAsync(requestUrl, content);
+    //         _httpClient.DefaultRequestHeaders.Clear();
+    //         var requestUrl = $"{_options.OllamaUrl!.TrimEnd('/')}/api/embeddings";
+    //         var response = await _httpClient.PostAsync(requestUrl, content);
 
-            if (!response.IsSuccessStatusCode)
-            {
-                var error = await response.Content.ReadAsStringAsync();
-                throw new InvalidOperationException($"Ollama embedding failed: {response.StatusCode} - {error}");
-            }
+    //         if (!response.IsSuccessStatusCode)
+    //         {
+    //             var error = await response.Content.ReadAsStringAsync();
+    //             throw new InvalidOperationException($"Ollama embedding failed: {response.StatusCode} - {error}");
+    //         }
 
-            var json = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(json);
+    //         var json = await response.Content.ReadAsStringAsync();
+    //         using var doc = JsonDocument.Parse(json);
 
-            var embeddingArray = doc.RootElement
-                .GetProperty("embedding")
-                .EnumerateArray()
-                .Select(e => e.GetSingle())
-                .ToArray();
+    //         var embeddingArray = doc.RootElement
+    //             .GetProperty("embedding")
+    //             .EnumerateArray()
+    //             .Select(e => e.GetSingle())
+    //             .ToArray();
 
-            if (!_cachedDimension.HasValue)
-            {
-                _cachedDimension = embeddingArray.Length;
-                _logger.LogInformation("Detected Ollama embedding dimension: {Dimension}", _cachedDimension.Value);
-            }
+    //         if (!_cachedDimension.HasValue)
+    //         {
+    //             _cachedDimension = embeddingArray.Length;
+    //             _logger.LogInformation("Detected Ollama embedding dimension: {Dimension}", _cachedDimension.Value);
+    //         }
 
-            embeddings.Add(embeddingArray);
-        }
+    //         embeddings.Add(embeddingArray);
+    //     }
 
-        return embeddings;
-    }
+    //     return embeddings;
+    // }
 
     /*
     private async Task<List<float[]>> GenerateNomicEmbeddingsAsync(List<string> texts)
