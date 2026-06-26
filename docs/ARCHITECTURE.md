@@ -230,7 +230,7 @@ All entities inherit from `BaseEntity` (Id: Guid, CreatedAt, UpdatedAt).
 
 ### Enums (7)
 
-`DocumentStatus` (Draft/Published/Archived/Banned/Processing/Failed), `NotificationType`, `PaymentStatus`, `QuestionType` (SingleChoice/MultipleChoice/TrueFalse), `UserRole` (Student/Educator/Admin), `ReportStatus`, `VoteType` (Upvote/Downvote).
+`DocumentStatus` (Draft/Published/Archived/Banned/Processing/Failed), `NotificationType`, `PaymentStatus`, `QuestionType` (SingleChoice/MultipleChoice/TrueFalse), `UserRole` (Student/Admin), `ReportStatus`, `VoteType` (Upvote/Downvote).
 
 ### Entity Relationships
 
