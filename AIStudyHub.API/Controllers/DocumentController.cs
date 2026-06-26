@@ -129,7 +129,7 @@ public sealed class DocumentController : ControllerBase
             return NotFound("No file associated with this document");
 
         var relativePath = document.FileLink.Replace("/uploads/", "");
-        var fullPath = Path.Combine(_storageOptions.BasePath, relativePath);
+        var fullPath = Path.GetFullPath(Path.Combine(_storageOptions.BasePath ?? string.Empty, relativePath));
 
         if (!System.IO.File.Exists(fullPath))
             return NotFound("File not found on disk");
@@ -138,7 +138,7 @@ public sealed class DocumentController : ControllerBase
         var fileName = document.FileName ?? Path.GetFileName(relativePath);
 
         var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-        return File(stream, contentType, fileName);
+        return File(stream, contentType, fileName, enableRangeProcessing: true);
     }
 
     [HttpGet("{id:guid}/preview")]
@@ -156,7 +156,7 @@ public sealed class DocumentController : ControllerBase
             return NotFound("No file associated with this document");
 
         var relativePath = document.FileLink.Replace("/uploads/", "");
-        var fullPath = Path.Combine(_storageOptions.BasePath, relativePath);
+        var fullPath = Path.GetFullPath(Path.Combine(_storageOptions.BasePath ?? string.Empty, relativePath));
 
         if (!System.IO.File.Exists(fullPath))
             return NotFound("File not found on disk");
@@ -166,6 +166,6 @@ public sealed class DocumentController : ControllerBase
 
         var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         Response.Headers.Append("Content-Disposition", $"inline; filename=\"{fileName}\"");
-        return File(stream, contentType);
+        return File(stream, contentType, enableRangeProcessing: true);
     }
 }
