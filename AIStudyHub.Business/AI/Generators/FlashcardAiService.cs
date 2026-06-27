@@ -72,7 +72,7 @@ public sealed class FlashcardAiService : IFlashcardAiService
         var batchNumber = 0;
         var maxBatches = request.NumberOfFlashcards * 3;
         var consecutiveZeroAdded = 0;
-        const int batchSize = 5;
+        const int batchSize = 20;
 
         while (remaining > 0 && batchNumber < maxBatches)
         {
@@ -410,7 +410,7 @@ RULES:
                 if (string.IsNullOrWhiteSpace(partition.Text)) continue;
                 sb.AppendLine(partition.Text);
                 sb.AppendLine();
-                if (sb.Length > 30_000) return sb.ToString();
+                if (sb.Length > 20_000) return sb.ToString();
             }
         }
         return sb.ToString();

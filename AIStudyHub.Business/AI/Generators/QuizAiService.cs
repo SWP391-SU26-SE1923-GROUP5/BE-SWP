@@ -60,12 +60,21 @@ public sealed class QuizAiService : IQuizAiService
 
         var context = string.Join("\n\n", sortedChunks);
 
+        if (context.Length > 20000)
+        {
+            context = context.Substring(0, 20000);
+            var lastPeriod = context.LastIndexOf('.');
+            if (lastPeriod > 10000)
+            {
+                context = context.Substring(0, lastPeriod + 1);
+            }
+        }
+
         _logger.LogInformation("Quiz context length: {Length} chars from {ChunkCount} chunks",
             context.Length, sortedChunks.Count);
 
-        // llama3.2:1b can't reliably fill 10 question x 4 answer strings in
-        // one shot. Chunk into small batches and retry underfilled batches.
-        const int batchSize = 3;
+        // Increased batch size for faster generation using capable modern LLMs (e.g. gpt-4o-mini).
+        const int batchSize = 15;
         var allQuestions = new List<AiGeneratedQuestionDto>(request.numberOfQuestions);
         var seenTitles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -630,7 +639,6 @@ IMPORTANT:
             Title = string.IsNullOrWhiteSpace(result.QuizTitle) ? fallbackTitle : result.QuizTitle
         };
         await _unitOfWork.Quizzes.AddAsync(quiz, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         foreach (var q in result.Questions)
         {
@@ -642,7 +650,6 @@ IMPORTANT:
                 Position = q.Position
             };
             await _unitOfWork.Questions.AddAsync(question, cancellationToken);
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
 
             foreach (var a in q.Answers ?? new List<AiGeneratedAnswerDto>())
             {
@@ -653,8 +660,10 @@ IMPORTANT:
                     IsCorrect = a.IsCorrect
                 }, cancellationToken);
             }
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
         }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
 
         return quiz;
     }

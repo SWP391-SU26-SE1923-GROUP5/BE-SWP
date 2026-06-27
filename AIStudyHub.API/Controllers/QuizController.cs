@@ -14,17 +14,22 @@ namespace AIStudyHub.API.Controllers;
 public sealed class QuizController : ControllerBase
 {
     private readonly IQuizService _service;
+    private readonly IDocumentService _documentService;
 
-    public QuizController(IQuizService service)
+    public QuizController(IQuizService service, IDocumentService documentService)
     {
         _service = service;
+        _documentService = documentService;
     }
 
     /// <summary>Lấy danh sách tất cả quiz.</summary>
     [HttpGet]
     public async Task<ActionResult<AIStudyHub.Business.DTOs.Common.PagedResultDto<QuizResponseDto>>> GetAll([FromQuery] AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken)
     {
-        var result = await _service.GetAllPagedAsync(@params, cancellationToken);
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var result = await _service.GetAllPagedAsync(@params, userId, cancellationToken);
         return Ok(result);
     }
 
@@ -64,7 +69,15 @@ public sealed class QuizController : ControllerBase
     public async Task<ActionResult<QuizResponseDto>> GetById(Guid id, CancellationToken cancellationToken)
     {
         var result = await _service.GetByIdAsync(id, cancellationToken);
-        return result is null ? NotFound() : Ok(result);
+        if (result == null) return NotFound();
+
+        var document = await _documentService.GetByIdAsync(result.DocumentId, cancellationToken);
+        if (document == null) return NotFound();
+
+        var userId = GetCurrentUserId();
+        if (document.UserId != userId && document.ShareStatus != "public") return Forbid();
+
+        return Ok(result);
     }
 
     [HttpPost]
@@ -77,6 +90,15 @@ public sealed class QuizController : ControllerBase
     [HttpPut("{id:guid}")]
     public async Task<ActionResult<QuizResponseDto>> Update(Guid id, [FromBody] UpdateQuizRequestDto request, CancellationToken cancellationToken)
     {
+        var quiz = await _service.GetByIdAsync(id, cancellationToken);
+        if (quiz == null) return NotFound();
+
+        var document = await _documentService.GetByIdAsync(quiz.DocumentId, cancellationToken);
+        if (document == null) return NotFound();
+
+        var userId = GetCurrentUserId();
+        if (document.UserId != userId) return Forbid();
+
         var result = await _service.UpdateAsync(id, request, cancellationToken);
         return Ok(result);
     }
@@ -84,8 +106,23 @@ public sealed class QuizController : ControllerBase
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
+        var quiz = await _service.GetByIdAsync(id, cancellationToken);
+        if (quiz == null) return NotFound();
+
+        var document = await _documentService.GetByIdAsync(quiz.DocumentId, cancellationToken);
+        if (document == null) return NotFound();
+
+        var userId = GetCurrentUserId();
+        if (document.UserId != userId) return Forbid();
+
         await _service.DeleteAsync(id, cancellationToken);
         return NoContent();
+    }
+
+    private Guid GetCurrentUserId()
+    {
+        var claim = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier || c.Type == "sub" || c.Type == "userId")?.Value;
+        return claim != null && Guid.TryParse(claim, out var userId) ? userId : Guid.Empty;
     }
 
     // POST   /api/Quiz  - Đã xóa. Quiz phải được AI sinh ra từ Document.

@@ -39,7 +39,7 @@ public class FormFileOperationFilter : IOperationFilter
                             {
                                 Type = "string",
                                 Format = "binary",
-                                Description = "File to upload (.pdf, .docx, .txt, .md)"
+                                Description = "File to upload (.pdf, .docx, .txt, .md, .jpg, .png, .mp4, .mp3, etc.)"
                             },
                             ["title"] = new OpenApiSchema
                             {

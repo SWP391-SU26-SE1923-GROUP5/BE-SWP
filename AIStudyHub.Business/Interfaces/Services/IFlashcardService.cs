@@ -10,8 +10,9 @@ public interface IFlashcardService : ICrudService<FlashcardResponseDto, CreateFl
 {
     Task<IReadOnlyList<FlashcardResponseDto>> GetByDocumentAsync(
         Guid documentId,
+        Guid userId,
         CancellationToken cancellationToken = default);
 
-    Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<FlashcardResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken = default);
+    Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<FlashcardResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, Guid userId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<FlashcardResponseDto>> CreateBulkAsync(IReadOnlyList<CreateFlashcardRequestDto> requests, CancellationToken cancellationToken = default);
 }

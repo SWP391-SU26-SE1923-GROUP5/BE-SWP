@@ -17,7 +17,7 @@ public static class RateLimitExtensions
                     factory: _ => new FixedWindowRateLimiterOptions
                     {
                         PermitLimit = 5,
-                        Window = TimeSpan.FromMinutes(15),
+                        Window = TimeSpan.FromMinutes(5),
                         QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
                         QueueLimit = 0
                     }));
