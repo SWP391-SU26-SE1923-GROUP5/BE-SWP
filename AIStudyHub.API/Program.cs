@@ -2,6 +2,7 @@ using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Workers;
 using Microsoft.OpenApi.Models;
 using AIStudyHub.API.Extensions;
+using AIStudyHub.API.Hubs;
 using AIStudyHub.API.Middleware;
 using AIStudyHub.Business.Mappings;
 using AIStudyHub.Business.Options;
@@ -46,6 +47,7 @@ builder.Services.AddCors(options =>
 });
 builder.Services.AddAppRateLimiting();
 builder.Services.AddHttpClient();
+builder.Services.AddSignalR();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerDocumentation();
 builder.Services.AddJwtAuthentication(builder.Configuration);
@@ -127,5 +129,6 @@ app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapHub<NotificationsHub>("/hubs/notifications");
 
 app.Run();
