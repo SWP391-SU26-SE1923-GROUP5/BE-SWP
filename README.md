@@ -38,7 +38,7 @@ Client
 ## Project Overview
 
 ### AIStudyHub.API
-Presentation layer. Hosts 18 REST controllers, configures middleware pipeline, JWT + OAuth authentication, rate limiting, Serilog, Swagger/OpenAPI, and static file serving.
+Presentation layer. Hosts 15 REST controllers, configures middleware pipeline, JWT + OAuth authentication, rate limiting, Serilog, Swagger/OpenAPI, and static file serving.
 
 ### AIStudyHub.Business
 Business layer. Contains the entire AI pipeline (L3-L5), 14+ business services, 16 FluentValidation modules, AutoMapper profiles, MediatR CQRS handlers for Auth and Users, and 3 background hosted services.
@@ -480,28 +480,28 @@ erDiagram
     ChatSession ||--o{ ChatMessage : "contains"
 ```
 
-## API Controllers (18)
+## API Controllers (15)
 
 | Controller | Route | Description |
 |------------|-------|-------------|
 | `AuthController` | `/api/Auth` | Register, login, OTP, OAuth, JWT refresh |
 | `UserController` | `/api/User` | Profile, tier, sharing |
-| `DocumentController` | `/api/Document` | Metadata CRUD, sharing, download |
-| `DocumentUploadController` | `/api/DocumentUpload` | File upload, processing queue, chunk retrieval |
+| `DocumentController` | `/api/Document` | Full lifecycle: upload, metadata CRUD, share, download, preview, full delete, reprocess, chunks |
 | `ChatController` | `/api/Chat` | Sessions and messages |
-| `FlashcardController` | `/api/Flashcard` | CRUD + AI generation |
-| `QuizController` | `/api/Quiz` | CRUD + AI generation |
-| `QuestionController` | `/api/Question` | Question CRUD |
-| `AnswerController` | `/api/Answer` | Answer CRUD |
-| `QuizSubmissionController` | `/api/QuizSubmission` | Submission results |
-| `VoteController` | `/api/Vote` | Upvote/downvote documents |
+| `FlashcardController` | `/api/Flashcard` | CRUD only. AI generation at `/api/AI/flashcards/generate` |
+| `QuizController` | `/api/Quiz` | CRUD + sub-resources (questions, answers). AI generation at `/api/AI/quizzes/generate` |
+| `QuestionController` | `/api/Question` | GetById only. GetAll/CRUD removed — use Quiz sub-resources |
+| `QuizSubmissionController` | `/api/QuizSubmission` | Submission results, ownership-protected |
+| `VoteController` | `/api/Vote` | Upvote/downvote documents, ownership-protected |
 | `ReportController` | `/api/Report` | Document violation reports |
 | `NotificationController` | `/api/Notification` | User notifications |
 | `SubjectController` | `/api/Subject` | Academic subjects |
 | `PaymentController` | `/api/Payment` | VNPay checkout and webhook |
 | `TierMembershipController` | `/api/TierMembership` | Subscription tiers |
-| `RagController` | `/api/Rag` | RAG query and summarization |
+| `AIController` | `/api/AI` | RAG query, summarization, AI flashcard/quiz generation |
 | `AdminController` | `/api/Admin` | Reindexing and moderation |
+
+**Removed:** `DocumentUploadController` (merged into `DocumentController`), `AnswerController` (answers accessed via Quiz sub-resources), `RagController` (merged into `AIController`).
 
 ## Background Workers
 

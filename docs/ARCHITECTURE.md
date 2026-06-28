@@ -10,7 +10,7 @@ flowchart TD
     Swagger[Swagger / OpenAPI]
 
     subgraph Presentation["Presentation Layer - AIStudyHub.API"]
-        Controllers[18 REST Controllers]
+        Controllers[15 REST Controllers]
         GlobalException[GlobalExceptionMiddleware]
         FluentValidationFilter[FluentValidationFilter]
         Jwt[JWT + Google/GitHub OAuth]
@@ -95,7 +95,7 @@ flowchart TD
 ```text
 AIStudyHub.slnx
 ├── AIStudyHub.API
-│   ├── Controllers/              (18 REST controllers)
+│   ├── Controllers/              (15 REST controllers)
 │   ├── DTOs/
 │   ├── Extensions/               (JwtExtensions, SwaggerExtensions, RateLimitExtensions)
 │   ├── Middleware/               (GlobalExceptionMiddleware, FluentValidationFilter)
@@ -492,7 +492,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Controller as RagController
+    participant Controller as AIController
     participant Orch as SemanticKernelOrchestrator
     participant Hybrid as HybridSearchService
     participant EmbedSvc as EmbeddingService
@@ -504,7 +504,7 @@ sequenceDiagram
     participant Ground as GroundingVerifier
     participant Score as ConfidenceScorer
 
-    Client->>Controller: POST /api/Rag/chat { question, documentIds? }
+    Client->>Controller: POST /api/AI/rag/ask { question }
     Controller->>Orch: AskAsync(userId, question)
 
     rect rgb(235, 245, 255)
