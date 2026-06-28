@@ -37,7 +37,7 @@ public sealed record UpdateDocumentRequestDto(
 
 /// <summary>
 /// Request body for saving a list of users that a document is shared with.
-/// The <see cref="ShareStatus"/> on the document is derived from <see cref="SharedUserIds"/>:
+/// The <c>ShareStatus</c> on the document is derived from <c>SharedUserIds</c>:
 /// non-empty list → "shared", empty list → "private".
 /// </summary>
 public sealed record ShareDocumentRequestDto(

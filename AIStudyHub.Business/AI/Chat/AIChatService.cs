@@ -85,7 +85,7 @@ public sealed class AIChatService : IAIChatService
 
     public async Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request, Guid userId, CancellationToken ct = default)
     {
-        ChatSession session;
+        ChatSession? session;
         if (!request.SessionId.HasValue)
         {
             var title = request.Message.Length > 50 ? request.Message.Substring(0, 47) + "..." : request.Message;
@@ -101,7 +101,7 @@ public sealed class AIChatService : IAIChatService
         else
         {
             session = await _unitOfWork.ChatSessions.GetByIdAsync(request.SessionId.Value);
-            if (session == null || session.UserId != userId)
+            if (session is null || session.UserId != userId)
             {
                 throw new KeyNotFoundException($"Chat session with ID {request.SessionId} not found or access denied.");
             }
