@@ -17,6 +17,7 @@ public sealed class UnitOfWork : IUnitOfWork
         Votes = new GenericRepository<Vote>(_dbContext);
         Reports = new GenericRepository<Report>(_dbContext);
         Flashcards = new GenericRepository<Flashcard>(_dbContext);
+        FlashcardReviews = new GenericRepository<FlashcardReview>(_dbContext);
         Quizzes = new GenericRepository<Quiz>(_dbContext);
         Questions = new GenericRepository<Question>(_dbContext);
         Answers = new GenericRepository<Answer>(_dbContext);
@@ -25,6 +26,8 @@ public sealed class UnitOfWork : IUnitOfWork
         Payments = new GenericRepository<Payment>(_dbContext);
         ChatSessions = new GenericRepository<ChatSession>(_dbContext);
         ChatMessages = new GenericRepository<ChatMessage>(_dbContext);
+        UserStats = new GenericRepository<UserStats>(_dbContext);
+        StudyLogs = new GenericRepository<StudyLog>(_dbContext);
     }
 
     public IRepository<User> Users { get; }
@@ -34,6 +37,7 @@ public sealed class UnitOfWork : IUnitOfWork
     public IRepository<Vote> Votes { get; }
     public IRepository<Report> Reports { get; }
     public IRepository<Flashcard> Flashcards { get; }
+    public IRepository<FlashcardReview> FlashcardReviews { get; }
     public IRepository<Quiz> Quizzes { get; }
     public IRepository<Question> Questions { get; }
     public IRepository<Answer> Answers { get; }
@@ -42,6 +46,8 @@ public sealed class UnitOfWork : IUnitOfWork
     public IRepository<Payment> Payments { get; }
     public IRepository<ChatSession> ChatSessions { get; }
     public IRepository<ChatMessage> ChatMessages { get; }
+    public IRepository<UserStats> UserStats { get; }
+    public IRepository<StudyLog> StudyLogs { get; }
 
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

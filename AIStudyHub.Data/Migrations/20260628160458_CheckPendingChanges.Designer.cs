@@ -4,6 +4,7 @@ using AIStudyHub.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AIStudyHub.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260628160458_CheckPendingChanges")]
+    partial class CheckPendingChanges
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -977,7 +980,7 @@ namespace AIStudyHub.Data.Migrations
                         {
                             Id = new Guid("11111111-1111-1111-1111-111111111111"),
                             AiTokens = 10000,
-                            CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            CreatedAt = new DateTime(2026, 6, 28, 16, 4, 57, 970, DateTimeKind.Utc).AddTicks(1050),
                             Price = 0m,
                             StorageLimitMb = 1024,
                             TierName = "Free"
@@ -986,7 +989,7 @@ namespace AIStudyHub.Data.Migrations
                         {
                             Id = new Guid("33333333-3333-3333-3333-333333333333"),
                             AiTokens = 50000,
-                            CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            CreatedAt = new DateTime(2026, 6, 28, 16, 4, 57, 970, DateTimeKind.Utc).AddTicks(1056),
                             Price = 499000m,
                             StorageLimitMb = 5120,
                             TierName = "Pro"
@@ -995,7 +998,7 @@ namespace AIStudyHub.Data.Migrations
                         {
                             Id = new Guid("55555555-5555-5555-5555-555555555555"),
                             AiTokens = 30000,
-                            CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            CreatedAt = new DateTime(2026, 6, 28, 16, 4, 57, 970, DateTimeKind.Utc).AddTicks(1058),
                             Price = 199000m,
                             StorageLimitMb = 3072,
                             TierName = "Premium"

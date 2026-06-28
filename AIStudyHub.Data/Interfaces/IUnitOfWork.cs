@@ -11,6 +11,7 @@ public interface IUnitOfWork : IDisposable
     IRepository<Vote> Votes { get; }
     IRepository<Report> Reports { get; }
     IRepository<Flashcard> Flashcards { get; }
+    IRepository<FlashcardReview> FlashcardReviews { get; }
     IRepository<Quiz> Quizzes { get; }
     IRepository<Question> Questions { get; }
     IRepository<Answer> Answers { get; }
@@ -19,6 +20,8 @@ public interface IUnitOfWork : IDisposable
     IRepository<Payment> Payments { get; }
     IRepository<ChatSession> ChatSessions { get; }
     IRepository<ChatMessage> ChatMessages { get; }
+    IRepository<UserStats> UserStats { get; }
+    IRepository<StudyLog> StudyLogs { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

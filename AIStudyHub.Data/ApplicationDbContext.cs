@@ -19,6 +19,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
     public DbSet<Vote> Votes => Set<Vote>();
     public DbSet<Report> Reports => Set<Report>();
     public DbSet<Flashcard> Flashcards => Set<Flashcard>();
+    public DbSet<FlashcardReview> FlashcardReviews => Set<FlashcardReview>();
     public DbSet<Quiz> Quizzes => Set<Quiz>();
     public DbSet<Question> Questions => Set<Question>();
     public DbSet<Answer> Answers => Set<Answer>();
@@ -29,6 +30,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<OtpRecord> OtpRecords => Set<OtpRecord>();
+    public DbSet<UserStats> UserStats => Set<UserStats>();
+    public DbSet<StudyLog> StudyLogs => Set<StudyLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -103,22 +106,34 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
 
     private static void SeedTiers(ModelBuilder modelBuilder)
     {
+        var seedTimestamp = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         modelBuilder.Entity<TierMembership>().HasData(
             new TierMembership
             {
                 Id = Guid.Parse("11111111-1111-1111-1111-111111111111"),
                 TierName = "Free",
+                Price = 0m,
                 StorageLimitMb = 1024,
                 AiTokens = 10000,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = seedTimestamp
+            },
+            new TierMembership
+            {
+                Id = Guid.Parse("33333333-3333-3333-3333-333333333333"),
+                TierName = "Pro",
+                Price = 499000m,
+                StorageLimitMb = 5120,
+                AiTokens = 50000,
+                CreatedAt = seedTimestamp
             },
             new TierMembership
             {
                 Id = Guid.Parse("55555555-5555-5555-5555-555555555555"),
                 TierName = "Premium",
+                Price = 199000m,
                 StorageLimitMb = 3072,
                 AiTokens = 30000,
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = seedTimestamp
             });
     }
 }
