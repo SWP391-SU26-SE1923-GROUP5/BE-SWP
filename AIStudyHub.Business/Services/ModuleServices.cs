@@ -430,6 +430,7 @@ public sealed class ReportService : IReportService
             .Query()
             .Include(r => r.User)
             .Include(r => r.Document)
+            .Include(r => r.ResolvedByUser)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
@@ -442,6 +443,7 @@ public sealed class ReportService : IReportService
             .Query()
             .Include(r => r.User)
             .Include(r => r.Document)
+            .Include(r => r.ResolvedByUser)
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 
@@ -450,27 +452,116 @@ public sealed class ReportService : IReportService
 
     public async Task<ReportResponseDto> CreateAsync(CreateReportRequestDto request, CancellationToken cancellationToken = default)
     {
-        var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
-        if (!documentExists)
+        throw new NotSupportedException("Use CreateWithUserIdAsync instead.");
+    }
+
+    public async Task<ReportResponseDto> CreateWithUserIdAsync(CreateReportRequestDto request, Guid userId, CancellationToken cancellationToken = default)
+    {
+        var document = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken);
+        if (document is null)
         {
             throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
         }
 
-        var report = _mapper.Map<Data.Entities.Report>(request);
+        if (document.IsNonFlaggable)
+        {
+            throw new InvalidOperationException("This document is marked as non-flaggable.");
+        }
+
+        var existingPending = await _unitOfWork.Reports.Query()
+            .AnyAsync(r => r.UserId == userId && r.DocumentId == request.DocumentId && r.Status == AIStudyHub.Data.Enums.ReportStatus.Pending, cancellationToken);
+        if (existingPending)
+        {
+            throw new InvalidOperationException("You already have a pending report for this document.");
+        }
+
+        var report = new Data.Entities.Report
+        {
+            UserId = userId,
+            DocumentId = request.DocumentId,
+            Category = (AIStudyHub.Data.Enums.ReportCategory)request.Category,
+            Reason = request.Reason,
+            Status = AIStudyHub.Data.Enums.ReportStatus.Pending
+        };
+
         await _unitOfWork.Reports.AddAsync(report, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var created = await _unitOfWork.Reports
-            .Query()
+        var created = await _unitOfWork.Reports.Query()
             .Include(r => r.User)
             .Include(r => r.Document)
+            .Include(r => r.ResolvedByUser)
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == report.Id, cancellationToken);
 
         return _mapper.Map<ReportResponseDto>(created);
     }
 
-    public async Task<ReportResponseDto> UpdateAsync(Guid id, UpdateReportRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<ReportResponseDto>> GetMyReportsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var reports = await _unitOfWork.Reports.Query()
+            .Include(r => r.User)
+            .Include(r => r.Document)
+            .Include(r => r.ResolvedByUser)
+            .Where(r => r.UserId == userId)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return reports.Select(_mapper.Map<ReportResponseDto>).ToList();
+    }
+
+    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<ReportResponseDto>> SearchAsync(ReportFilterDto filter, CancellationToken cancellationToken = default)
+    {
+        var query = _unitOfWork.Reports.Query()
+            .Include(r => r.User)
+            .Include(r => r.Document)
+            .Include(r => r.ResolvedByUser)
+            .AsNoTracking();
+
+        if (filter.Status.HasValue)
+        {
+            var statusEntity = (AIStudyHub.Data.Enums.ReportStatus)filter.Status.Value;
+            query = query.Where(r => r.Status == statusEntity);
+        }
+
+        if (filter.DocumentId.HasValue)
+        {
+            query = query.Where(r => r.DocumentId == filter.DocumentId.Value);
+        }
+
+        if (filter.UserId.HasValue)
+        {
+            query = query.Where(r => r.UserId == filter.UserId.Value);
+        }
+
+        if (filter.FromDate.HasValue)
+        {
+            query = query.Where(r => r.CreatedAt >= filter.FromDate.Value);
+        }
+
+        if (filter.ToDate.HasValue)
+        {
+            query = query.Where(r => r.CreatedAt <= filter.ToDate.Value);
+        }
+
+        var total = await query.CountAsync(cancellationToken);
+        
+        var items = await query
+            .OrderByDescending(r => r.CreatedAt)
+            .Skip((filter.Page - 1) * filter.PageSize)
+            .Take(filter.PageSize)
+            .ToListAsync(cancellationToken);
+
+        return new AIStudyHub.Business.DTOs.Common.PagedResultDto<ReportResponseDto>
+        {
+            Items = items.Select(_mapper.Map<ReportResponseDto>).ToList(),
+            TotalCount = total,
+            Offset = (filter.Page - 1) * filter.PageSize,
+            Limit = filter.PageSize
+        };
+    }
+
+    public async Task<ReportResponseDto> UpdateStatusAsync(Guid id, ReportStatusDto status, Guid adminUserId, CancellationToken cancellationToken = default)
     {
         var report = await _unitOfWork.Reports.GetByIdAsync(id, cancellationToken);
         if (report is null)
@@ -478,18 +569,195 @@ public sealed class ReportService : IReportService
             throw new KeyNotFoundException($"Report with ID {id} not found.");
         }
 
-        _mapper.Map(request, report);
+        var newStatus = (AIStudyHub.Data.Enums.ReportStatus)status;
+
+        // Optimistic concurrency check (since it's not a real RowVersion, we simulate by ensuring state is valid)
+        if (report.Status == AIStudyHub.Data.Enums.ReportStatus.Resolved || report.Status == AIStudyHub.Data.Enums.ReportStatus.Rejected)
+        {
+            throw new InvalidOperationException("Cannot update a report that is already Resolved or Rejected.");
+        }
+        
+        if (newStatus == AIStudyHub.Data.Enums.ReportStatus.Pending)
+        {
+            throw new InvalidOperationException("Cannot transition back to Pending.");
+        }
+        if (newStatus == AIStudyHub.Data.Enums.ReportStatus.Resolved || newStatus == AIStudyHub.Data.Enums.ReportStatus.Rejected)
+        {
+            if (report.Status != AIStudyHub.Data.Enums.ReportStatus.Reviewed)
+            {
+                throw new InvalidOperationException("Must transition to Reviewed before Resolved/Rejected.");
+            }
+        }
+
+        report.Status = newStatus;
+        report.ResolvedBy = adminUserId;
+        report.ResolvedAt = DateTime.UtcNow;
+
         _unitOfWork.Reports.Update(report);
+        
+        // Add Notification
+        var message = $"Your report for Document has been updated to {newStatus}.";
+        await _unitOfWork.Notifications.AddAsync(new Data.Entities.Notification
+        {
+            UserId = report.UserId,
+            Message = message,
+            IsRead = false
+        }, cancellationToken);
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var updated = await _unitOfWork.Reports
-            .Query()
+        var updated = await _unitOfWork.Reports.Query()
             .Include(r => r.User)
             .Include(r => r.Document)
+            .Include(r => r.ResolvedByUser)
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 
         return _mapper.Map<ReportResponseDto>(updated);
+    }
+
+    public async Task<int> MarkDocumentNonFlaggableAsync(Guid documentId, Guid adminUserId, CancellationToken cancellationToken = default)
+    {
+        var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken);
+        if (document is null)
+        {
+            throw new KeyNotFoundException($"Document with ID {documentId} not found.");
+        }
+
+        if (document.IsNonFlaggable) return 0; // Already marked
+
+        document.IsNonFlaggable = true;
+        _unitOfWork.Documents.Update(document);
+
+        // Reject all pending/reviewed reports
+        var pendingReports = await _unitOfWork.Reports.Query()
+            .Where(r => r.DocumentId == documentId && (r.Status == AIStudyHub.Data.Enums.ReportStatus.Pending || r.Status == AIStudyHub.Data.Enums.ReportStatus.Reviewed))
+            .ToListAsync(cancellationToken);
+
+        foreach (var report in pendingReports)
+        {
+            report.Status = AIStudyHub.Data.Enums.ReportStatus.Rejected;
+            report.ResolvedBy = adminUserId;
+            report.ResolvedAt = DateTime.UtcNow;
+            _unitOfWork.Reports.Update(report);
+        }
+
+        // Add Notification deduplicated by Reporter (each user gets 1 notification)
+        var userIdsToNotify = pendingReports.Select(r => r.UserId).Distinct().ToList();
+        foreach (var userId in userIdsToNotify)
+        {
+            await _unitOfWork.Notifications.AddAsync(new Data.Entities.Notification
+            {
+                UserId = userId,
+                Message = "Your report(s) were rejected because the document was verified as legitimate.",
+                IsRead = false
+            }, cancellationToken);
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return pendingReports.Count;
+    }
+
+    public async Task<BulkReportStatusResultDto> BulkUpdateStatusAsync(IReadOnlyList<Guid> ids, ReportStatusDto status, Guid adminUserId, CancellationToken cancellationToken = default)
+    {
+        var newStatus = (AIStudyHub.Data.Enums.ReportStatus)status;
+        var reports = await _unitOfWork.Reports.Query()
+            .Where(r => ids.Contains(r.Id))
+            .ToListAsync(cancellationToken);
+
+        int updated = 0;
+        var failed = new List<BulkFailureDto>();
+        var userIdsToNotify = new HashSet<Guid>();
+
+        foreach (var report in reports)
+        {
+            if (report.Status == AIStudyHub.Data.Enums.ReportStatus.Resolved || report.Status == AIStudyHub.Data.Enums.ReportStatus.Rejected)
+            {
+                failed.Add(new BulkFailureDto(report.Id, "Already resolved/rejected."));
+                continue;
+            }
+            if (newStatus == AIStudyHub.Data.Enums.ReportStatus.Pending)
+            {
+                failed.Add(new BulkFailureDto(report.Id, "Cannot revert to Pending."));
+                continue;
+            }
+            if ((newStatus == AIStudyHub.Data.Enums.ReportStatus.Resolved || newStatus == AIStudyHub.Data.Enums.ReportStatus.Rejected) && report.Status != AIStudyHub.Data.Enums.ReportStatus.Reviewed)
+            {
+                failed.Add(new BulkFailureDto(report.Id, "Must be Reviewed first."));
+                continue;
+            }
+
+            report.Status = newStatus;
+            report.ResolvedBy = adminUserId;
+            report.ResolvedAt = DateTime.UtcNow;
+            _unitOfWork.Reports.Update(report);
+            userIdsToNotify.Add(report.UserId);
+            updated++;
+        }
+
+        foreach (var userId in userIdsToNotify)
+        {
+            await _unitOfWork.Notifications.AddAsync(new Data.Entities.Notification
+            {
+                UserId = userId,
+                Message = $"One or more of your reports have been updated to {newStatus}.",
+                IsRead = false
+            }, cancellationToken);
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        return new BulkReportStatusResultDto(updated, failed);
+    }
+
+    public async Task<BulkMarkNonFlaggableResultDto> BulkMarkNonFlaggableAsync(IReadOnlyList<Guid> documentIds, Guid adminUserId, CancellationToken cancellationToken = default)
+    {
+        int totalDocuments = 0;
+        int totalReportsRejected = 0;
+
+        foreach (var docId in documentIds)
+        {
+            var document = await _unitOfWork.Documents.GetByIdAsync(docId, cancellationToken);
+            if (document != null && !document.IsNonFlaggable)
+            {
+                document.IsNonFlaggable = true;
+                _unitOfWork.Documents.Update(document);
+                totalDocuments++;
+
+                var pendingReports = await _unitOfWork.Reports.Query()
+                    .Where(r => r.DocumentId == docId && (r.Status == AIStudyHub.Data.Enums.ReportStatus.Pending || r.Status == AIStudyHub.Data.Enums.ReportStatus.Reviewed))
+                    .ToListAsync(cancellationToken);
+
+                var distinctUsers = new HashSet<Guid>();
+                foreach (var report in pendingReports)
+                {
+                    report.Status = AIStudyHub.Data.Enums.ReportStatus.Rejected;
+                    report.ResolvedBy = adminUserId;
+                    report.ResolvedAt = DateTime.UtcNow;
+                    _unitOfWork.Reports.Update(report);
+                    distinctUsers.Add(report.UserId);
+                    totalReportsRejected++;
+                }
+
+                foreach (var userId in distinctUsers)
+                {
+                    await _unitOfWork.Notifications.AddAsync(new Data.Entities.Notification
+                    {
+                        UserId = userId,
+                        Message = "Your report(s) were rejected because the document was verified as legitimate.",
+                        IsRead = false
+                    }, cancellationToken);
+                }
+            }
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        return new BulkMarkNonFlaggableResultDto(totalDocuments, totalReportsRejected);
+    }
+
+    public async Task<ReportResponseDto> UpdateAsync(Guid id, UpdateReportRequestDto request, CancellationToken cancellationToken = default)
+    {
+        throw new NotSupportedException("Use UpdateStatusAsync instead.");
     }
 
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
@@ -498,6 +766,11 @@ public sealed class ReportService : IReportService
         if (report is null)
         {
             throw new KeyNotFoundException($"Report with ID {id} not found.");
+        }
+
+        if (report.Status == AIStudyHub.Data.Enums.ReportStatus.Pending)
+        {
+            throw new InvalidOperationException("Cannot delete a report that is Pending (Audit Trail intact).");
         }
 
         _unitOfWork.Reports.Remove(report);

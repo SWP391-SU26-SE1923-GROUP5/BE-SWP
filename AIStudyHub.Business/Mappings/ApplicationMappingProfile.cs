@@ -69,7 +69,11 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<CreateVoteRequestDto, Vote>();
         CreateMap<UpdateVoteRequestDto, Vote>();
 
-        CreateMap<Report, ReportResponseDto>();
+        CreateMap<Report, ReportResponseDto>()
+            .ForMember(d => d.UserFullName, o => o.MapFrom(s => s.User != null ? s.User.FullName : string.Empty))
+            .ForMember(d => d.DocumentTitle, o => o.MapFrom(s => s.Document != null ? s.Document.Title : string.Empty))
+            .ForMember(d => d.ResolvedByFullName,
+                o => o.MapFrom(s => s.ResolvedByUser != null ? s.ResolvedByUser.FullName : null));
         CreateMap<CreateReportRequestDto, Report>();
         CreateMap<UpdateReportRequestDto, Report>();
 

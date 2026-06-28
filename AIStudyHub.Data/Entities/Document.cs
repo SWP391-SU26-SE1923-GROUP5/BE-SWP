@@ -15,6 +15,7 @@ public sealed class Document : BaseEntity
     public string? SharedUsers { get; set; }
     public string ShareStatus { get; set; } = "private";
     public DocumentStatus? Status { get; set; }
+    public bool IsNonFlaggable { get; set; } = false;
 
     public User User { get; set; } = null!;
     public Subject Subject { get; set; } = null!;

@@ -118,6 +118,7 @@ internal sealed class DocumentConfiguration : IEntityTypeConfiguration<Document>
         builder.Property(x => x.SharedUsers).HasColumnName("shared_users");
         builder.Property(x => x.ShareStatus).HasColumnName("share_status").HasMaxLength(20).HasDefaultValue("private");
         builder.Property(x => x.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(20);
+        builder.Property(x => x.IsNonFlaggable).HasColumnName("is_non_flaggable").HasDefaultValue(false);
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.User).WithMany(x => x.Documents).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
@@ -154,11 +155,21 @@ internal sealed class ReportConfiguration : IEntityTypeConfiguration<Report>
         builder.Property(x => x.Id).HasColumnName("report_id");
         builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
         builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
+        builder.Property(x => x.Category).HasColumnName("category").HasDefaultValue(ReportCategory.Other).IsRequired();
         builder.Property(x => x.Reason).HasColumnName("reason");
+        builder.Property(x => x.Status).HasColumnName("status").HasDefaultValue(ReportStatus.Pending).IsRequired();
+        builder.Property(x => x.ResolvedBy).HasColumnName("resolved_by");
+        builder.Property(x => x.ResolvedAt).HasColumnName("resolved_at").HasColumnType("datetime2");
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.User).WithMany(x => x.Reports).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.Document).WithMany(x => x.Reports).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne(x => x.ResolvedByUser).WithMany().HasForeignKey(x => x.ResolvedBy).OnDelete(DeleteBehavior.Restrict);
+        
+        builder.HasIndex(x => new { x.UserId, x.DocumentId })
+               .IsUnique()
+               .HasDatabaseName("IX_Reports_UserId_DocumentId_Pending")
+               .HasFilter("status = 1");
     }
 }
 
