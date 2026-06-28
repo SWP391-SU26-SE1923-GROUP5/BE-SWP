@@ -1,3011 +1,1561 @@
-# 1. Tổng quan hệ thống
+# AIStudyHub - Frontend Integration Guide
 
-- **Kiến trúc Backend**: ASP.NET Core 8 Web API
-- **Authentication**: JWT Bearer Token
-- **Authorization**: Role-based (Admin, User, etc.) & Subscription Tier-based
-- **Response Format**: Thường trả về data trực tiếp hoặc gói trong một object chứa Data, Message, Success (cần xem kỹ từng API).
-- **Error Format**: Theo chuẩn HTTP Status Code. Các lỗi validation thường trả về `400 Bad Request` kèm theo chi tiết lỗi (ValidationProblemDetails).
+> **Phiên bản**: cập nhật 2026-06-28
+> **Backend**: ASP.NET Core 8 Web API
+> **Auth**: JWT Bearer (access + refresh) + External (Google, GitHub)
+> **Real-time**: SignalR tại `/hubs/notifications`
+> **Database**: EF Core (mới nhất: 21 migration cũ + 4 migration mới về tier/flashcard-review/gamification/user-stats)
 
-## Authentication
+Document này chia làm 3 phần:
+1. **Phần 1 (mục 1-5)**: Mô tả luồng nghiệp vụ bằng ngôn ngữ dễ hiểu cho BA/QC/Frontend dev.
+2. **Phần 1.5 (mục 5.5)**: Bảng ánh xạ **Tính năng UI ↔ API cần gọi** (quick reference khi code).
+3. **Phần 2 (mục 6-31)**: Spec kỹ thuật chi tiết từng endpoint (request/response/status code/auth).
 
-```
-Authorization: Bearer <token>
-```
-*Lưu ý: Header `Authorization` bắt buộc ở hầu hết các API ngoại trừ Auth.*
+---
 
-# 2. Base URL
+# Phần 1 - Luồng nghiệp vụ (Non-technical)
 
-- **Development**: `http://localhost:5000` (hoặc port được config)
-- **Swagger**: `http://localhost:5000/swagger`
-- **SignalR/WebSocket**: Dự án không sử dụng SignalR.
+## 1. Tổng quan hệ thống
 
-# 3. Luồng nghiệp vụ (Business Flows)
+AIStudyHub là nền tảng học tập cá nhân hoá bằng AI với 4 trụ cột chính:
 
-## Đăng nhập & Xác thực
+| Trụ cột | Mô tả |
+|---|---|
+| **Tài liệu (Document)** | User upload file PDF/Word/TXT/MD → hệ thống OCR, chunk, vector hoá để phục vụ RAG. |
+| **AI Hỏi đáp (RAG Chat)** | Hỏi đáp theo tài liệu của user, có trích dẫn nguồn và độ tin cậy. |
+| **Flashcard + Spaced Repetition (SM-2)** | Tạo flashcard (thủ công hoặc AI), ôn tập theo lịch SM-2 tự động. |
+| **Quiz + Gamification** | Sinh quiz từ tài liệu bằng AI, chấm điểm, cộng XP/level/streak, có leaderboard. |
+
+Hệ thống có 3 tier thành viên (mặc định `Free`, `Pro`) với quota storage và AI tokens khác nhau, thanh toán qua VNPay.
+
+---
+
+## 2. Các nhân vật (Actors) & Phân quyền
+
+| Vai trò | Mô tả |
+|---|---|
+| **Guest** | Xem trang chủ, trang giới thiệu tier, đăng ký/đăng nhập, OAuth Google/GitHub. |
+| **User (thường)** | Upload tài liệu, chat AI, làm quiz, ôn flashcard, nâng cấp tier, vote/share tài liệu công khai. |
+| **Admin** | Quản lý Subject, TierMembership, Report, refund payment, reindex toàn bộ tài liệu. |
+
+---
+
+## 3. Luồng nghiệp vụ chính
+
+### 3.1. Đăng ký - xác thực email - đăng nhập
+
 ```mermaid
 sequenceDiagram
-    User->>FE: Nhập Email & Password
+    participant U as User
+    participant FE as Frontend
+    participant API as Backend
+    U->>FE: Nhập Email/Password/Họ tên
+    FE->>API: POST /api/Auth/register
+    API-->>FE: 200 { message, email }
+    Note over API: Gửi OTP về email
+    U->>FE: Nhập OTP từ email
+    FE->>API: POST /api/Auth/verify-registration-otp
+    API-->>FE: 200 OK
     FE->>API: POST /api/Auth/login
-    API-->>FE: Trả về Token & Refresh Token
-    FE->>Local Storage: Lưu Token
-    FE->>API: GET /api/User/profile (kèm Token)
-    API-->>FE: Trả về User Profile
-    FE->>User: Hiển thị Dashboard
+    API-->>FE: { user, accessToken, refreshToken, expiresAt }
+    FE->>FE: Lưu token + refreshToken (secure storage)
 ```
 
-## Luồng tạo Quiz
+> **Lưu ý cho FE**: Sau khi login, **mọi request** phải đính kèm `Authorization: Bearer <accessToken>`. Khi accessToken hết hạn → gọi `POST /api/Auth/refresh-token` để lấy cặp token mới (dùng refreshToken cũ).
+
+### 3.2. OAuth (Google/GitHub)
+
 ```mermaid
 sequenceDiagram
-    User->>FE: Bấm "Tạo Quiz mới"
-    FE->>API: POST /api/Quiz (Kèm điều kiện/chủ đề)
-    API-->>FE: Trả về Quiz ID
-    FE->>API: GET /api/Quiz/{id}
-    API-->>FE: Trả về câu hỏi
-    FE->>User: Hiển thị giao diện làm bài
+    participant U as User
+    participant FE as Frontend
+    participant API as Backend
+    U->>FE: Bấm "Đăng nhập với Google"
+    FE->>API: GET /api/Auth/external-login/Google (browser redirect)
+    API->>U: Redirect đến Google OAuth
+    U->>Google: Đăng nhập + đồng ý
+    Google-->>API: Callback với cookie
+    API-->>FE: Redirect tới /api/Auth/external-callback/Google → JSON { user, accessToken, refreshToken }
 ```
 
-# 4. Danh sách toàn bộ API
-| API | Method | Description |
+> **Lưu ý**: Trên web, nhớ `window.location.href` sang `external-login/{provider}` thay vì fetch. Backend dùng cookie để handshake, nên cần `credentials: 'include'` ở các request sau.
+
+### 3.3. Quên mật khẩu
+
+```mermaid
+sequenceDiagram
+    U->>FE: Nhập email
+    FE->>API: POST /api/Auth/forgot-password
+    API-->>FE: 200 OK (luôn trả 200 dù email tồn tại hay không - chống email enumeration)
+    Note over API: Gửi OTP về email
+    U->>FE: Nhập OTP + newPassword
+    FE->>API: POST /api/Auth/reset-password
+    API-->>FE: 200 OK
+```
+
+### 3.4. Upload tài liệu - xử lý AI - nhận thông báo real-time
+
+```mermaid
+sequenceDiagram
+    U->>FE: Chọn file PDF + title + subject
+    FE->>API: POST /api/Document/upload/file (multipart)
+    API->>API: Lưu file + queue background job
+    API-->>FE: 202 Accepted { documentId, status: "processing" }
+    Note over API: Background worker xử lý: OCR → chunk → embed → vector store
+    FE->>API: GET /api/Document/{id}/status (poll 3-5s)
+    API-->>FE: { status: "Done" | "Failed" | "Processing" }
+    Note over API: Khi xong, push qua SignalR: ReceiveNotification( DocumentProcessedPayload )
+    FE->>U: Hiện toast "Tài liệu đã sẵn sàng"
+```
+
+> **Lưu ý FE**: Status `5 = Processing`, `2 = Done`. Phải connect SignalR và join group `userId` **trước** khi upload để không miss notification.
+
+### 3.5. Ôn tập Flashcard (Spaced Repetition - SM-2)
+
+```mermaid
+sequenceDiagram
+    U->>FE: Vào trang "Ôn tập"
+    FE->>API: GET /api/FlashcardReview/due?limit=20
+    API-->>FE: [ { reviewId, flashcardId, front, back, nextReviewDate } ]
+    loop Mỗi flashcard
+        U->>FE: Lật thẻ, chọn Again/Hard/Good/Easy
+        FE->>API: POST /api/FlashcardReview/review { flashcardId, quality: 0|1|2|3 }
+        API-->>FE: { reviewId, nextReviewDate, easeFactor, interval, repetitions }
+        Note over API: SM-2 update → cộng XP qua /api/Gamification/award-xp
+    end
+```
+
+> **Chất lượng (quality)**: `0 = Again` (quên hoàn toàn), `1 = Hard` (sai, nhớ khi thấy đáp án), `2 = Good` (đúng, khó khăn), `3 = Easy` (đúng, dễ dàng).
+
+### 3.6. Làm Quiz (sinh bằng AI + nộp bài chấm điểm)
+
+```mermaid
+sequenceDiagram
+    U->>FE: Chọn document → "Tạo Quiz"
+    FE->>API: POST /api/AI/quizzes/generate?docId=X { numberOfQuestions: 5..20 }
+    API-->>FE: QuizResponseDto { id, title, questions[] }
+    U->>FE: Làm bài, chọn đáp án
+    Note over FE: Score và answers do FE tính hoặc dùng API khác
+    FE->>API: (SubmitQuiz - xem mục 9.3)
+    API-->>FE: { score, totalCorrect, maxScore }
+    FE->>U: Hiển thị kết quả + XP gained
+```
+
+### 3.7. Gamification (XP, Level, Streak, Leaderboard)
+
+```mermaid
+sequenceDiagram
+    U->>FE: Mở Dashboard
+    FE->>API: GET /api/Gamification/stats
+    API-->>FE: { totalXp, currentLevel, currentStreak, bestStreak, xpToNextLevel }
+    FE->>API: GET /api/Gamification/leaderboard?top=20
+    API-->>FE: [ { userId, fullName, totalXp, currentLevel, rank } ]
+    Note over API: Sau khi user làm quiz/ôn flashcard, hệ thống tự gọi award-xp nội bộ
+```
+
+### 3.8. Nâng cấp Tier (VNPay)
+
+```mermaid
+sequenceDiagram
+    U->>FE: Chọn gói Pro
+    FE->>API: POST /api/Payment/create-checkout-url { tierId }
+    API-->>FE: { paymentUrl: "https://sandbox.vnpayment.vn/..." }
+    FE->>U: window.location.href = paymentUrl
+    U->>VNPay: Thanh toán
+    VNPay-->>FE: Redirect về /api/Payment/vnpay-return?vnp_...
+    API-->>FE: 200 { success, message, status: "Completed" }
+    FE->>API: GET /api/User/me/tier (refresh quota)
+```
+
+> **Quan trọng**: `/api/Payment/vnpay-return` là **public endpoint** (AllowAnonymous). FE phải xử lý cả 3 trường hợp: `success=true`, `success=false`, `invalid signature`.
+
+### 3.9. Báo cáo tài liệu vi phạm
+
+```mermaid
+sequenceDiagram
+    U->>FE: Bấm "Báo cáo" trên document
+    FE->>API: POST /api/Report { documentId, reason }
+    API-->>FE: 201 Created
+    Note over API: Admin xử lý sau (không cần FE track)
+```
+
+---
+
+## 4. Quy tắc Auth (Rule of thumb)
+
+| Endpoint | Auth | Ghi chú |
 |---|---|---|
-| `/api/Admin/reindex` | **POST** |  |
-| `/api/AI/rag/ask` | **POST** |  |
-| `/api/AI/rag/summarize` | **POST** |  |
-| `/api/AI/flashcards/generate` | **POST** |  |
-| `/api/AI/quizzes/generate` | **POST** |  |
-| `/api/Auth/register` | **POST** |  |
-| `/api/Auth/login` | **POST** |  |
-| `/api/Auth/refresh-token` | **POST** |  |
-| `/api/Auth/verify-registration-otp` | **POST** |  |
-| `/api/Auth/resend-registration-otp` | **POST** |  |
-| `/api/Auth/forgot-password` | **POST** |  |
-| `/api/Auth/reset-password` | **POST** |  |
-| `/api/Auth/change-password` | **POST** |  |
-| `/api/Auth/logout` | **POST** |  |
-| `/api/Auth/external-login/{provider}` | **GET** |  |
-| `/api/Auth/external-callback/{provider}` | **GET** |  |
-| `/api/Chat/sessions` | **GET** |  |
-| `/api/Chat/sessions` | **POST** |  |
-| `/api/Chat/sessions/{sessionId}/messages` | **GET** |  |
-| `/api/Chat/messages` | **POST** |  |
-| `/api/Document` | **GET** |  |
-| `/api/Document/{id}` | **GET** |  |
-| `/api/Document/{id}` | **PUT** |  |
-| `/api/Document/{id}` | **DELETE** |  |
-| `/api/Document/{id}/share` | **POST** |  |
-| `/api/Document/{id}/download` | **GET** |  |
-| `/api/Document/{id}/preview` | **GET** |  |
-| `/api/Document/{id}/status` | **GET** |  |
-| `/api/Document/{id}/chunks` | **GET** |  |
-| `/api/Document/upload/file` | **POST** |  |
-| `/api/Document/{id}/reprocess` | **POST** |  |
-| `/api/Flashcard/{docId}/flashcards` | **GET** |  |
-| `/api/Flashcard` | **GET** |  |
-| `/api/Flashcard` | **POST** |  |
-| `/api/Flashcard/{id}` | **GET** |  |
-| `/api/Flashcard/{id}` | **PUT** |  |
-| `/api/Flashcard/{id}` | **DELETE** |  |
-| `/api/Notification` | **GET** |  |
-| `/api/Notification/{id}` | **GET** |  |
-| `/api/Notification/my` | **GET** |  |
-| `/api/Notification/{id}/read` | **POST** |  |
-| `/api/Notification/mark-all-read` | **POST** |  |
-| `/api/Payment` | **GET** |  |
-| `/api/Payment/{id}` | **GET** |  |
-| `/api/Payment/my` | **GET** |  |
-| `/api/Payment/{id}/refund` | **POST** |  |
-| `/api/Payment/create-checkout-url` | **POST** |  |
-| `/api/Payment/vnpay-return` | **GET** |  |
-| `/api/Question` | **GET** |  |
-| `/api/Question` | **POST** |  |
-| `/api/Question/{id}` | **GET** |  |
-| `/api/Question/{id}` | **PUT** |  |
-| `/api/Question/{id}` | **DELETE** |  |
-| `/api/Quiz` | **GET** |  |
-| `/api/Quiz/{id}` | **GET** |  |
-| `/api/Quiz/{id}` | **DELETE** |  |
-| `/api/Quiz/{id}/questions` | **GET** |  |
-| `/api/Quiz/{quizId}/questions/{questionId}` | **GET** |  |
-| `/api/Quiz/{quizId}/questions/{questionId}/answers` | **GET** |  |
-| `/api/QuizSubmission` | **GET** |  |
-| `/api/QuizSubmission/{id}` | **GET** |  |
-| `/api/Report` | **GET** |  |
-| `/api/Report` | **POST** |  |
-| `/api/Report/{id}` | **GET** |  |
-| `/api/Report/{id}` | **DELETE** |  |
-| `/api/Subject` | **GET** |  |
-| `/api/Subject` | **POST** |  |
-| `/api/Subject/{id}` | **GET** |  |
-| `/api/Subject/{id}` | **PUT** |  |
-| `/api/Subject/{id}` | **DELETE** |  |
-| `/api/TierMembership` | **GET** |  |
-| `/api/TierMembership` | **POST** |  |
-| `/api/TierMembership/{id}` | **GET** |  |
-| `/api/TierMembership/{id}` | **PUT** |  |
-| `/api/TierMembership/{id}` | **DELETE** |  |
-| `/api/User` | **GET** |  |
-| `/api/User/{id}` | **GET** |  |
-| `/api/User/me/tier` | **GET** |  |
-| `/api/User/shareable` | **GET** |  |
-| `/api/User/{id}/tier` | **PUT** |  |
-| `/api/User/me` | **PUT** |  |
-| `/api/Vote/{id}` | **GET** |  |
-| `/api/Vote/{id}` | **DELETE** |  |
-| `/api/Vote` | **POST** |  |
+| `POST /api/Auth/*` (register, login, refresh, OTP, forgot/reset) | ❌ Public | |
+| `GET /api/TierMembership`, `GET /api/TierMembership/{id}` | ❌ Public | Trang giá hiển thị cho cả guest |
+| `GET /api/Payment/vnpay-return` | ❌ Public | VNPay redirect, không cần token |
+| `GET /api/Auth/external-login/{provider}`, `GET /external-callback/{provider}` | ❌ Public | OAuth handshake |
+| Tất cả các endpoint còn lại | ✅ Bearer token | |
+| Các endpoint có `[Authorize(Roles = "Admin")]` | ✅ Bearer + Role=Admin | |
 
-# 5. Chi tiết từng API
-
-## POST /api/Admin/reindex
-**POST** `/api/Admin/reindex`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Responses
-**200** - OK
 ---
 
-## POST /api/AI/rag/ask
-**POST** `/api/AI/rag/ask`
+## 5. WebSocket / Real-time (SignalR)
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+| Thuộc tính | Giá trị |
+|---|---|
+| Endpoint | `ws://localhost:5171/hubs/notifications` (HTTP) hoặc `wss://localhost:7265/hubs/notifications` (HTTPS) |
+| Auth | Bearer token trong query string: `?access_token=...` (SignalR không đọc được header từ browser) |
+| Method client gọi khi connect | `invoke("JoinGroup", userId)` với `userId` là **string** (FE dùng `String(userId)`) |
+| Method client gọi khi logout | `invoke("LeaveGroup", userId)` |
+| Event server push | `ReceiveNotification` với payload `RealTimeNotification` |
 
-### Body (`application/json`)
+### Payload mẫu (server → client):
+
 ```json
 {
-  "question": "string",
+  "userId": "guid",
+  "title": "Document processed",
+  "body": "\"Slide_Tuan3.pdf\" is ready.",
+  "type": 2,
+  "timestamp": "2026-06-28T10:30:00Z",
+  "payload": { "documentId": "guid", "title": "Slide_Tuan3.pdf" }
 }
 ```
 
-### Responses
-**200** - OK
+### Các `type` payload:
+
+| `type` enum | Khi nào | `payload` shape |
+|---|---|---|
+| `2` Document | Document xử lý xong | `{ documentId, title }` |
+| `3` Quiz | Quiz AI sinh xong | `{ quizId, title }` |
+| `3` Quiz | Flashcards mới sẵn sàng | `{ documentId, title, count }` |
+| `1` System | Streak sắp mất (chưa học trong ngày) | `{ currentStreak, hoursRemaining }` |
+| `9` TierUpgraded | User lên level mới | `{ newLevel, totalXp }` |
+
+> **Lưu ý FE**: Vì BE đang đẩy `type` là số (int enum), FE nên map số → label dễ hiểu cho user.
+
 ---
 
-## POST /api/AI/rag/summarize
-**POST** `/api/AI/rag/summarize`
+## 5.5. Bảng ánh xạ: Tính năng → Endpoint cần gọi (Quick Reference)
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+> **Mục đích của bảng này**: Khi FE muốn build một màn hình/chức năng, tra bảng này để biết gọi API nào. Mỗi dòng là **một use-case hoàn chỉnh** - chỉ cần làm theo thứ tự các bước.
 
-### Body (`application/json`)
-```json
-{
-  "documentId": "string",
-}
+### 5.5.1. Auth & Profile
+
+| Tính năng UI | Gọi API theo thứ tự | Ghi chú |
+|---|---|---|
+| **Trang đăng ký** | 1. `POST /api/Auth/register` → 2. `POST /api/Auth/verify-registration-otp` | Sau bước 2, FE có thể tự gọi luôn `POST /api/Auth/login` để user vào app mượt hơn |
+| **Trang đăng nhập (email/pw)** | `POST /api/Auth/login` | Lưu `accessToken` + `refreshToken` vào storage |
+| **Nút "Đăng nhập với Google"** | `window.location = /api/Auth/external-login/Google` | Backend redirect, không cần fetch |
+| **Quên mật khẩu** | 1. `POST /api/Auth/forgot-password` → 2. `POST /api/Auth/reset-password` | Sau bước 2, redirect về trang login |
+| **Đổi mật khẩu (trong Settings)** | `POST /api/Auth/change-password` | Cần user đang đăng nhập |
+| **Đăng xuất** | 1. `connection.invoke("LeaveGroup", userId)` (SignalR) → 2. `POST /api/Auth/logout { refreshToken }` → 3. Clear storage | Bước 1 để tránh nhận notification sau khi logout |
+| **Refresh token tự động** | `POST /api/Auth/refresh-token { refreshToken }` | Implement trong axios interceptor khi gặp 401 |
+| **Hiển thị user info (header)** | `GET /api/User/me/tier` (lấy tier info + quota) hoặc dùng `user` object đã có trong login response | Không cần gọi riêng, response login đã có đủ |
+| **Sửa profile (tên, ngày sinh)** | `PUT /api/Body { fullName, dateOfBirth }` | Response 204, FE gọi lại `/me/tier` để refresh nếu cần |
+
+### 5.5.2. Document (Tài liệu)
+
+| Tính năng UI | Gọi API theo thứ tự | Ghi chú |
+|---|---|---|
+| **Trang danh sách tài liệu (có filter + phân trang)** | `GET /api/Document?pageIndex=1&pageSize=20&subjectId=&searchTerm=` | Hỗ trợ `subjectId` để lọc theo môn |
+| **Upload file PDF/Word** | 1. `POST /api/Document/upload/file` (multipart) → 2. Poll `GET /api/Document/{id}/status` mỗi 3s HOẶC đợi SignalR `ReceiveNotification` với `type=2` | Bước 1 trả 202 ngay, không cần đợi xử lý xong |
+| **Xem chi tiết document (metadata)** | `GET /api/Document/{id}` | Trả 403 nếu không phải owner và không public |
+| **Xem file PDF inline** | `GET /api/Document/{id}/preview` (stream) | Dùng `<iframe src=...>` hoặc PDF.js |
+| **Tải file về máy** | `GET /api/Document/{id}/download` (stream) | Có thể dùng `<a download>` |
+| **Sửa tên / đổi shareStatus** | `PUT /api/Document/{id} { title, shareStatus }` | |
+| **Chia sẻ cho người khác** | 1. `GET /api/User/shareable?keyword=` (gợi ý user) → 2. `POST /api/Document/{id}/share { sharedUserIds: [...] }` | Bước 1 cần để hiển thị dropdown chọn user |
+| **Xoá tài liệu** | `DELETE /api/Document/{id}` | Response 204; FE refetch list sau khi xoá |
+| **Xem lại nội dung text chunks (debug)** | `GET /api/Document/{id}/chunks` | Chỉ owner, chỉ dùng cho debug/admin |
+| **Upload lại khi fail** | `POST /api/Document/{id}/reprocess` | Dùng khi status = 6 (Failed) |
+
+### 5.5.3. AI & Chat
+
+| Tính năng UI | Gọi API theo thứ tự | Ghi chú |
+|---|---|---|
+| **Trang "Hỏi AI" (chat toàn bộ tài liệu)** | 1. `POST /api/AI/rag/ask { question }` → 2. (tuỳ chọn) lưu lịch sử vào `POST /api/Chat/messages` | Trả `answer`, `citations[]`, `confidence` |
+| **Trang "Tóm tắt document"** | `POST /api/AI/rag/summarize { documentId }` | Trả `{ summary }` |
+| **Trang "Tạo Quiz từ document"** | 1. `POST /api/AI/quizzes/generate?docId=X { numberOfQuestions: 10 }` → 2. Navigate user tới màn làm bài dùng `quiz.id` từ response | Validate 1≤n≤20 (BE check) |
+| **Trang "Tạo Flashcard từ document"** | 1. `POST /api/AI/flashcards/generate?docId=X { numberOfFlashcards: 10 }` → 2. List sẽ tự cập nhật qua SignalR `type=3 payload={documentId,title,count}` | Nếu không nghe SignalR, refetch `GET /api/Flashcard/{docId}/flashcards` |
+| **Danh sách chat session (sidebar)** | `GET /api/Chat/sessions` | |
+| **Tạo session mới** | `POST /api/Chat/sessions { sessionTitle }` | |
+| **Mở 1 session, xem messages** | `GET /api/Chat/sessions/{sessionId}/messages` | |
+| **Gửi message trong session** | `POST /api/Chat/messages { sessionId, documentId, message }` | Response là message AI |
+
+### 5.5.4. Flashcard & Spaced Repetition
+
+| Tính năng UI | Gọi API theo thứ tự | Ghi chú |
+|---|---|---|
+| **Trang "Ôn tập hôm nay"** | 1. `GET /api/FlashcardReview/due?limit=20` (lấy list) → 2. Loop: `POST /api/FlashcardReview/review { flashcardId, quality }` cho mỗi card | Badge counter cho header: `GET /api/FlashcardReview/due/count` |
+| **Badge "X flashcard cần ôn" (header)** | `GET /api/FlashcardReview/due/count` | Lightweight, poll mỗi 60s |
+| **Trang "Tất cả flashcard"** | `GET /api/Flashcard?pageIndex=1&pageSize=20&searchTerm=` | Có phân trang + search |
+| **Xem flashcard của 1 document** | `GET /api/Flashcard/{docId}/flashcards` | |
+| **Tạo flashcard thủ công** | `POST /api/Flashcard { documentId, front, back }` | |
+| **Sửa flashcard** | `PUT /api/Flashcard/{id} { front, back }` | |
+| **Xoá flashcard** | `DELETE /api/Flashcard/{id}` | |
+| **Trang stats cá nhân (mastery)** | `GET /api/FlashcardReview/stats/{userId}` (lấy `userId` từ token) | Trả `totalReviewed`, `dueNow`, `masteredCount`, `averageEaseFactor` |
+
+### 5.5.5. Quiz (Làm bài kiểm tra)
+
+| Tính năng UI | Gọi API theo thứ tự | Ghi chú |
+|---|---|---|
+| **Danh sách quiz (có phân trang)** | `GET /api/Quiz?pageIndex=1&pageSize=20&searchTerm=` | |
+| **Xem chi tiết quiz (chưa có answers)** | `GET /api/Quiz/{id}/questions` | Trả list câu hỏi, không kèm đáp án đúng |
+| **Xem lại 1 câu hỏi (kèm answers)** | `GET /api/Quiz/{quizId}/questions/{questionId}` | Kèm `answers[]` |
+| **Làm bài → nộp bài** | ⚠️ **Hiện CHƯA có public endpoint** - FE cần hỏi backend team endpoint submit/scoring | Đã xoá `POST /api/QuizSubmission`, workflow nộp bài qua `IQuizService.SubmitQuizAsync` (internal) |
+| **Xem lịch sử nộp bài của tôi** | `GET /api/QuizSubmission/{id}` (với id biết trước) | Hiện chưa có endpoint list submissions của user |
+| **Xoá quiz** | `DELETE /api/Quiz/{id}` | Chỉ owner mới xoá được |
+
+### 5.5.6. Gamification (XP, Level, Streak)
+
+| Tính năng UI | Gọi API theo thứ tự | Ghi chú |
+|---|---|---|
+| **Widget "Level & XP" ở Dashboard** | `GET /api/Gamification/stats` | Trả `totalXp`, `currentLevel`, `currentStreak`, `bestStreak`, `xpToNextLevel` |
+| **Trang "Bảng xếp hạng"** | `GET /api/Gamification/leaderboard?top=20` | Trả list user ranked theo XP |
+| **Xem stats của user khác (public profile)** | `GET /api/Gamification/stats/{userId}` | |
+| **Hiển thị popup "Level Up!"** | Đợi SignalR event `ReceiveNotification` với `type=9` (TierUpgraded) và `payload={ newLevel, totalXp }` | KHÔNG cần gọi API, server tự push |
+
+### 5.5.7. Recommendations (Gợi ý học tập)
+
+| Tính năng UI | Gọi API | Ghi chú |
+|---|---|---|
+| **Trang "Phân tích của tôi" - độ thành thạo theo môn** | `GET /api/Recommendations/mastery` | Trả `[ { subjectCode, subjectName, masteryPercentage, totalAttempts, correctAttempts } ]` |
+| **Trang "Nên học gì tiếp?"** | `GET /api/Recommendations/suggestions` | Trả `subjectMasteries` + `recommendations[]` (text) + `summary` |
+| **Xem của user khác** | `GET /api/Recommendations/mastery/{userId}` hoặc `/suggestions/{userId}` | |
+
+### 5.5.8. Tier & Payment (VNPay)
+
+| Tính năng UI | Gọi API theo thứ tự | Ghi chú |
+|---|---|---|
+| **Trang "Bảng giá" (Pricing)** | `GET /api/TierMembership` | Public, không cần token |
+| **Chi tiết 1 gói** | `GET /api/TierMembership/{id}` | Public |
+| **Bấm "Nâng cấp Pro"** | 1. `POST /api/Payment/create-checkout-url { tierId }` → 2. `window.location = paymentUrl` | Backend trả URL VNPay |
+| **Trang xử lý sau khi VNPay redirect về** | Đợi URL `/api/Payment/vnpay-return?vnp_...` load → tự động trả JSON → FE check `success` field | URL này user mở trực tiếp trong browser, FE chỉ cần render kết quả |
+| **Hiển thị quota hiện tại** | `GET /api/User/me/tier` | Trả `currentStorageMb` + `currentAiTokensUsed` |
+| **Lịch sử thanh toán của tôi** | `GET /api/Payment/my` | Trả list `PaymentResponseDto` |
+| **Trang quản lý thanh toán (Admin)** | `GET /api/Payment` | Admin only |
+
+### 5.5.9. Subject (Môn học)
+
+| Tính năng UI | Gọi API | Ghi chú |
+|---|---|---|
+| **Dropdown chọn môn học (khi upload, tạo quiz, …)** | `GET /api/Subject?pageIndex=1&pageSize=100` | Cache 5 phút, ít thay đổi |
+| **Chi tiết 1 môn** | `GET /api/Subject/{id}` | |
+
+### 5.5.10. Vote & Share
+
+| Tính năng UI | Gọi API | Ghi chú |
+|---|---|---|
+| **Nút upvote/downvote trên document** | 1. `POST /api/Vote { documentId, type: 1 or 2 }` → 2. Update UI ngay (optimistic) | `type=1` upvote, `type=2` downvote |
+| **Bỏ vote** | `DELETE /api/Vote/{id}` | Cần lưu `vote.id` từ response POST |
+| **Hiển thị số vote** | Đã có sẵn trong `DocumentResponseDto.voteCount`, không cần gọi riêng | |
+
+### 5.5.11. Notification (Chuông thông báo)
+
+| Tính năng UI | Gọi API theo thứ tự | Ghi chú |
+|---|---|---|
+| **Hiển thị list notifications (bell icon)** | 1. `GET /api/Notification/my` (lấy list persistent) + 2. Đồng thời nghe SignalR `ReceiveNotification` để update real-time | Kết hợp cả 2 nguồn |
+| **Badge "X chưa đọc"** | Filter `isRead === false` từ response `/api/Notification/my` | |
+| **Bấm vào 1 notification** | 1. `POST /api/Notification/{id}/read` (mark read) → 2. Navigate tới `payload` link tương ứng | |
+| **"Đánh dấu tất cả đã đọc"** | `POST /api/Notification/mark-all-read` | Response 204, FE refresh list |
+
+### 5.5.12. Report (Báo cáo vi phạm)
+
+| Tính năng UI | Gọi API | Ghi chú |
+|---|---|---|
+| **Modal "Báo cáo document"** | 1. `POST /api/Report { documentId, reason }` | Chỉ cần `documentId` + `reason`, userId tự lấy từ token |
+| **Trang "Reports của tôi"** | `GET /api/Report/my-reports` | List các report user đã gửi |
+
+### 5.5.13. Admin (chỉ dành cho role Admin)
+
+| Tính năng UI | Gọi API | Ghi chú |
+|---|---|---|
+| **Trang quản lý Subject** | `GET /api/Subject`, `POST /api/Subject`, `PUT /api/Subject/{id}`, `DELETE /api/Subject/{id}` | |
+| **Trang quản lý Tier** | `GET /api/TierMembership`, `POST /api/TierMembership`, `PUT /api/TierMembership/{id}`, `DELETE /api/TierMembership/{id}` | |
+| **Trang quản lý User** | `GET /api/User`, `GET /api/User/{id}`, `PUT /api/User/{id}/tier` (gán tier) | |
+| **Trang quản lý Report** | `GET /api/Report/search?status=&category=&keyword=`, `PATCH /api/Report/{id}/status`, `POST /api/Report/bulk-status`, `POST /api/Report/documents/{id}/mark-non-flaggable` | |
+| **Trang quản lý Payment** | `GET /api/Payment`, `GET /api/Payment/{id}`, `POST /api/Payment/{id}/refund` | |
+| **Nút "Reindex toàn bộ"** | `POST /api/Admin/reindex` | Đẩy hết document vào background queue |
+| **Xem tất cả QuizSubmission** | `GET /api/QuizSubmission` | |
+
+### 5.5.14. SignalR - Khi nào cần connect
+
+| Tình huống | Cần kết nối SignalR? | Lý do |
+|---|---|---|
+| User vừa login | ✅ Có | Bắt đầu nhận notification |
+| User vừa upload document | ✅ Rất cần | Để biết khi nào document xử lý xong mà không phải poll |
+| User đang xem trang "Ôn tập" | ❌ Không bắt buộc | Có thể poll `/due/count` thay thế |
+| User mở Dashboard có widget XP | ❌ Không bắt buộc | Có thể fetch `/stats` mỗi 30s |
+| User vừa thanh toán xong | ✅ Nên có | Có thể nhận event tier-upgrade hoặc payment-success |
+| User logout | ✅ Có (để gọi LeaveGroup) | Tránh rò rỉ connection |
+
+**Cách kết nối** (xem chi tiết mục 24):
+```javascript
+const connection = new signalR.HubConnectionBuilder()
+  .withUrl(`/hubs/notifications?access_token=${encodeURIComponent(accessToken)}`)
+  .withAutomaticReconnect()
+  .build();
+
+connection.on("ReceiveNotification", (n) => {
+  // Dispatch vào store global để bell icon + toast update
+  notificationStore.push(n);
+});
+
+await connection.start();
+await connection.invoke("JoinGroup", String(currentUserId));
 ```
 
-### Responses
-**200** - OK
+**Các event cần handle**:
+| `type` | Label cho user | Action FE nên làm |
+|---|---|---|
+| `2` Document | "Tài liệu đã sẵn sàng" | Toast success + refetch list document |
+| `3` Quiz (FlashcardsReady) | "X flashcard mới sẵn sàng" | Toast + refetch flashcard list |
+| `3` Quiz (QuizReady) | "Quiz đã được tạo" | Toast + navigate tới quiz |
+| `1` System (StreakAtRisk) | "Streak sắp mất, ôn ngay!" | Toast warning + link tới /review |
+| `9` TierUpgraded (LevelUp) | "Bạn đã lên level X!" | Modal celebrate + animation |
+| `4` Payment / `5` PaymentSucceeded | "Thanh toán thành công" | Toast + refetch tier info |
+
+### 5.5.15. Tổng kết: Khi build màn hình mới, hỏi 3 câu hỏi
+
+1. **Màn hình này cần data gì?** → Tra bảng 5.5.1-5.5.13 để biết gọi API nào.
+2. **Có cần cập nhật real-time không?** → Tra bảng 5.5.14.
+3. **Có phải admin không?** → Check cột "Auth" trong Phần 2 (mục 7-23).
+
 ---
 
-## POST /api/AI/flashcards/generate
-**POST** `/api/AI/flashcards/generate`
+# Phần 2 - Spec kỹ thuật (Technical)
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+## 6. Base URL & Conventions
 
-### Body (`application/json`)
+| Mục | Giá trị |
+|---|---|
+| **Development - HTTP (mặc định)** | `http://localhost:5171` |
+| **Development - HTTPS** | `https://localhost:7265` (HTTP fallback `http://localhost:5171`) |
+| **IIS Express (profile phụ)** | `http://localhost:31922` (HTTPS `https://localhost:44385`) |
+| **Swagger UI** | `http://localhost:5171/swagger` |
+| **SignalR Hub** | `ws://localhost:5171/hubs/notifications` (HTTP) hoặc `wss://localhost:7265/hubs/notifications` (HTTPS) |
+| **Static files (upload)** | `http://localhost:5171/uploads/{filename}` |
+| Date format | ISO 8601 UTC (ví dụ `2026-06-28T10:30:00.000Z`) |
+| ID format | UUID/GUID string |
+| Auth header | `Authorization: Bearer <accessToken>` |
+| Refresh token | Gửi trong body request (không phải cookie) |
+
+> **Profile chạy** (`launchSettings.json`): chạy `dotnet run --launch-profile http` để mở `http://localhost:5171`, hoặc `--launch-profile https` để mở `https://localhost:7265`.
+>
+> **CORS**: Backend đọc `Cors:AllowedOrigins` từ `appsettings.Development.json`. Khi dev frontend chạy port khác (ví dụ Vite 5173, React 3000), phải thêm vào `appsettings.Development.json`:
+> ```json
+> "Cors": { "AllowedOrigins": [ "http://localhost:5173" ] }
+> ```
+
+### Response format chung
+
+| Status | Ý nghĩa |
+|---|---|
+| `200 OK` | Thành công, body chứa data |
+| `201 Created` | Tạo mới thành công (có `Location` header) |
+| `202 Accepted` | Yêu cầu đã được nhận, xử lý bất đồng bộ (upload file) |
+| `204 No Content` | Thành công, không có body (mark-as-read, delete) |
+| `400 Bad Request` | Validation fail, body thường là `ValidationProblemDetails` với field `errors` |
+| `401 Unauthorized` | Token thiếu/hết hạn |
+| `403 Forbidden` | Token hợp lệ nhưng không đủ quyền (role/tier) |
+| `404 Not Found` | Resource không tồn tại |
+| `500 Internal Server Error` | Lỗi backend, FE hiện "Đã có lỗi xảy ra" |
+
+### Error body mẫu (400):
+
 ```json
 {
-  "numberOfFlashcards": 0,
-}
-```
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| docId | query | string | No |  |
-
-
-### Responses
-**200** - OK
-```json
-[
-  {
-    "id": "string",
-    "documentId": "string",
-    "front": "string",
-    "back": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
+  "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+  "title": "One or more validation errors occurred.",
+  "status": 400,
+  "errors": {
+    "Email": ["The Email field is required."],
+    "Password": ["The Password must be at least 6 characters long."]
   }
-]
-```
-
----
-
-## POST /api/AI/quizzes/generate
-**POST** `/api/AI/quizzes/generate`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Body (`application/json`)
-```json
-{
-  "numberOfQuestions": 0,
-}
-```
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| docId | query | string | No |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "documentId": "string",
-  "title": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
-  "questions": [
-    {
-      "id": "string",
-      "quizId": "string",
-      "title": "string",
-      "type": "integer",
-      "position": 0,
-      "createdAt": "string",
-      "updatedAt": "string",
-      "answers": [
-        {
-          "id": "string",
-          "questionId": "string",
-          "selectedOption": "string",
-          "isCorrect": false,
-          "createdAt": "string",
-          "updatedAt": "string",
-        }
-      ],
-    }
-  ],
 }
 ```
 
 ---
 
-## POST /api/Auth/register
-**POST** `/api/Auth/register`
+## 7. Authentication APIs (Public)
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### 7.1. POST `/api/Auth/register`
 
-### Body (`application/json`)
+Đăng ký tài khoản mới. Sau khi thành công, hệ thống gửi OTP về email.
+
+**Auth**: Không
+
+**Body**:
 ```json
 {
-  "fullName": "string",
-  "email": "string",
-  "password": "string",
-  "dateOfBirth": "string",
+  "fullName": "Nguyễn Văn A",
+  "email": "user@example.com",
+  "password": "Matkhau123",
+  "dateOfBirth": "2000-01-15"
 }
 ```
 
-### Responses
-**200** - OK
-```json
-{
-  "message": "string",
-  "email": "string",
-}
-```
+**Responses**:
+| Status | Body | Ý nghĩa |
+|---|---|---|
+| 200 | `{ "message": "string", "email": "string" }` | OK, OTP đã gửi |
+| 400 | ValidationProblemDetails | Email trùng, password yếu, … |
 
----
+### 7.2. POST `/api/Auth/verify-registration-otp`
 
-## POST /api/Auth/login
-**POST** `/api/Auth/login`
+Xác thực OTP đăng ký.
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+**Body**: `{ "email": "string", "otp": "string" }`
 
-### Body (`application/json`)
-```json
-{
-  "email": "string",
-  "password": "string",
-}
-```
+**Responses**:
+| Status | Ý nghĩa |
+|---|---|
+| 200 | `{ "message": "Email verified successfully." }` |
+| 400 | OTP sai/hết hạn |
 
-### Responses
-**200** - OK
+### 7.3. POST `/api/Auth/resend-registration-otp`
+
+Gửi lại OTP.
+
+**Body**: `{ "email": "string" }`
+
+**Response**: 200 `{ "message": "OTP sent successfully." }`
+
+### 7.4. POST `/api/Auth/login`
+
+**Rate limit**: Có áp dụng rate-limit (chống brute force).
+
+**Body**: `{ "email": "string", "password": "string" }`
+
+**Response 200**:
 ```json
 {
   "user": {
-    "id": "string",
+    "id": "guid",
     "fullName": "string",
     "email": "string",
-    "dateOfBirth": "string",
+    "dateOfBirth": "2026-01-15",
     "currentStorageCapacity": 0,
     "currentAiTokenUsage": 0,
     "status": "string",
     "role": "string",
-    "tierId": "string",
-    "tierName": "string",
-    "tierStorageLimitMb": 0,
-    "tierAiTokens": 0,
-    "tierExpireAt": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
+    "tierId": "guid",
+    "tierName": "Free",
+    "tierStorageLimitMb": 100,
+    "tierAiTokens": 10000,
+    "tierExpireAt": "2027-06-28T10:30:00Z",
+    "createdAt": "2026-06-28T10:30:00Z",
+    "updatedAt": null
   },
-  "accessToken": "string",
-  "accessTokenExpiresAt": "string",
-  "refreshToken": "string",
-  "refreshTokenExpiresAt": "string",
+  "accessToken": "eyJhbGc...",
+  "accessTokenExpiresAt": "2026-06-28T11:30:00Z",
+  "refreshToken": "rt_abc123...",
+  "refreshTokenExpiresAt": "2026-07-05T10:30:00Z"
 }
 ```
 
----
+**Errors**: 401 nếu sai email/password, 403 nếu tài khoản bị khoá.
 
-## POST /api/Auth/refresh-token
-**POST** `/api/Auth/refresh-token`
+### 7.5. POST `/api/Auth/refresh-token`
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+**Body**: `{ "refreshToken": "string" }`
 
-### Body (`application/json`)
-```json
-{
-  "refreshToken": "string",
-}
-```
+**Response**: 200 - giống hệt login response (cặp token mới).
 
-### Responses
-**200** - OK
-```json
-{
-  "user": {
-    "id": "string",
-    "fullName": "string",
-    "email": "string",
-    "dateOfBirth": "string",
-    "currentStorageCapacity": 0,
-    "currentAiTokenUsage": 0,
-    "status": "string",
-    "role": "string",
-    "tierId": "string",
-    "tierName": "string",
-    "tierStorageLimitMb": 0,
-    "tierAiTokens": 0,
-    "tierExpireAt": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
-  },
-  "accessToken": "string",
-  "accessTokenExpiresAt": "string",
-  "refreshToken": "string",
-  "refreshTokenExpiresAt": "string",
-}
-```
+**Errors**: 401 nếu refresh token hết hạn/không hợp lệ.
 
----
+### 7.6. POST `/api/Auth/forgot-password`
 
-## POST /api/Auth/verify-registration-otp
-**POST** `/api/Auth/verify-registration-otp`
+Luôn trả 200 dù email có tồn tại (chống enumeration).
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+**Body**: `{ "email": "string" }`
 
-### Body (`application/json`)
+**Response**: 200 `{ "message": "If the email exists, an OTP has been sent." }`
+
+### 7.7. POST `/api/Auth/reset-password`
+
+**Body**:
 ```json
 {
   "email": "string",
   "otp": "string",
+  "newPassword": "MatkhauMoi123"
 }
 ```
 
-### Responses
-**200** - OK
----
+**Response**: 200 `{ "message": "Password reset successfully." }`
 
-## POST /api/Auth/resend-registration-otp
-**POST** `/api/Auth/resend-registration-otp`
+### 7.8. POST `/api/Auth/change-password`
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+**Auth**: Bearer
 
-### Body (`application/json`)
-```json
-{
-  "email": "string",
-}
-```
+**Body**: `{ "currentPassword": "string", "newPassword": "string" }`
 
-### Responses
-**200** - OK
----
+**Response**: 200 `{ "message": "Password changed successfully." }`
 
-## POST /api/Auth/forgot-password
-**POST** `/api/Auth/forgot-password`
+### 7.9. POST `/api/Auth/logout`
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+**Auth**: Bearer
 
-### Body (`application/json`)
-```json
-{
-  "email": "string",
-}
-```
+**Body**: `{ "refreshToken": "string" }`
 
-### Responses
-**200** - OK
----
+**Response**: 200 `{ "message": "Logged out successfully." }`
 
-## POST /api/Auth/reset-password
-**POST** `/api/Auth/reset-password`
+### 7.10. GET `/api/Auth/external-login/{provider}`
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+`provider`: `Google` hoặc `GitHub` (case-insensitive).
 
-### Body (`application/json`)
-```json
-{
-  "email": "string",
-  "otp": "string",
-  "newPassword": "string",
-}
-```
+**Response**: 302 redirect sang OAuth provider.
 
-### Responses
-**200** - OK
----
+> **FE integration**: Trên web, dùng `window.location.href = "/api/Auth/external-login/Google"`.
 
-## POST /api/Auth/change-password
-**POST** `/api/Auth/change-password`
+### 7.11. GET `/api/Auth/external-callback/{provider}`
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+Backend tự động redirect tới đây sau khi user xác thực với provider. Trả về JSON giống login response.
 
-### Body (`application/json`)
-```json
-{
-  "currentPassword": "string",
-  "newPassword": "string",
-}
-```
-
-### Responses
-**200** - OK
----
-
-## POST /api/Auth/logout
-**POST** `/api/Auth/logout`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Body (`application/json`)
-```json
-{
-  "refreshToken": "string",
-}
-```
-
-### Responses
-**200** - OK
----
-
-## GET /api/Auth/external-login/{provider}
-**GET** `/api/Auth/external-login/{provider}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| provider | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
----
-
-## GET /api/Auth/external-callback/{provider}
-**GET** `/api/Auth/external-callback/{provider}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| provider | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "user": {
-    "id": "string",
-    "fullName": "string",
-    "email": "string",
-    "dateOfBirth": "string",
-    "currentStorageCapacity": 0,
-    "currentAiTokenUsage": 0,
-    "status": "string",
-    "role": "string",
-    "tierId": "string",
-    "tierName": "string",
-    "tierStorageLimitMb": 0,
-    "tierAiTokens": 0,
-    "tierExpireAt": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
-  },
-  "accessToken": "string",
-  "accessTokenExpiresAt": "string",
-  "refreshToken": "string",
-  "refreshTokenExpiresAt": "string",
-}
-```
+> **Quan trọng**: Vì backend dùng cookie tạm để handshake OAuth, response này thường đi kèm với việc set cookie hoặc redirect về trang frontend với token trong query string (tuỳ cấu hình). FE cần check contract thực tế với backend team.
 
 ---
 
-## GET /api/Chat/sessions
-**GET** `/api/Chat/sessions`
+## 8. User APIs (Authenticated)
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### 8.1. GET `/api/User` (Admin only)
 
-### Responses
-**200** - OK
+Lấy danh sách tất cả user.
+
+**Response 200**:
 ```json
 [
   {
-    "id": "string",
-    "userId": "string",
-    "documentId": "string",
-    "sessionTitle": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
+    "id": "guid", "fullName": "string", "email": "string",
+    "dateOfBirth": "2000-01-15",
+    "currentStorageCapacity": 50, "currentAiTokenUsage": 1200,
+    "status": "Active", "role": "User",
+    "tierId": "guid", "tierName": "Free",
+    "tierStorageLimitMb": 100, "tierAiTokens": 10000,
+    "tierExpireAt": null,
+    "createdAt": "...", "updatedAt": null
   }
 ]
 ```
 
----
+### 8.2. GET `/api/User/{id}` (Admin only)
 
-## POST /api/Chat/sessions
-**POST** `/api/Chat/sessions`
+### 8.3. GET `/api/User/me/tier`
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+Thông tin tier hiện tại + mức dùng.
 
-### Body (`application/json`)
+**Response 200**:
 ```json
 {
-  "sessionTitle": "string",
+  "tierId": "guid",
+  "tierName": "Free",
+  "storageLimitMb": 100,
+  "aiTokens": 10000,
+  "tierExpireAt": null,
+  "currentStorageMb": 12,
+  "currentAiTokensUsed": 350
 }
 ```
 
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "userId": "string",
-  "documentId": "string",
-  "sessionTitle": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
+### 8.4. GET `/api/User/shareable?keyword=...`
 
----
+Danh sách user có thể share document (dùng cho picker trong modal "Share").
 
-## GET /api/Chat/sessions/{sessionId}/messages
-**GET** `/api/Chat/sessions/{sessionId}/messages`
+**Query**: `keyword` (optional) - tìm theo tên hoặc email.
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| sessionId | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
+**Response 200**:
 ```json
 [
-  {
-    "id": "string",
-    "chatSessionId": "string",
-    "sender": "string",
-    "content": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
-  }
+  { "id": "guid", "fullName": "string", "email": "string", "role": "User" }
 ]
 ```
 
----
+> Caller sẽ bị loại khỏi kết quả.
 
-## POST /api/Chat/messages
-**POST** `/api/Chat/messages`
+### 8.5. PUT `/api/User/me`
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+User tự cập nhật profile.
 
-### Body (`application/json`)
-```json
-{
-  "sessionId": "string",
-  "documentId": "string",
-  "message": "string",
-}
-```
+**Body**: `{ "fullName": "string", "dateOfBirth": "2000-01-15" }`
 
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "chatSessionId": "string",
-  "sender": "string",
-  "content": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
+**Response**: 204 No Content.
+
+### 8.6. PUT `/api/User/{id}/tier` (Admin only)
+
+Admin set tier cho user (dùng cho refund/khuyến mãi).
+
+**Body**: `{ "tierId": "guid", "tierExpireAt": "2027-01-01T00:00:00Z" }`
+
+**Response**: 204.
 
 ---
 
-## GET /api/Document
-**GET** `/api/Document`
+## 9. Document APIs (Authenticated)
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### 9.1. GET `/api/Document`
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| Offset | query | integer | No |  |
-| Limit | query | integer | No |  |
-| SearchTerm | query | string | No |  |
-| SortBy | query | string | No |  |
-| IsDescending | query | boolean | No |  |
-| subjectId | query | string | No |  |
+Lấy documents của user hiện tại (phân trang).
 
+**Query params**:
+| Name | Type | Default | Description |
+|---|---|---|---|
+| `pageIndex` | int | 1 | Số trang (1-based) |
+| `pageSize` | int | 20 | Số phần tử/trang |
+| `searchTerm` | string | null | Tìm theo title |
+| `sortBy` | string | null | Field name |
+| `isDescending` | bool | false | |
+| `subjectId` | guid | null | Lọc theo subject |
 
-### Responses
-**200** - OK
+**Response 200** (`PagedResultDto<DocumentResponseDto>`):
 ```json
 {
   "items": [
     {
-      "id": "string",
-      "userId": "string",
-      "subjectId": "string",
-      "title": "string",
-      "fileLink": "string",
-      "fileName": "string",
-      "fileExtension": "string",
-      "fileType": "string",
-      "fileSizeBytes": 0,
-      "sharedUsers": "string",
-      "shareStatus": "string",
-      "status": "integer",
-      "voteCount": 0,
-      "createdAt": "string",
-      "updatedAt": "string",
+      "id": "guid", "userId": "guid", "subjectId": "guid",
+      "title": "string", "fileLink": "/uploads/abc.pdf",
+      "fileName": "abc.pdf", "fileExtension": ".pdf",
+      "fileType": "application/pdf", "fileSizeBytes": 1048576,
+      "sharedUsers": "guid1,guid2", "shareStatus": "private",
+      "status": 2, "voteCount": 5,
+      "createdAt": "...", "updatedAt": null
     }
   ],
-  "totalCount": 0,
-  "offset": 0,
-  "limit": 0,
+  "totalCount": 100, "offset": 0, "limit": 20
 }
 ```
 
----
+> **`status` mapping**: 1=Draft, 2=Done, 3=Archived, 4=Banned, 5=Processing, 6=Failed.
 
-## GET /api/Document/{id}
-**GET** `/api/Document/{id}`
+### 9.2. GET `/api/Document/{id}`
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+Lấy 1 document. Trả 404 nếu không phải của user và shareStatus ≠ "public".
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
+### 9.3. PUT `/api/Document/{id}`
 
+Cập nhật metadata (title, shareStatus, …). Không đổi file.
 
-### Responses
-**200** - OK
+**Body**:
 ```json
 {
-  "id": "string",
-  "userId": "string",
-  "subjectId": "string",
   "title": "string",
-  "fileLink": "string",
-  "fileName": "string",
+  "fileName": "string",   // optional
   "fileExtension": "string",
   "fileType": "string",
-  "fileSizeBytes": 0,
-  "sharedUsers": "string",
-  "shareStatus": "string",
-  "status": "integer",
-  "voteCount": 0,
-  "createdAt": "string",
-  "updatedAt": "string",
+  "shareStatus": "private" | "public" | "shared"
 }
 ```
 
----
+### 9.4. DELETE `/api/Document/{id}`
 
-## PUT /api/Document/{id}
-**PUT** `/api/Document/{id}`
+Xoá document + vector embeddings + file vật lý. Trừ storage của user.
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+**Response**: 204.
 
-### Body (`application/json`)
+### 9.5. POST `/api/Document/{id}/share`
+
+Share cho nhiều user.
+
+**Body**: `{ "sharedUserIds": ["guid1", "guid2"] }`
+
+**Response 200**:
 ```json
-{
-  "title": "string",
-  "fileName": "string",
-  "fileExtension": "string",
-  "fileType": "string",
-  "shareStatus": "string",
-}
+{ "documentId": "guid", "sharedUserIds": ["guid1", "guid2"] }
 ```
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
+### 9.6. GET `/api/Document/{id}/download`
 
+Stream file download (có range support).
 
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "userId": "string",
-  "subjectId": "string",
-  "title": "string",
-  "fileLink": "string",
-  "fileName": "string",
-  "fileExtension": "string",
-  "fileType": "string",
-  "fileSizeBytes": 0,
-  "sharedUsers": "string",
-  "shareStatus": "string",
-  "status": "integer",
-  "voteCount": 0,
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
+### 9.7. GET `/api/Document/{id}/preview`
 
----
+Stream file inline (cho PDF viewer).
 
-## DELETE /api/Document/{id}
-**DELETE** `/api/Document/{id}`
+### 9.8. GET `/api/Document/{id}/status`
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+**Response 200**: `{ "id": "guid", "Status": "Processing" }`
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
+> Dùng để poll sau khi upload. Trả 403 nếu không phải owner.
 
+### 9.9. GET `/api/Document/{id}/chunks`
 
-### Responses
-**200** - OK
----
+Lấy text chunks (sau khi xử lý xong) - dùng cho debug.
 
-## POST /api/Document/{id}/share
-**POST** `/api/Document/{id}/share`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Body (`application/json`)
-```json
-{
-  "sharedUserIds": [
-    "string"
-  ],
-}
-```
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "documentId": "string",
-  "sharedUserIds": [
-    "string"
-  ],
-}
-```
-
----
-
-## GET /api/Document/{id}/download
-**GET** `/api/Document/{id}/download`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
----
-
-## GET /api/Document/{id}/preview
-**GET** `/api/Document/{id}/preview`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
----
-
-## GET /api/Document/{id}/status
-**GET** `/api/Document/{id}/status`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
----
-
-## GET /api/Document/{id}/chunks
-**GET** `/api/Document/{id}/chunks`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
+**Response 200**:
 ```json
 [
-  {
-    "id": "string",
-    "documentId": "string",
-    "content": "string",
-    "orderIndex": 0,
-    "vectorId": "string",
-    "score": 0,
-  }
+  { "id": "guid", "documentId": "guid", "content": "string", "orderIndex": 0, "vectorId": null, "score": 0 }
 ]
 ```
 
----
+### 9.10. POST `/api/Document/upload/file`
 
-## POST /api/Document/upload/file
-**POST** `/api/Document/upload/file`
+**Content-Type**: `multipart/form-data`
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+**Form fields**:
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `file` | file | Yes | .pdf, .docx, .txt, .md |
+| `title` | string | Yes | |
+| `subjectId` | guid | Yes | Phải tồn tại trong `/api/Subject` |
 
-### Body (`multipart/form-data`)
+**Errors**:
+| Status | Khi nào |
+|---|---|
+| 400 | File trống, thiếu title, subjectId không tồn tại, extension không hợp lệ, file quá lớn (>MaxFileSizeBytes, mặc định 20MB) |
+| 403 | Vượt quota storage của tier |
+| 202 | Accepted - xử lý bất đồng bộ |
+
+**Response 202**:
 ```json
-{
-  "file": "string", // File to upload (.pdf, .docx, .txt, .md, .jpg, .png, .mp4, .mp3, etc.)
-  "title": "string", // Document title
-  "subjectId": "string", // Subject ID
-}
+{ "documentId": "guid", "status": "processing", "chunkCount": 0, "message": "Document is being processed in the background" }
 ```
 
-### Responses
-**200** - OK
-```json
-{
-  "documentId": "string",
-  "status": "string",
-  "chunkCount": 0,
-  "message": "string",
-}
-```
+### 9.11. POST `/api/Document/{id}/reprocess`
 
----
-
-## POST /api/Document/{id}/reprocess
-**POST** `/api/Document/{id}/reprocess`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "documentId": "string",
-  "status": "string",
-  "chunkCount": 0,
-  "message": "string",
-}
-```
+Re-OCR + re-vector nếu job lỗi. Cùng response shape với upload.
 
 ---
 
-## GET /api/Flashcard/{docId}/flashcards
-**GET** `/api/Flashcard/{docId}/flashcards`
+## 10. AI APIs (Authenticated)
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### 10.1. POST `/api/AI/rag/ask`
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| docId | path | string | Yes |  |
+Hỏi đáp theo tất cả documents của user.
 
+**Body**: `{ "question": "string" }`
 
-### Responses
-**200** - OK
-```json
-[
-  {
-    "id": "string",
-    "documentId": "string",
-    "front": "string",
-    "back": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
-  }
-]
-```
-
----
-
-## GET /api/Flashcard
-**GET** `/api/Flashcard`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| Offset | query | integer | No |  |
-| Limit | query | integer | No |  |
-| SearchTerm | query | string | No |  |
-| SortBy | query | string | No |  |
-| IsDescending | query | boolean | No |  |
-
-
-### Responses
-**200** - OK
+**Response 200**:
 ```json
 {
-  "items": [
-    {
-      "id": "string",
-      "documentId": "string",
-      "front": "string",
-      "back": "string",
-      "createdAt": "string",
-      "updatedAt": "string",
-    }
+  "answer": "string",
+  "citations": [
+    { "documentId": "guid", "documentTitle": "string", "chunkIndex": 0, "snippet": "string", "score": 0.85 }
   ],
-  "totalCount": 0,
-  "offset": 0,
-  "limit": 0,
+  "confidence": 0.82
 }
 ```
 
----
+### 10.2. POST `/api/AI/rag/summarize`
 
-## POST /api/Flashcard
-**POST** `/api/Flashcard`
+**Body**: `{ "documentId": "guid" }`
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+**Response 200**: `{ "summary": "string" }`
 
-### Body (`application/json`)
+### 10.3. POST `/api/AI/flashcards/generate?docId={guid}`
+
+**Query**: `docId` (guid, required)
+
+**Body**: `{ "numberOfFlashcards": 10 }` (default 10)
+
+**Response 200**: `[ FlashcardResponseDto ]`
+
+> Sau khi sinh, hệ thống gửi SignalR `ReceiveNotification` với `payload = { documentId, title, count }` để FE refresh danh sách.
+
+### 10.4. POST `/api/AI/quizzes/generate?docId={guid}`
+
+**Query**: `docId` (guid, required)
+
+**Body**: `{ "numberOfQuestions": 5 }` (range 1..20, backend validate)
+
+**Response 200**: `QuizResponseDto`
 ```json
 {
-  "documentId": "string",
-  "front": "string",
-  "back": "string",
-}
-```
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "documentId": "string",
-  "front": "string",
-  "back": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
-
----
-
-## GET /api/Flashcard/{id}
-**GET** `/api/Flashcard/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "documentId": "string",
-  "front": "string",
-  "back": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
-
----
-
-## PUT /api/Flashcard/{id}
-**PUT** `/api/Flashcard/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Body (`application/json`)
-```json
-{
-  "front": "string",
-  "back": "string",
-}
-```
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "documentId": "string",
-  "front": "string",
-  "back": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
-
----
-
-## DELETE /api/Flashcard/{id}
-**DELETE** `/api/Flashcard/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
----
-
-## GET /api/Notification
-**GET** `/api/Notification`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Responses
-**200** - OK
-```json
-[
-  {
-    "id": "string",
-    "userId": "string",
-    "message": "string",
-    "isRead": false,
-    "type": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
-  }
-]
-```
-
----
-
-## GET /api/Notification/{id}
-**GET** `/api/Notification/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "userId": "string",
-  "message": "string",
-  "isRead": false,
-  "type": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
-
----
-
-## GET /api/Notification/my
-**GET** `/api/Notification/my`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Responses
-**200** - OK
-```json
-[
-  {
-    "id": "string",
-    "userId": "string",
-    "message": "string",
-    "isRead": false,
-    "type": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
-  }
-]
-```
-
----
-
-## POST /api/Notification/{id}/read
-**POST** `/api/Notification/{id}/read`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
----
-
-## POST /api/Notification/mark-all-read
-**POST** `/api/Notification/mark-all-read`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Responses
-**200** - OK
----
-
-## GET /api/Payment
-**GET** `/api/Payment`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Responses
-**200** - OK
-```json
-[
-  {
-    "id": "string",
-    "userId": "string",
-    "paymentInfo": "string",
-    "paymentDate": "string",
-    "status": "integer",
-    "tierId": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
-  }
-]
-```
-
----
-
-## GET /api/Payment/{id}
-**GET** `/api/Payment/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "userId": "string",
-  "paymentInfo": "string",
-  "paymentDate": "string",
-  "status": "integer",
-  "tierId": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
-
----
-
-## GET /api/Payment/my
-**GET** `/api/Payment/my`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Responses
-**200** - OK
-```json
-[
-  {
-    "id": "string",
-    "userId": "string",
-    "paymentInfo": "string",
-    "paymentDate": "string",
-    "status": "integer",
-    "tierId": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
-  }
-]
-```
-
----
-
-## POST /api/Payment/{id}/refund
-**POST** `/api/Payment/{id}/refund`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
----
-
-## POST /api/Payment/create-checkout-url
-**POST** `/api/Payment/create-checkout-url`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Body (`application/json`)
-```json
-{
-  "tierId": "string",
-}
-```
-
-### Responses
-**200** - OK
-```json
-{
-  "paymentUrl": "string",
-}
-```
-
----
-
-## GET /api/Payment/vnpay-return
-**GET** `/api/Payment/vnpay-return`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Responses
-**200** - OK
----
-
-## GET /api/Question
-**GET** `/api/Question`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Responses
-**200** - OK
-```json
-[
-  {
-    "id": "string",
-    "quizId": "string",
-    "title": "string",
-    "type": "integer",
-    "position": 0,
-    "createdAt": "string",
-    "updatedAt": "string",
-    "answers": [
-      {
-        "id": "string",
-        "questionId": "string",
-        "selectedOption": "string",
-        "isCorrect": false,
-        "createdAt": "string",
-        "updatedAt": "string",
-      }
-    ],
-  }
-]
-```
-
----
-
-## POST /api/Question
-**POST** `/api/Question`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Body (`application/json`)
-```json
-{
-  "quizId": "string",
+  "id": "guid",
+  "documentId": "guid",
   "title": "string",
-  "type": "integer",
-  "position": 0,
-}
-```
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "quizId": "string",
-  "title": "string",
-  "type": "integer",
-  "position": 0,
-  "createdAt": "string",
-  "updatedAt": "string",
-  "answers": [
-    {
-      "id": "string",
-      "questionId": "string",
-      "selectedOption": "string",
-      "isCorrect": false,
-      "createdAt": "string",
-      "updatedAt": "string",
-    }
-  ],
-}
-```
-
----
-
-## GET /api/Question/{id}
-**GET** `/api/Question/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "quizId": "string",
-  "title": "string",
-  "type": "integer",
-  "position": 0,
-  "createdAt": "string",
-  "updatedAt": "string",
-  "answers": [
-    {
-      "id": "string",
-      "questionId": "string",
-      "selectedOption": "string",
-      "isCorrect": false,
-      "createdAt": "string",
-      "updatedAt": "string",
-    }
-  ],
-}
-```
-
----
-
-## PUT /api/Question/{id}
-**PUT** `/api/Question/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Body (`application/json`)
-```json
-{
-  "title": "string",
-  "type": "integer",
-  "position": 0,
-}
-```
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "quizId": "string",
-  "title": "string",
-  "type": "integer",
-  "position": 0,
-  "createdAt": "string",
-  "updatedAt": "string",
-  "answers": [
-    {
-      "id": "string",
-      "questionId": "string",
-      "selectedOption": "string",
-      "isCorrect": false,
-      "createdAt": "string",
-      "updatedAt": "string",
-    }
-  ],
-}
-```
-
----
-
-## DELETE /api/Question/{id}
-**DELETE** `/api/Question/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
----
-
-## GET /api/Quiz
-**GET** `/api/Quiz`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| Offset | query | integer | No |  |
-| Limit | query | integer | No |  |
-| SearchTerm | query | string | No |  |
-| SortBy | query | string | No |  |
-| IsDescending | query | boolean | No |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "items": [
-    {
-      "id": "string",
-      "documentId": "string",
-      "title": "string",
-      "createdAt": "string",
-      "updatedAt": "string",
-      "questions": [
-        {
-          "id": "string",
-          "quizId": "string",
-          "title": "string",
-          "type": "integer",
-          "position": 0,
-          "createdAt": "string",
-          "updatedAt": "string",
-          "answers": [
-            {
-              "id": "string",
-              "questionId": "string",
-              "selectedOption": "string",
-              "isCorrect": false,
-              "createdAt": "string",
-              "updatedAt": "string",
-            }
-          ],
-        }
-      ],
-    }
-  ],
-  "totalCount": 0,
-  "offset": 0,
-  "limit": 0,
-}
-```
-
----
-
-## GET /api/Quiz/{id}
-**GET** `/api/Quiz/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "documentId": "string",
-  "title": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
+  "createdAt": "...",
+  "updatedAt": null,
   "questions": [
     {
-      "id": "string",
-      "quizId": "string",
-      "title": "string",
-      "type": "integer",
-      "position": 0,
-      "createdAt": "string",
-      "updatedAt": "string",
+      "id": "guid", "quizId": "guid", "title": "string",
+      "type": 1, "position": 0,
+      "createdAt": "...", "updatedAt": null,
       "answers": [
-        {
-          "id": "string",
-          "questionId": "string",
-          "selectedOption": "string",
-          "isCorrect": false,
-          "createdAt": "string",
-          "updatedAt": "string",
-        }
-      ],
+        { "id": "guid", "questionId": "guid", "selectedOption": "string", "isCorrect": true, "createdAt": "..." }
+      ]
     }
-  ],
+  ]
 }
 ```
 
+> **`type` mapping**: 1=SingleChoice, 2=MultipleChoice, 3=TrueFalse.
+
 ---
 
-## DELETE /api/Quiz/{id}
-**DELETE** `/api/Quiz/{id}`
+## 11. Flashcard APIs (Authenticated)
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### 11.1. GET `/api/Flashcard/{docId}/flashcards`
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
+Lấy tất cả flashcard của 1 document.
 
-
-### Responses
-**200** - OK
----
-
-## GET /api/Quiz/{id}/questions
-**GET** `/api/Quiz/{id}/questions`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
+**Response 200**:
 ```json
 [
-  {
-    "id": "string",
-    "quizId": "string",
-    "title": "string",
-    "type": "integer",
-    "position": 0,
-    "createdAt": "string",
-    "updatedAt": "string",
-    "answers": [
-      {
-        "id": "string",
-        "questionId": "string",
-        "selectedOption": "string",
-        "isCorrect": false,
-        "createdAt": "string",
-        "updatedAt": "string",
-      }
-    ],
-  }
+  { "id": "guid", "documentId": "guid", "front": "string", "back": "string", "createdAt": "...", "updatedAt": null }
 ]
 ```
 
+### 11.2. GET `/api/Flashcard?pageIndex=1&pageSize=20&searchTerm=...&sortBy=...&isDescending=false`
+
+Phân trang tất cả flashcard của user.
+
+### 11.3. GET `/api/Flashcard/{id}`
+
+### 11.4. POST `/api/Flashcard`
+
+**Body**: `{ "documentId": "guid", "front": "string", "back": "string" }`
+
+**Response**: 201 Created + `FlashcardResponseDto`.
+
+### 11.5. PUT `/api/Flashcard/{id}`
+
+**Body**: `{ "front": "string", "back": "string" }`
+
+### 11.6. DELETE `/api/Flashcard/{id}`
+
+**Response**: 204.
+
 ---
 
-## GET /api/Quiz/{quizId}/questions/{questionId}
-**GET** `/api/Quiz/{quizId}/questions/{questionId}`
+## 12. Flashcard Review APIs (Authenticated) - SM-2 Spaced Repetition
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### 12.1. POST `/api/FlashcardReview/review`
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| quizId | path | string | Yes |  |
-| questionId | path | string | Yes |  |
+User submit 1 lượt review cho 1 flashcard. Hệ thống áp dụng thuật toán SM-2 và cộng XP.
 
+**Body**:
+```json
+{ "flashcardId": "guid", "quality": 0 }
+```
 
-### Responses
-**200** - OK
+> `quality`: 0=Again (quên), 1=Hard (sai), 2=Good (đúng khó), 3=Easy (đúng dễ).
+
+**Response 200**:
 ```json
 {
-  "id": "string",
-  "quizId": "string",
-  "title": "string",
-  "type": "integer",
-  "position": 0,
-  "createdAt": "string",
-  "updatedAt": "string",
-  "answers": [
-    {
-      "id": "string",
-      "questionId": "string",
-      "selectedOption": "string",
-      "isCorrect": false,
-      "createdAt": "string",
-      "updatedAt": "string",
-    }
-  ],
+  "reviewId": "guid",
+  "flashcardId": "guid",
+  "nextReviewDate": "2026-06-29T10:30:00Z",
+  "easeFactor": 2.5,
+  "interval": 1,
+  "repetitions": 2
 }
 ```
 
----
+### 12.2. GET `/api/FlashcardReview/due?limit=20`
 
-## GET /api/Quiz/{quizId}/questions/{questionId}/answers
-**GET** `/api/Quiz/{quizId}/questions/{questionId}/answers`
+Lấy danh sách flashcard đến hạn ôn (nextReviewDate ≤ now).
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+**Query**: `limit` (int, default 50)
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| quizId | path | string | Yes |  |
-| questionId | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
+**Response 200**:
 ```json
 [
-  {
-    "id": "string",
-    "questionId": "string",
-    "selectedOption": "string",
-    "isCorrect": false,
-    "createdAt": "string",
-    "updatedAt": "string",
-  }
+  { "reviewId": "guid", "flashcardId": "guid", "documentId": "guid", "front": "string", "back": "string", "nextReviewDate": "..." }
 ]
 ```
 
+### 12.3. GET `/api/FlashcardReview/due/count`
+
+Số flashcard đến hạn - dùng cho badge counter trên UI.
+
+**Response 200**: `42` (int)
+
+### 12.4. GET `/api/FlashcardReview/stats/{userId}`
+
+**Response 200**:
+```json
+{
+  "totalReviewed": 250,
+  "dueNow": 12,
+  "masteredCount": 30,
+  "averageEaseFactor": 2.41
+}
+```
+
 ---
 
-## GET /api/QuizSubmission
-**GET** `/api/QuizSubmission`
+## 13. Gamification APIs (Authenticated)
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### 13.1. GET `/api/Gamification/stats`
 
-### Responses
-**200** - OK
+Stats của user hiện tại.
+
+**Response 200**:
+```json
+{
+  "totalXp": 1250,
+  "currentLevel": 5,
+  "currentStreak": 7,
+  "bestStreak": 14,
+  "lastActivityDate": "2026-06-28",
+  "xpToNextLevel": 250
+}
+```
+
+### 13.2. GET `/api/Gamification/stats/{userId}`
+
+Stats của 1 user bất kỳ.
+
+### 13.3. GET `/api/Gamification/leaderboard?top=20`
+
+**Query**: `top` (int, default 20)
+
+**Response 200**:
 ```json
 [
-  {
-    "id": "string",
-    "userId": "string",
-    "quizId": "string",
-    "answers": "string",
-    "score": 0,
-    "maxScore": 0,
-    "totalCorrect": 0,
-    "gradedAt": "string",
-    "submittedAt": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
-  }
+  { "userId": "guid", "fullName": "string", "totalXp": 5000, "currentLevel": 12, "currentStreak": 30, "rank": 1 }
 ]
 ```
 
----
+### 13.4. POST `/api/Gamification/award-xp`
 
-## GET /api/QuizSubmission/{id}
-**GET** `/api/QuizSubmission/{id}`
+Nội bộ - các service khác tự gọi. Hiện tại `[Authorize]` cho phép mọi authenticated caller, nhưng **FE không nên gọi trực tiếp**.
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
+**Body**:
 ```json
 {
-  "id": "string",
-  "userId": "string",
-  "quizId": "string",
-  "answers": "string",
-  "score": 0,
-  "maxScore": 0,
-  "totalCorrect": 0,
-  "gradedAt": "string",
-  "submittedAt": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
+  "userId": "guid",
+  "xpEarned": 10,
+  "isCorrect": true,
+  "activityType": 1,       // 0=QuizSubmission, 1=FlashcardReview
+  "documentId": "guid",     // optional
+  "subjectCode": "MATH101", // optional
+  "timeSpentSeconds": 45    // optional
 }
+```
+
+**Response 200**:
+```json
+{ "xpEarned": 10, "totalXp": 1260, "previousLevel": 5, "newLevel": 5, "leveledUp": false, "currentStreak": 7, "bestStreak": 14 }
 ```
 
 ---
 
-## GET /api/Report
-**GET** `/api/Report`
+## 14. Recommendations APIs (Authenticated)
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### 14.1. GET `/api/Recommendations/mastery`
 
-### Responses
-**200** - OK
+User mastery theo subject.
+
+**Response 200**:
 ```json
 [
-  {
-    "id": "string",
-    "userId": "string",
-    "documentId": "string",
-    "reason": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
-  }
+  { "subjectCode": "MATH101", "subjectName": "Calculus I", "masteryPercentage": 78.5, "totalAttempts": 50, "correctAttempts": 39 }
 ]
 ```
 
----
+### 14.2. GET `/api/Recommendations/mastery/{userId}`
 
-## POST /api/Report
-**POST** `/api/Report`
+### 14.3. GET `/api/Recommendations/suggestions`
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+Gợi ý chủ đề cần ôn.
 
-### Body (`application/json`)
+**Response 200**:
 ```json
 {
-  "userId": "string",
-  "documentId": "string",
-  "reason": "string",
+  "subjectMasteries": [ ... ],
+  "recommendations": ["Ôn lại Calculus I (độ thành thạo thấp)", "..."],
+  "summary": "Bạn đang giỏi Physics nhưng cần cải thiện Calculus."
 }
 ```
 
-### Responses
-**200** - OK
+### 14.4. GET `/api/Recommendations/suggestions/{userId}`
+
+---
+
+## 15. Quiz APIs (Authenticated)
+
+### 15.1. GET `/api/Quiz?pageIndex=1&pageSize=20&searchTerm=...&sortBy=...&isDescending=false`
+
+Phân trang quiz của user.
+
+### 15.2. GET `/api/Quiz/{id}`
+
+Trả 404 nếu không phải owner và document không public.
+
+### 15.3. GET `/api/Quiz/{id}/questions`
+
+Lấy questions (không bao gồm answers - xem 15.4).
+
+### 15.4. GET `/api/Quiz/{quizId}/questions/{questionId}`
+
+Lấy 1 question (kèm answers - dùng cho xem lại sau khi nộp bài).
+
+### 15.5. GET `/api/Quiz/{quizId}/questions/{questionId}/answers`
+
+Lấy answers của 1 question (chỉ dùng cho debug/admin).
+
+### 15.6. DELETE `/api/Quiz/{id}`
+
+---
+
+## 16. QuizSubmission APIs
+
+### 16.1. GET `/api/QuizSubmission` (Admin only)
+
+### 16.2. GET `/api/QuizSubmission/{id}`
+
+Trả về kết quả nộp bài (nếu là user thường, chỉ xem được submission của mình - enforced ở service layer).
+
+**Response 200** (`QuizSubmissionResponseDto`):
 ```json
 {
-  "id": "string",
-  "userId": "string",
-  "documentId": "string",
-  "reason": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
+  "id": "guid", "userId": "guid", "quizId": "guid",
+  "answers": "{\"q1\":\"A\",\"q2\":[\"B\",\"C\"]}", // JSON string
+  "score": 8, "maxScore": 10, "totalCorrect": 4,
+  "gradedAt": "2026-06-28T10:30:00Z",
+  "submittedAt": "2026-06-28T10:25:00Z",
+  "createdAt": "...", "updatedAt": null
 }
 ```
 
----
-
-## GET /api/Report/{id}
-**GET** `/api/Report/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "userId": "string",
-  "documentId": "string",
-  "reason": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
+> **QUAN TRỌNG**: Backend hiện **không có** endpoint POST `/api/QuizSubmission` để user tự nộp bài. Workflow nộp bài đi qua service Quiz riêng (xem `IQuizService.SubmitQuizAsync`). FE cần liên hệ backend team để xác nhận endpoint thực tế.
 
 ---
 
-## DELETE /api/Report/{id}
-**DELETE** `/api/Report/{id}`
+## 17. Chat APIs (Authenticated)
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### 17.1. GET `/api/Chat/sessions`
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
+Danh sách chat sessions của user.
 
+### 17.2. POST `/api/Chat/sessions`
 
-### Responses
-**200** - OK
----
+**Body**: `{ "sessionTitle": "string" }`
 
-## GET /api/Subject
-**GET** `/api/Subject`
+**Response 200**: `ChatSessionResponseDto` (kèm `id`, `userId` từ token).
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### 17.3. GET `/api/Chat/sessions/{sessionId}/messages`
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| Offset | query | integer | No |  |
-| Limit | query | integer | No |  |
-| SearchTerm | query | string | No |  |
-| SortBy | query | string | No |  |
-| IsDescending | query | boolean | No |  |
+Lấy lịch sử messages của 1 session.
 
+### 17.4. POST `/api/Chat/messages`
 
-### Responses
-**200** - OK
-```json
-{
-  "items": [
-    {
-      "id": "string",
-      "subjectCode": "string",
-      "subjectName": "string",
-      "description": "string",
-      "createdAt": "string",
-      "updatedAt": "string",
-    }
-  ],
-  "totalCount": 0,
-  "offset": 0,
-  "limit": 0,
-}
-```
+Gửi message mới (user message + AI response được tạo đồng thời).
+
+**Body**: `{ "sessionId": "guid", "documentId": "guid", "message": "string" }`
+
+**Response 200**: `ChatMessageResponseDto` (AI response).
 
 ---
 
-## POST /api/Subject
-**POST** `/api/Subject`
+## 18. Notification APIs (Authenticated)
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### 18.1. GET `/api/Notification` (Admin only)
 
-### Body (`application/json`)
-```json
-{
-  "subjectCode": "string",
-  "subjectName": "string",
-  "description": "string",
-}
-```
+### 18.2. GET `/api/Notification/{id}`
 
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "subjectCode": "string",
-  "subjectName": "string",
-  "description": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
+### 18.3. GET `/api/Notification/my`
+
+Lấy notifications của user hiện tại (dùng cho bell icon).
+
+**Response 200**: `[ NotificationResponseDto ]`
+
+> Chỉ là danh sách persistent (DB). Real-time notifications đến qua SignalR ở mục 5.
+
+### 18.4. POST `/api/Notification/{id}/read`
+
+Mark 1 notification đã đọc. **Response**: 204.
+
+### 18.5. POST `/api/Notification/mark-all-read`
+
+Mark tất cả. **Response**: 204.
 
 ---
 
-## GET /api/Subject/{id}
-**GET** `/api/Subject/{id}`
+## 19. Tier & Payment APIs
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### 19.1. TierMembership (một phần public)
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
+| Method | Endpoint | Auth | Mô tả |
+|---|---|---|---|
+| GET | `/api/TierMembership` | ❌ Public | Danh sách gói tier (cho trang giá) |
+| GET | `/api/TierMembership/{id}` | ❌ Public | Chi tiết 1 gói |
+| POST | `/api/TierMembership` | Admin | Tạo gói mới |
+| PUT | `/api/TierMembership/{id}` | Admin | Cập nhật |
+| DELETE | `/api/TierMembership/{id}` | Admin | Xóa |
 
+**Response mẫu**: `{ id, tierName, price, storageLimitMb, aiTokens, createdAt, updatedAt }`
 
-### Responses
-**200** - OK
+### 19.2. Payment APIs
+
+| Method | Endpoint | Auth | Mô tả |
+|---|---|---|---|
+| GET | `/api/Payment` | Admin | Lấy tất cả giao dịch |
+| GET | `/api/Payment/{id}` | Admin | Chi tiết giao dịch |
+| GET | `/api/Payment/my` | User | Lịch sử thanh toán của user |
+| POST | `/api/Payment/{id}/refund` | Admin | Hoàn tiền |
+| POST | `/api/Payment/create-checkout-url` | User | Tạo link VNPay |
+| GET | `/api/Payment/vnpay-return` | ❌ Public | VNPay redirect về |
+
+#### POST `/api/Payment/create-checkout-url`
+
+**Body**: `{ "tierId": "guid" }`
+
+**Response 200**: `{ "paymentUrl": "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?vnp_..." }`
+
+> **FE**: redirect bằng `window.location.href = paymentUrl`.
+
+#### GET `/api/Payment/vnpay-return?{vnp_params}`
+
+**Response 200** (JSON, không phải redirect - để tránh CORS):
 ```json
-{
-  "id": "string",
-  "subjectCode": "string",
-  "subjectName": "string",
-  "description": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
+{ "success": true, "message": "Payment completed", "status": "Completed" }
 ```
+
+**Errors**:
+| Status | Khi nào |
+|---|---|
+| 400 | Invalid signature |
+
+> **Status mapping**: `Pending` / `Completed` / `Failed` / `Refunded`.
 
 ---
 
-## PUT /api/Subject/{id}
-**PUT** `/api/Subject/{id}`
+## 20. Subject APIs
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+| Method | Endpoint | Auth | Mô tả |
+|---|---|---|---|
+| GET | `/api/Subject?pageIndex=1&pageSize=20` | User | Danh sách môn học (phân trang) |
+| GET | `/api/Subject/{id}` | User | Chi tiết |
+| POST | `/api/Subject` | Admin | Tạo |
+| PUT | `/api/Subject/{id}` | Admin | Cập nhật |
+| DELETE | `/api/Subject/{id}` | Admin | Xóa |
 
-### Body (`application/json`)
-```json
-{
-  "subjectCode": "string",
-  "subjectName": "string",
-  "description": "string",
-}
-```
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "subjectCode": "string",
-  "subjectName": "string",
-  "description": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
+**Response mẫu**: `{ id, subjectCode, subjectName, description, createdAt, updatedAt }`
 
 ---
 
-## DELETE /api/Subject/{id}
-**DELETE** `/api/Subject/{id}`
+## 21. Vote APIs
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+| Method | Endpoint | Auth | Mô tả |
+|---|---|---|---|
+| POST | `/api/Vote` | User | Thả vote (up/down) |
+| GET | `/api/Vote/{id}` | User | Xem 1 vote |
+| DELETE | `/api/Vote/{id}` | User | Rút vote |
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
----
-
-## GET /api/TierMembership
-**GET** `/api/TierMembership`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Responses
-**200** - OK
-```json
-[
-  {
-    "id": "string",
-    "tierName": "string",
-    "price": 0,
-    "storageLimitMb": 0,
-    "aiTokens": 0,
-    "createdAt": "string",
-    "updatedAt": "string",
-  }
-]
-```
+**Body POST**: `{ "documentId": "guid", "type": 1 }` (1=Upvote, 2=Downvote)
 
 ---
 
-## POST /api/TierMembership
-**POST** `/api/TierMembership`
+## 22. Report APIs
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Body (`application/json`)
-```json
-{
-  "tierName": "string",
-  "price": 0,
-  "storageLimitMb": 0,
-  "aiTokens": 0,
-}
-```
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "tierName": "string",
-  "price": 0,
-  "storageLimitMb": 0,
-  "aiTokens": 0,
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
+| Method | Endpoint | Auth | Mô tả |
+|---|---|---|---|
+| POST | `/api/Report` | User | User báo cáo document |
+| GET | `/api/Report/my-reports` | User | Lịch sử reports của user |
+| GET | `/api/Report/{id}` | User/Admin | Xem chi tiết (chỉ Admin hoặc reporter) |
+| GET | `/api/Report/search?status=...&category=...&keyword=...&pageIndex=...&pageSize=...` | Admin | Tìm kiếm |
+| PATCH | `/api/Report/{id}/status` | Admin | Cập nhật status |
+| POST | `/api/Report/bulk-status` | Admin | Update nhiều |
+| POST | `/api/Report/documents/{docId}/mark-non-flaggable` | Admin | Đánh dấu document không thể report |
+| POST | `/api/Report/documents/bulk-mark-non-flaggable` | Admin | |
+| DELETE | `/api/Report/{id}` | Admin | Xóa |
 
 ---
 
-## GET /api/TierMembership/{id}
-**GET** `/api/TierMembership/{id}`
+## 23. Admin APIs
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### POST `/api/Admin/reindex` (Admin)
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
+Re-vector toàn bộ documents.
 
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "tierName": "string",
-  "price": 0,
-  "storageLimitMb": 0,
-  "aiTokens": 0,
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
+**Response 200**: `{ "message": "Queued 250 documents for reindexing", "count": 250 }`
 
 ---
 
-## PUT /api/TierMembership/{id}
-**PUT** `/api/TierMembership/{id}`
+## 24. SignalR Real-time Hub
 
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
+### Endpoint: `<base>/hubs/notifications`
 
-### Body (`application/json`)
-```json
-{
-  "tierName": "string",
-  "price": 0,
-  "storageLimitMb": 0,
-  "aiTokens": 0,
-}
+- HTTP: `ws://localhost:5171/hubs/notifications`
+- HTTPS: `wss://localhost:7265/hubs/notifications`
+
+**Auth**: Bearer token trong query string (`?access_token=<token>`).
+
+**Methods client có thể gọi**:
+| Method | Args | Khi nào |
+|---|---|---|
+| `JoinGroup(userId)` | string | Ngay sau khi connect |
+| `LeaveGroup(userId)` | string | Trước khi logout |
+
+**Event server push**:
+| Event | Payload | Mô tả |
+|---|---|---|
+| `ReceiveNotification` | `RealTimeNotification` | Xem mục 5 |
+
+### Client JS mẫu:
+
+```javascript
+import * as signalR from "@microsoft/signalr";
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5171";
+
+const connection = new signalR.HubConnectionBuilder()
+  .withUrl(`${API_BASE}/hubs/notifications?access_token=${encodeURIComponent(accessToken)}`)
+  .withAutomaticReconnect()
+  .build();
+
+connection.on("ReceiveNotification", (n) => {
+  // n = { userId, title, body, type, timestamp, payload }
+  console.log("Notification:", n.title, n.body);
+  if (n.payload?.documentId) refreshDocument(n.payload.documentId);
+});
+
+await connection.start();
+await connection.invoke("JoinGroup", String(currentUserId));
 ```
 
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "tierName": "string",
-  "price": 0,
-  "storageLimitMb": 0,
-  "aiTokens": 0,
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
+> **Lưu ý**:
+> - Nếu dev FE chạy khác origin (ví dụ Vite ở `http://localhost:5173` và API ở `http://localhost:5171`), phải thêm origin FE vào `Cors:AllowedOrigins` trong `appsettings.Development.json`.
+> - Nếu dùng HTTPS (port 7265), browser có thể chặn mixed-content nếu FE chạy HTTP. Dùng HTTPS cho cả 2 hoặc HTTP cho cả 2.
+> - Nếu lỗi `WebSocket failed to connect`, backend có thể chưa hỗ trợ WS negotiation → set `withUrl(..., { transport: signalR.HttpTransportType.LongPolling })` để fallback.
 
 ---
 
-## DELETE /api/TierMembership/{id}
-**DELETE** `/api/TierMembership/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
----
-
-## GET /api/User
-**GET** `/api/User`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Responses
-**200** - OK
-```json
-[
-  {
-    "id": "string",
-    "fullName": "string",
-    "email": "string",
-    "dateOfBirth": "string",
-    "currentStorageCapacity": 0,
-    "currentAiTokenUsage": 0,
-    "status": "string",
-    "role": "string",
-    "tierId": "string",
-    "tierName": "string",
-    "tierStorageLimitMb": 0,
-    "tierAiTokens": 0,
-    "tierExpireAt": "string",
-    "createdAt": "string",
-    "updatedAt": "string",
-  }
-]
-```
-
----
-
-## GET /api/User/{id}
-**GET** `/api/User/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "fullName": "string",
-  "email": "string",
-  "dateOfBirth": "string",
-  "currentStorageCapacity": 0,
-  "currentAiTokenUsage": 0,
-  "status": "string",
-  "role": "string",
-  "tierId": "string",
-  "tierName": "string",
-  "tierStorageLimitMb": 0,
-  "tierAiTokens": 0,
-  "tierExpireAt": "string",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
-
----
-
-## GET /api/User/me/tier
-**GET** `/api/User/me/tier`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Responses
-**200** - OK
-```json
-{
-  "tierId": "string",
-  "tierName": "string",
-  "storageLimitMb": 0,
-  "aiTokens": 0,
-  "tierExpireAt": "string",
-  "currentStorageMb": 0,
-  "currentAiTokensUsed": 0,
-}
-```
-
----
-
-## GET /api/User/shareable
-**GET** `/api/User/shareable`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| keyword | query | string | No |  |
-
-
-### Responses
-**200** - OK
-```json
-[
-  {
-    "id": "string",
-    "fullName": "string",
-    "email": "string",
-    "role": "string",
-  }
-]
-```
-
----
-
-## PUT /api/User/{id}/tier
-**PUT** `/api/User/{id}/tier`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Body (`application/json`)
-```json
-{
-  "tierId": "string",
-  "tierExpireAt": "string",
-}
-```
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
----
-
-## PUT /api/User/me
-**PUT** `/api/User/me`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Body (`application/json`)
-```json
-{
-  "fullName": "string",
-  "dateOfBirth": "string",
-}
-```
-
-### Responses
-**200** - OK
----
-
-## GET /api/Vote/{id}
-**GET** `/api/Vote/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "userId": "string",
-  "documentId": "string",
-  "type": "integer",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
-
----
-
-## DELETE /api/Vote/{id}
-**DELETE** `/api/Vote/{id}`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Parameters
-| Name | In | Type | Required | Description |
-|---|---|---|---|---|
-| id | path | string | Yes |  |
-
-
-### Responses
-**200** - OK
----
-
-## POST /api/Vote
-**POST** `/api/Vote`
-
-- **Yêu cầu Token:** Không/Tùy chọn (Cần check code)
-
-### Body (`application/json`)
-```json
-{
-  "documentId": "string",
-  "type": "integer",
-}
-```
-
-### Responses
-**200** - OK
-```json
-{
-  "id": "string",
-  "userId": "string",
-  "documentId": "string",
-  "type": "integer",
-  "createdAt": "string",
-  "updatedAt": "string",
-}
-```
-
----
-
-# 6. DTO (Data Transfer Objects)
-
-## AnswerResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `questionId` | `string` | No |  |
-| `selectedOption` | `string (nullable)` | No |  |
-| `isCorrect` | `boolean` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-
-
-## AskRequest
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `question` | `string (nullable)` | No |  |
-
-
-## AuthResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `user` | `UserResponseDto` | No |  |
-| `accessToken` | `string (nullable)` | No |  |
-| `accessTokenExpiresAt` | `string` | No |  |
-| `refreshToken` | `string (nullable)` | No |  |
-| `refreshTokenExpiresAt` | `string` | No |  |
-
-
-## ChangePasswordRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `currentPassword` | `string (nullable)` | No |  |
-| `newPassword` | `string (nullable)` | No |  |
-
-
-## ChatMessageResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `chatSessionId` | `string` | No |  |
-| `sender` | `string (nullable)` | No |  |
-| `content` | `string (nullable)` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-
-
-## ChatSessionResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `userId` | `string` | No |  |
-| `documentId` | `string (nullable)` | No |  |
-| `sessionTitle` | `string (nullable)` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-
-
-## ChunkDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `documentId` | `string` | No |  |
-| `content` | `string (nullable)` | No |  |
-| `orderIndex` | `integer` | No |  |
-| `vectorId` | `string (nullable)` | No |  |
-| `score` | `number` | No |  |
-
-
-## CreateChatMessageRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `sessionId` | `string (nullable)` | No |  |
-| `documentId` | `string (nullable)` | No |  |
-| `message` | `string (nullable)` | No |  |
-
-
-## CreateChatSessionRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `sessionTitle` | `string (nullable)` | No |  |
-
-
-## CreateFlashcardRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `documentId` | `string` | No |  |
-| `front` | `string (nullable)` | No |  |
-| `back` | `string (nullable)` | No |  |
-
-
-## CreateFlashcardsViaAiRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `numberOfFlashcards` | `integer` | No |  |
-
-
-## CreatePaymentLinkRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `tierId` | `string` | No |  |
-
-
-## CreateQuestionRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `quizId` | `string` | No |  |
-| `title` | `string (nullable)` | No |  |
-| `type` | `QuestionType` | No |  |
-| `position` | `integer` | No |  |
-
-
-## CreateQuizRequestViaAIDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `numberOfQuestions` | `integer` | No |  |
-
-
-## CreateReportRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `userId` | `string` | No |  |
-| `documentId` | `string` | No |  |
-| `reason` | `string (nullable)` | No |  |
-
-
-## CreateSubjectRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `subjectCode` | `string (nullable)` | No |  |
-| `subjectName` | `string (nullable)` | No |  |
-| `description` | `string (nullable)` | No |  |
-
-
-## CreateTierMembershipRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `tierName` | `string (nullable)` | No |  |
-| `price` | `number` | No |  |
-| `storageLimitMb` | `integer` | No |  |
-| `aiTokens` | `integer` | No |  |
-
-
-## CreateVoteRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `documentId` | `string` | No |  |
-| `type` | `VoteType` | No |  |
-
-
-## DocumentResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `userId` | `string` | No |  |
-| `subjectId` | `string` | No |  |
-| `title` | `string (nullable)` | No |  |
-| `fileLink` | `string (nullable)` | No |  |
-| `fileName` | `string (nullable)` | No |  |
-| `fileExtension` | `string (nullable)` | No |  |
-| `fileType` | `string (nullable)` | No |  |
-| `fileSizeBytes` | `integer` | No |  |
-| `sharedUsers` | `string (nullable)` | No |  |
-| `shareStatus` | `string (nullable)` | No |  |
-| `status` | `DocumentStatus` | No |  |
-| `voteCount` | `integer` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-
-
-## DocumentResponseDtoPagedResultDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `items` | `Array<DocumentResponseDto> (nullable)` | No |  |
-| `totalCount` | `integer` | No |  |
-| `offset` | `integer` | No |  |
-| `limit` | `integer` | No |  |
-
-
-## FlashcardResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `documentId` | `string` | No |  |
-| `front` | `string (nullable)` | No |  |
-| `back` | `string (nullable)` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-
-
-## FlashcardResponseDtoPagedResultDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `items` | `Array<FlashcardResponseDto> (nullable)` | No |  |
-| `totalCount` | `integer` | No |  |
-| `offset` | `integer` | No |  |
-| `limit` | `integer` | No |  |
-
-
-## ForgotPasswordRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `email` | `string (nullable)` | No |  |
-
-
-## LoginRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `email` | `string (nullable)` | No |  |
-| `password` | `string (nullable)` | No |  |
-
-
-## LogoutRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `refreshToken` | `string (nullable)` | No |  |
-
-
-## NotificationResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `userId` | `string` | No |  |
-| `message` | `string (nullable)` | No |  |
-| `isRead` | `boolean` | No |  |
-| `type` | `string (nullable)` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-
-
-## PaymentLinkResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `paymentUrl` | `string (nullable)` | No |  |
-
-
-## PaymentResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `userId` | `string` | No |  |
-| `paymentInfo` | `string (nullable)` | No |  |
-| `paymentDate` | `string` | No |  |
-| `status` | `PaymentStatus` | No |  |
-| `tierId` | `string (nullable)` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-
-
-## QuestionResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `quizId` | `string` | No |  |
-| `title` | `string (nullable)` | No |  |
-| `type` | `QuestionType` | No |  |
-| `position` | `integer` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-| `answers` | `Array<AnswerResponseDto> (nullable)` | No |  |
-
-
-## QuizResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `documentId` | `string` | No |  |
-| `title` | `string (nullable)` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-| `questions` | `Array<QuestionResponseDto> (nullable)` | No |  |
-
-
-## QuizResponseDtoPagedResultDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `items` | `Array<QuizResponseDto> (nullable)` | No |  |
-| `totalCount` | `integer` | No |  |
-| `offset` | `integer` | No |  |
-| `limit` | `integer` | No |  |
-
-
-## QuizSubmissionResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `userId` | `string` | No |  |
-| `quizId` | `string` | No |  |
-| `answers` | `string (nullable)` | No |  |
-| `score` | `integer` | No |  |
-| `maxScore` | `integer` | No |  |
-| `totalCorrect` | `integer` | No |  |
-| `gradedAt` | `string (nullable)` | No |  |
-| `submittedAt` | `string` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-
-
-## RefreshTokenRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `refreshToken` | `string (nullable)` | No |  |
-
-
-## RegisterRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `fullName` | `string (nullable)` | No |  |
-| `email` | `string (nullable)` | No |  |
-| `password` | `string (nullable)` | No |  |
-| `dateOfBirth` | `string (nullable)` | No |  |
-
-
-## RegisterResultDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `message` | `string (nullable)` | No |  |
-| `email` | `string (nullable)` | No |  |
-
-
-## ReportResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `userId` | `string` | No |  |
-| `documentId` | `string` | No |  |
-| `reason` | `string (nullable)` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-
-
-## ResendOtpRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `email` | `string (nullable)` | No |  |
-
-
-## ResetPasswordRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `email` | `string (nullable)` | No |  |
-| `otp` | `string (nullable)` | No |  |
-| `newPassword` | `string (nullable)` | No |  |
-
-
-## ShareDocumentRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `sharedUserIds` | `Array<string> (nullable)` | No |  |
-
-
-## ShareDocumentResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `documentId` | `string` | No |  |
-| `sharedUserIds` | `Array<string> (nullable)` | No |  |
-
-
-## ShareableUserDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `fullName` | `string (nullable)` | No |  |
-| `email` | `string (nullable)` | No |  |
-| `role` | `string (nullable)` | No |  |
-
-
-## SubjectResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `subjectCode` | `string (nullable)` | No |  |
-| `subjectName` | `string (nullable)` | No |  |
-| `description` | `string (nullable)` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-
-
-## SubjectResponseDtoPagedResultDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `items` | `Array<SubjectResponseDto> (nullable)` | No |  |
-| `totalCount` | `integer` | No |  |
-| `offset` | `integer` | No |  |
-| `limit` | `integer` | No |  |
-
-
-## SummarizeRequest
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `documentId` | `string` | No |  |
-
-
-## TierMembershipResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `tierName` | `string (nullable)` | No |  |
-| `price` | `number` | No |  |
-| `storageLimitMb` | `integer` | No |  |
-| `aiTokens` | `integer` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-
-
-## UpdateDocumentRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `title` | `string (nullable)` | No |  |
-| `fileName` | `string (nullable)` | No |  |
-| `fileExtension` | `string (nullable)` | No |  |
-| `fileType` | `string (nullable)` | No |  |
-| `shareStatus` | `string (nullable)` | No |  |
-
-
-## UpdateFlashcardRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `front` | `string (nullable)` | No |  |
-| `back` | `string (nullable)` | No |  |
-
-
-## UpdateProfileRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `fullName` | `string (nullable)` | No |  |
-| `dateOfBirth` | `string (nullable)` | No |  |
-
-
-## UpdateQuestionRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `title` | `string (nullable)` | No |  |
-| `type` | `QuestionType` | No |  |
-| `position` | `integer` | No |  |
-
-
-## UpdateSubjectRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `subjectCode` | `string (nullable)` | No |  |
-| `subjectName` | `string (nullable)` | No |  |
-| `description` | `string (nullable)` | No |  |
-
-
-## UpdateTierMembershipRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `tierName` | `string (nullable)` | No |  |
-| `price` | `number` | No |  |
-| `storageLimitMb` | `integer` | No |  |
-| `aiTokens` | `integer` | No |  |
-
-
-## UpdateUserTierRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `tierId` | `string` | No |  |
-| `tierExpireAt` | `string (nullable)` | No |  |
-
-
-## UploadDocumentResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `documentId` | `string` | No |  |
-| `status` | `string (nullable)` | No |  |
-| `chunkCount` | `integer` | No |  |
-| `message` | `string (nullable)` | No |  |
-
-
-## UserResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `fullName` | `string (nullable)` | No |  |
-| `email` | `string (nullable)` | No |  |
-| `dateOfBirth` | `string (nullable)` | No |  |
-| `currentStorageCapacity` | `integer` | No |  |
-| `currentAiTokenUsage` | `integer` | No |  |
-| `status` | `string (nullable)` | No |  |
-| `role` | `string (nullable)` | No |  |
-| `tierId` | `string` | No |  |
-| `tierName` | `string (nullable)` | No |  |
-| `tierStorageLimitMb` | `integer` | No |  |
-| `tierAiTokens` | `integer` | No |  |
-| `tierExpireAt` | `string (nullable)` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-
-
-## UserTierInfoDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `tierId` | `string` | No |  |
-| `tierName` | `string (nullable)` | No |  |
-| `storageLimitMb` | `integer` | No |  |
-| `aiTokens` | `integer` | No |  |
-| `tierExpireAt` | `string (nullable)` | No |  |
-| `currentStorageMb` | `integer` | No |  |
-| `currentAiTokensUsed` | `integer` | No |  |
-
-
-## VerifyRegistrationOtpRequestDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `email` | `string (nullable)` | No |  |
-| `otp` | `string (nullable)` | No |  |
-
-
-## VoteResponseDto
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | `string` | No |  |
-| `userId` | `string` | No |  |
-| `documentId` | `string` | No |  |
-| `type` | `VoteType` | No |  |
-| `createdAt` | `string` | No |  |
-| `updatedAt` | `string (nullable)` | No |  |
-
-
-
-# 7. Validation Rules (Frontend cần xử lý)
-- **Email**: Đúng định dạng regex email.
-- **Password**: Thường yêu cầu tối thiểu 6-8 ký tự, có thể có chữ hoa, số, ký tự đặc biệt (tùy config Identity). FE nên validate minLength=6 trước khi gọi API.
-- **Tên/Title**: Không để trống, trim khoảng trắng.
-- **Trạng thái HTTP 400**: Khi API trả về 400, hãy đọc trường `errors` trong body để hiển thị lỗi tương ứng trên UI.
-
-# 8. Enum
-
-Các enum phát hiện được từ Swagger:
+## 25. Enum Reference
 
 ### DocumentStatus
-- `1`
-- `2`
-- `3`
-- `4`
-- `5`
-- `6`
-
-
-### PaymentStatus
-- `1`
-- `2`
-- `3`
-- `4`
-
+| Value | Name |
+|---|---|
+| 1 | Draft |
+| 2 | Done |
+| 3 | Archived |
+| 4 | Banned |
+| 5 | Processing |
+| 6 | Failed |
 
 ### QuestionType
-- `1`
-- `2`
-- `3`
-
+| Value | Name |
+|---|---|
+| 1 | SingleChoice |
+| 2 | MultipleChoice |
+| 3 | TrueFalse |
 
 ### VoteType
-- `1`
-- `2`
+| Value | Name |
+|---|---|
+| 1 | Upvote |
+| 2 | Downvote |
 
+### PaymentStatus
+| Value | Name |
+|---|---|
+| 1 | Pending |
+| 2 | Completed |
+| 3 | Failed |
+| 4 | Refunded |
 
+### NotificationType
+| Value | Name |
+|---|---|
+| 1 | System |
+| 2 | Document |
+| 3 | Quiz |
+| 4 | Payment |
+| 5 | PaymentSucceeded |
+| 6 | NewAnswer |
+| 7 | VoteReceived |
+| 8 | QuizGraded |
+| 9 | TierUpgraded |
+| 10 | TierExpired |
 
-# 9. Phân trang (Pagination) & 10. Filter
-Đối với các danh sách dài (như danh sách Quiz, Flashcard, User), API thường hỗ trợ các query params:
-- `pageIndex` / `pageNumber` (int): Số trang hiện tại (bắt đầu từ 1).
-- `pageSize` (int): Số phần tử trên mỗi trang (VD: 10, 20).
-- `search` / `keyword` (string): Tìm kiếm theo tên/tiêu đề.
-- `sortBy` / `orderBy` (string): Sắp xếp theo trường nào.
+### ReviewQuality (Flashcard SM-2)
+| Value | Name | Mô tả |
+|---|---|---|
+| 0 | Again | Quên hoàn toàn, reset repetitions |
+| 1 | Hard | Sai, nhớ khi thấy đáp án |
+| 2 | Good | Đúng với khó khăn |
+| 3 | Easy | Đúng dễ dàng |
 
-**Response thường có dạng:**
+### ActivityType (Gamification)
+| Value | Name |
+|---|---|
+| 0 | QuizSubmission |
+| 1 | FlashcardReview |
+
+### UserRole
+Hệ thống sau migration `RemoveEducatorRole` chỉ còn `User` và `Admin`.
+
+---
+
+## 26. Validation Rules cho FE
+
+| Field | Rule |
+|---|---|
+| `email` | RFC 5322 email format |
+| `password` | Tối thiểu 6 ký tự (Identity default), 1 chữ hoa, 1 số |
+| `dateOfBirth` | ISO date `YYYY-MM-DD`, phải là ngày quá khứ |
+| `fullName` | Không trống, độ dài 2-100 |
+| `documentTitle` | Không trống |
+| `numberOfFlashcards` | 1-20 |
+| `numberOfQuestions` | 1-20 |
+| `quality` | Enum 0..3 |
+| File upload | `.pdf`, `.docx`, `.txt`, `.md`; max 20MB |
+| `pageIndex` | >= 1 |
+| `pageSize` | 1-100 |
+
+> FE **nên** validate trước để giảm round-trip, nhưng **phải** luôn xử lý 400 từ backend (có thể có rule bổ sung).
+
+---
+
+## 27. Pagination Convention
+
+Tất cả list API dùng `PaginationParams` qua query string:
+
+| Param | Type | Default |
+|---|---|---|
+| `pageIndex` | int | 1 |
+| `pageSize` | int | 20 |
+| `searchTerm` | string | null |
+| `sortBy` | string | null |
+| `isDescending` | bool | false |
+
+Response shape (`PagedResultDto<T>`):
 ```json
-{
-  "items": [...],
-  "totalCount": 100,
-  "totalPages": 10,
-  "pageIndex": 1,
-  "pageSize": 10
-}
+{ "items": [ ... ], "totalCount": 100, "offset": 0, "limit": 20 }
 ```
-*Frontend cần sử dụng các giá trị này để render component Pagination.*
 
+> Lưu ý: response trả `offset` (skip) chứ không phải `pageIndex`. FE tính `pageIndex = offset / limit + 1`.
 
-# 11. Upload File
-- **Document / Avatar**: Tìm các API có `multipart/form-data`.
-- Gửi bằng `FormData` trong Axios/Fetch:
+---
+
+## 28. Frontend Integration Best Practices
+
+### 28.1. Axios Interceptor mẫu
+
 ```javascript
-const formData = new FormData();
-formData.append('file', fileObject);
-axios.post('/api/Document/upload', formData, {
-  headers: { 'Content-Type': 'multipart/form-data' }
+import axios from "axios";
+
+const api = axios.create({
+  baseURL: "http://localhost:5171", // đổi thành https://localhost:7265 nếu dùng HTTPS
+  // Cho CORS + cookie OAuth (Google/GitHub):
+  // withCredentials: true,
 });
+
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("accessToken");
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+api.interceptors.response.use(
+  (res) => res,
+  async (err) => {
+    if (err.response?.status === 401 && !err.config._retry) {
+      err.config._retry = true;
+      const rt = localStorage.getItem("refreshToken");
+      const r = await axios.post("http://localhost:5171/api/Auth/refresh-token", { refreshToken: rt });
+      localStorage.setItem("accessToken", r.data.accessToken);
+      localStorage.setItem("refreshToken", r.data.refreshToken);
+      err.config.headers.Authorization = `Bearer ${r.data.accessToken}`;
+      return api(err.config);
+    }
+    if (err.response?.status === 401) {
+      localStorage.clear();
+      window.location.href = "/login";
+    }
+    return Promise.reject(err);
+  }
+);
+
+export default api;
 ```
 
+> **Tip**: Nên để baseURL trong `.env`:
+> ```
+> # .env.development
+> VITE_API_BASE_URL=http://localhost:5171
+> ```
 
-# 13. Luồng Front-end (Ví dụ: Thanh toán/Nâng cấp Tier)
-```mermaid
-flowchart TD
-    A[Click Nâng cấp] --> B[Chọn Gói Tier]
-    B --> C[Gọi API Create Payment]
-    C --> D{Thành công?}
-    D -- Yes --> E[Redirect sang VNPAY/Cổng TT]
-    D -- No --> F[Hiện Toast Lỗi]
-    E --> G[Web hook / Return URL về FE]
-    G --> H[Cập nhật lại Profile User]
-```
+### 28.2. State Management
 
-# 14. State Management Recommendation
-- **Token & User Profile**: Lưu bằng `Zustand`, `Redux Toolkit` hoặc `Context API`. Kèm lưu trữ `localStorage` để giữ login session.
-- **Data Fetching (Quizzes, Flashcards, Chat)**: Dùng `TanStack Query (React Query)` để tự động cache, retry khi lỗi và quản lý loading state.
+- **Auth state** (token, user profile, tier): Zustand / Redux Toolkit + persist vào `localStorage`.
+- **Data fetching**: TanStack Query (React Query) - tự động cache, retry, refetch.
+- **Real-time**: Zustand store riêng cho SignalR connection.
 
-# 15. Error Handling
-- **401 Unauthorized**: Token hết hạn. Nếu có Refresh Token, hãy gọi ngầm API refresh. Nếu thất bại, clear storage và redirect về `/login`.
-- **403 Forbidden**: User không có quyền (VD: user thường truy cập tính năng Admin). Hiện trang "Access Denied".
-- **400 Bad Request**: Form không hợp lệ. Highlight các input bị lỗi.
-- **404 Not Found**: Data không tồn tại. Chuyển sang trang 404 hoặc báo lỗi "Không tìm thấy".
-- **500 Internal Server Error**: Lỗi Backend. Báo lỗi "Đã có lỗi xảy ra, thử lại sau".
+### 28.3. Caching Strategy
 
-# 16. Loading State
-- **Skeleton**: Cho danh sách Quiz, Dashboard.
-- **Spinner / Button Disabled**: Cho các thao tác `POST`, `PUT`, `DELETE` (Login, Create, Upload).
+| Data | staleTime | Refetch |
+|---|---|---|
+| Tier list, Subject list | 5 phút | On focus |
+| User profile, tier info | 1 phút | On focus |
+| Documents, Flashcards | 0 (luôn fresh) | On mutation |
+| Chat messages, Quiz submissions | 0 | - |
+| Notifications (DB) | 30 giây | Polling 30s + SignalR |
+| Leaderboard | 1 phút | - |
 
-# 17. Caching Strategy
-- **Nên Cache (React Query - staleTime: 5 mins)**: Danh sách Tier, Danh sách Subject, Profile User (nếu ít đổi).
-- **Không Cache (staleTime: 0)**: Chat Messages, Lịch sử làm bài Quiz, Thanh toán.
+### 28.4. Loading/Error UX
 
-# 18. API Checklist cho Front-end
-- [ ] Tích hợp Login / Register.
-- [ ] Gắn Axios Interceptor để đính kèm Token tự động.
-- [ ] Xử lý luồng Refresh Token (nếu có).
-- [ ] Giao diện User Profile / Cập nhật Avatar.
-- [ ] Tích hợp tính năng Chat AI.
-- [ ] Tích hợp quản lý Document (Upload / Danh sách).
-- [ ] Tích hợp luồng tạo và làm Quiz.
-- [ ] Tích hợp Thanh toán (VNPay).
-- [ ] Tích hợp Flashcard.
+| Trạng thái | UX |
+|---|---|
+| Loading danh sách | Skeleton |
+| Submit form | Spinner + disable button |
+| 401 | Toast + auto-redirect login |
+| 403 | Modal "Access Denied" |
+| 400 | Highlight field lỗi (lấy từ `errors` object) |
+| 404 | Trang 404 hoặc empty state |
+| 500 | Toast "Đã có lỗi xảy ra, thử lại" + nút Retry |
 
+---
 
-# 20. Sơ đồ thực thể chính (ERD Mẫu)
+## 29. Checklist cho Frontend team
+
+- [ ] Tích hợp `/api/Auth/login` + `/refresh-token` + Auto-refresh interceptor
+- [ ] OAuth Google/GitHub (window.location redirect)
+- [ ] Subject picker + Tier picker (load 1 lần, cache)
+- [ ] Document upload với progress bar + status polling + SignalR fallback
+- [ ] Chat UI với RAG streaming (xem `/api/AI/rag/ask` cho polling)
+- [ ] Flashcard review UI (hỗ trợ keyboard 1/2/3/4 cho Again/Hard/Good/Easy)
+- [ ] Quiz taking UI (timer, navigation, submit)
+- [ ] Gamification dashboard (XP bar, streak flame, leaderboard)
+- [ ] Payment flow với VNPay redirect
+- [ ] Notification bell (DB polling + SignalR)
+- [ ] SignalR connect/disconnect lifecycle (reconnect on app focus)
+
+---
+
+## 30. ERD mẫu
+
 ```mermaid
 erDiagram
+    USER ||--o{ DOCUMENT : owns
     USER ||--o{ QUIZ : creates
-    USER ||--o{ DOCUMENT : uploads
+    USER ||--o{ FLASHCARD : owns
+    USER ||--o{ QUIZ_SUBMISSION : submits
+    USER ||--o{ CHAT_SESSION : has
+    USER ||--o{ NOTIFICATION : receives
+    USER ||--|| USER_STATS : has
+    USER ||--o{ STUDY_LOG : produces
+    USER ||--o{ FLASHCARD_REVIEW : performs
+    USER }o--|| TIER_MEMBERSHIP : subscribed_to
+    DOCUMENT ||--o{ CHUNK : split_into
+    DOCUMENT ||--o{ FLASHCARD : generates
+    DOCUMENT ||--o{ QUIZ : generates
+    DOCUMENT ||--o{ REPORT : flagged_by
     QUIZ ||--|{ QUESTION : contains
-    USER ||--o{ CHAT_SESSION : owns
+    QUESTION ||--|{ ANSWER : has
+    SUBJECT ||--o{ DOCUMENT : categorizes
+    PAYMENT }o--|| TIER_MEMBERSHIP : for
 ```
+
+---
+
+## 31. Thay đổi so với phiên bản cũ (migration notes)
+
+Tài liệu này khác với bản trước ở các điểm sau (FE phải update code):
+
+1. **Có SignalR** - Bản cũ nói "Dự án không sử dụng SignalR" - **SAI**. Hiện tại có hub `/hubs/notifications`. FE **bắt buộc** connect SignalR để nhận document processed, flashcard ready, level up, streak warning.
+2. **`POST /api/QuizSubmission` đã bị xóa** - Workflow nộp bài không qua endpoint này. FE cần hỏi backend team về endpoint thực tế để submit + grading.
+3. **`/api/Notification` POST/PUT/DELETE đã xóa** - Notification do hệ thống tự tạo, FE chỉ GET + mark-as-read.
+4. **`/api/User` POST/DELETE đã xóa** - Đăng ký qua `/api/Auth/register`, xóa user cần nghiệp vụ riêng (chưa có API).
+5. **`/api/Question` POST/PUT/DELETE đã xóa** - Câu hỏi tạo qua AI generate quiz hoặc internal services.
+6. **`/api/Vote` GET (all) đã xóa** - Vote là dữ liệu riêng tư, không list.
+7. **`/api/Payment` POST/PUT/DELETE đã xóa** - Phải qua cổng thanh toán.
+8. **Thêm mới**: `/api/Gamification/*`, `/api/FlashcardReview/*`, `/api/Recommendations/*`.
+9. **`/api/Report` thêm workflow**: search, bulk-status, mark-non-flaggable (Admin).
+10. **`/api/Payment/vnpay-return` trả JSON** thay vì redirect - để tránh CORS.
+11. **Enum DocumentStatus bổ sung `Processing=5`, `Failed=6`** - FE phải handle 2 trạng thái mới.
+12. **Pagination dùng `pageIndex` (1-based)** - không phải `offset/limit` thuần như bản cũ mô tả.
+
+---
+
+> **Liên hệ**: Mọi thắc mắc về API, ping backend team qua Slack channel `#backend-api`.
+> Cập nhật lần cuối: 2026-06-28 bởi AI Study Hub Backend Team.
