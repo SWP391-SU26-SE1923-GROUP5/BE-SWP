@@ -1,5 +1,10 @@
 # Architecture Reference — AI Study Hub
 
+> **Cập nhật**: 2026-06-28
+> **Base URL (dev - HTTP)**: `http://localhost:5171` · **HTTPS**: `https://localhost:7265` · **SignalR**: `/hubs/notifications`
+> **AI provider**: OpenAI SDK (`text-embedding-3-small` + `gpt-4o-mini`) + Qdrant
+> **Layer count**: 3 (API / Business / Data) — strictly enforced
+
 ## High Level Architecture
 
 AI Study Hub uses an MVC 3-Layer architecture with strict separation between HTTP concerns, business logic, and data persistence.
@@ -10,7 +15,8 @@ flowchart TD
     Swagger[Swagger / OpenAPI]
 
     subgraph Presentation["Presentation Layer - AIStudyHub.API"]
-        Controllers[15 REST Controllers]
+        Controllers[19 REST Controllers]
+        Hubs[SignalR Hubs - NotificationsHub]
         GlobalException[GlobalExceptionMiddleware]
         FluentValidationFilter[FluentValidationFilter]
         Jwt[JWT + Google/GitHub OAuth]
@@ -19,8 +25,8 @@ flowchart TD
     end
 
     subgraph Business["Business Layer - AIStudyHub.Business"]
-        Services[14+ Business Services]
-        ModuleServices[ModuleServices: Document, Vote, Report, Flashcard, Quiz, Question, Answer, Submission, Notification, Payment, Subject, Tier]
+        Services[16+ Business Services]
+        ModuleServices["ModuleServices: Document, Vote, Report, Flashcard, Quiz, Question, Answer, Submission, Notification, Payment, Subject, Tier, Gamification, FlashcardReview, Recommendation"]
         AI_Chat[AIChatService]
         AI_QuizGen[QuizAiService]
         AI_FlashGen[FlashcardAiService]
@@ -36,12 +42,13 @@ flowchart TD
         AI_Confidence[ConfidenceScorer]
         AI_LocalLLM[LocalAIService]
         Guardrails[Guardrails Options]
-        DTOs[16 Module DTOs]
+        DTOs["21 Module DTOs (+Gamification, FlashcardReview, Recommendations, UserStats)"]
         Validators[FluentValidation Validators]
         Mappings[AutoMapper Profiles]
         MediatR[MediatR CQRS Handlers]
-        Workers[3 Background Services]
+        Workers[4 Background Services]
         Behaviors[MediatR Pipeline Behaviors]
+        RT[IRealTimeNotificationService - SignalR push]
     end
 
     subgraph Data["Data Access Layer - AIStudyHub.Data"]
@@ -49,18 +56,21 @@ flowchart TD
         Repositories[GenericRepository + UnitOfWork]
         DbContext[ApplicationDbContext]
         Configurations[EF Core Fluent Configurations]
-        Migrations[15 EF Core Migrations]
+        Migrations["21 EF Core Migrations"]
         SeedData[Admin Seed Extensions]
-        Entities[18 Entity Classes]
-        Enums[7 Enums]
+        Entities["21 Entity Classes (incl. UserStats, FlashcardReview, StudyLog)"]
+        Enums["8 Enums (incl. ActivityType, ShareStatus)"]
     end
 
     Database[(SQL Server)]
 
     Client --> Controllers
+    Client -. WebSocket .-> Hubs
     Swagger --> Controllers
     Controllers --> Jwt
     Controllers --> Services
+    Services --> RT
+    RT --> Hubs
     GlobalException --> Controllers
     Services --> AI_Orch
     Services --> AI_Chat
@@ -95,9 +105,10 @@ flowchart TD
 ```text
 AIStudyHub.slnx
 ├── AIStudyHub.API
-│   ├── Controllers/              (15 REST controllers)
+│   ├── Controllers/              (19 REST controllers)
 │   ├── DTOs/
 │   ├── Extensions/               (JwtExtensions, SwaggerExtensions, RateLimitExtensions)
+│   ├── Hubs/                     (NotificationsHub - SignalR implementation)
 │   ├── Middleware/               (GlobalExceptionMiddleware, FluentValidationFilter)
 │   ├── Swagger/
 │   ├── Program.cs
@@ -113,29 +124,33 @@ AIStudyHub.slnx
 │   │   └── VectorStore/         (QdrantVectorService, EmbeddingService)
 │   ├── Behaviors/               (MediatR pipeline behaviors)
 │   ├── Configuration/           (RetrievalOptions, KernelMemoryOptions, SemanticKernelOptions, GuardrailsOptions)
-│   ├── DTOs/                   (16 module DTO sets)
+│   ├── DTOs/                   (21 module DTO sets - incl. Gamification, FlashcardReviews, Recommendations, UserStats)
 │   ├── Features/               (MediatR CQRS — Auth, Users)
+│   ├── Hubs/                   (INotificationsHub abstraction - signal target)
 │   ├── Interfaces/
 │   │   ├── AI/                 (Chat, Generators, Guardrails, LLM, Orchestration, Search, VectorStore)
-│   │   └── Services/           (All service interfaces)
+│   │   └── Services/           (All service interfaces - incl. IGamificationService, IFlashcardReviewService, IRecommendationService)
 │   ├── Mappings/              (AutoMapper profiles)
 │   ├── Options/               (Jwt, Smtp, VnPay, Rag, ExternalAuth, Cleanup, etc.)
 │   ├── Services/              (ModuleServices, AuthService, UserService, VnPayService, EmailService,
 │   │                          LocalFileStorageService, DocumentProcessingService, DocumentProcessingQueue,
-│   │                          BusinessServiceExtensions)
-│   ├── Validators/            (16 FluentValidation module validators)
+│   │                          GamificationService, FlashcardReviewService, RecommendationService,
+│   │                          RealTimeNotificationService, BusinessServiceExtensions)
+│   ├── Validators/            (FluentValidation module validators)
 │   └── Workers/              (DocumentBackgroundProcessor, TierExpirationCleanupService,
-│                             UnverifiedAccountCleanupService)
+│                             UnverifiedAccountCleanupService, DailyStreakResetWorker)
 ├── AIStudyHub.Data
-│   ├── Configurations/        (EntityConfigurations — all 16 entity configs)
-│   ├── Entities/             (18 entities + BaseEntity)
-│   ├── Enums/               (7 enums)
+│   ├── Configurations/        (EntityConfigurations)
+│   ├── Entities/             (21 entities + BaseEntity - incl. UserStats, FlashcardReview, StudyLog)
+│   ├── Enums/               (8 enums - incl. ActivityType, ShareStatus)
 │   ├── Extensions/           (AdminSeedExtensions, DataAccessExtensions)
 │   ├── Interfaces/          (IGenericRepository, IUnitOfWork)
 │   ├── Repositories/        (GenericRepository, UnitOfWork)
-│   └── Migrations/          (15 EF Core migrations)
+│   └── Migrations/          (21 EF Core migrations)
 ├── AIStudyHub.Tests/
-├── docs/
+├── docs/                     (FRONTEND_GUIDE.md, EF_MIGRATION_COMMANDS.md, ...)
+├── AGENT.md                  (coding conventions & rules)
+├── ARCHITECTURE.md           (this file)
 └── README.md
 ```
 
@@ -146,13 +161,14 @@ AIStudyHub.slnx
 Project: `AIStudyHub.API`
 
 Responsibilities:
-- Expose 18 REST HTTP endpoints.
+- Expose 19 REST HTTP endpoints.
 - Configure Swagger/OpenAPI with JWT Bearer support and file upload support.
 - Configure JWT + Google + GitHub OAuth authentication.
 - Configure rate limiting (auth endpoints: 5 req/15min per IP).
 - Configure global exception and validation middleware.
 - Register all dependencies from Business and Data layers.
-- Serve static files (uploaded documents) from `wwwroot`.
+- Serve static files (uploaded documents) from `wwwroot` (request path `/uploads`).
+- Host SignalR hubs (`Hubs/NotificationsHub`) and map them at top-level routes (e.g. `/hubs/notifications`).
 - Return HTTP responses and handle API-level concerns only.
 
 Must not:
@@ -160,6 +176,7 @@ Must not:
 - Access EF Core directly.
 - Return entity classes.
 - Contain SQL or repository logic.
+- Inject SignalR `Hub` types into business services (use `IRealTimeNotificationService` instead).
 
 ### Business Layer
 
@@ -202,9 +219,9 @@ Database engine: SQL Server.
 
 ORM: Entity Framework Core 8 Code First.
 
-### Entities (18)
+### Entities (21)
 
-All entities inherit from `BaseEntity` (Id: Guid, CreatedAt, UpdatedAt).
+All entities inherit from `BaseEntity` (Id: Guid, CreatedAt, UpdatedAt), **except** `User` which inherits `IdentityUser<Guid>` and carries the ASP.NET Identity columns implicitly.
 
 | Entity | Table | Key Fields |
 |--------|-------|-----------|
@@ -217,8 +234,9 @@ All entities inherit from `BaseEntity` (Id: Guid, CreatedAt, UpdatedAt).
 | `Document` | `Document` | UserId, SubjectId, Title, FileLink, FileName, FileExtension, FileType, FileSizeBytes, SharedUsers, ShareStatus, Status |
 | `DocumentChunk` | `DocumentChunk` | DocumentId, ChunkJson, EmbeddingJson, VectorId, OrderIndex, Vector |
 | `Vote` | `Votes` | UserId, DocumentId, Type (up/down) |
-| `Report` | `Reports` | UserId, DocumentId, Reason |
+| `Report` | `Reports` | UserId, DocumentId, Reason, Status (workflow), Category |
 | `Flashcard` | `Flashcard` | DocumentId, Front, Back |
+| `FlashcardReview` | `FlashcardReview` | UserId, FlashcardId, EaseFactor, Interval, Repetitions, NextReviewDate (SM-2 state) |
 | `Quiz` | `Quiz` | DocumentId, Title |
 | `Question` | `Question` | QuizId, Title, Type, Position |
 | `Answer` | `Answer` | QuestionId, SelectedOption, IsCorrect |
@@ -227,10 +245,12 @@ All entities inherit from `BaseEntity` (Id: Guid, CreatedAt, UpdatedAt).
 | `ChatMessage` | `ChatMessage` | ChatSessionId, Sender, Content |
 | `Notification` | `Notification` | UserId, Message, IsRead, Type |
 | `Payment` | `Payment` | UserId, TierId, PaymentInfo, PaymentDate, Amount, TransactionId, Status |
+| `UserStats` | `UserStats` | UserId (unique), TotalXp, CurrentLevel, CurrentStreak, BestStreak, LastActivityDate |
+| `StudyLog` | `StudyLog` | UserId, ActivityType, DocumentId?, SubjectCode?, IsCorrect, TimeSpentSeconds?, XpEarned |
 
-### Enums (7)
+### Enums (8)
 
-`DocumentStatus` (Draft/Published/Archived/Banned/Processing/Failed), `NotificationType`, `PaymentStatus`, `QuestionType` (SingleChoice/MultipleChoice/TrueFalse), `UserRole` (Student/Admin), `ReportStatus`, `VoteType` (Upvote/Downvote).
+`DocumentStatus` (Draft/Published/Archived/Banned/Processing/Failed), `NotificationType` (incl. Document/Quiz/FlashcardsReady/StreakAtRisk/TierUpgraded/Payment variants), `PaymentStatus`, `QuestionType` (SingleChoice/MultipleChoice/TrueFalse), `UserRole` (Student/Admin), `ReportStatus`, `VoteType` (Upvote/Downvote), **`ActivityType`** (FlashcardReview / QuizSubmit / DocumentUpload / ChatMessage), **`ShareStatus`** (Private / Public).
 
 ### Entity Relationships
 
@@ -398,6 +418,37 @@ erDiagram
         string Content
     }
 
+    UserStats {
+        guid Id PK
+        guid UserId FK,UK
+        int TotalXp
+        int CurrentLevel
+        int CurrentStreak
+        int BestStreak
+        datetime LastActivityDate
+    }
+
+    FlashcardReview {
+        guid Id PK
+        guid UserId FK
+        guid FlashcardId FK
+        float EaseFactor
+        int Interval
+        int Repetitions
+        datetime NextReviewDate
+    }
+
+    StudyLog {
+        guid Id PK
+        guid UserId FK
+        string ActivityType
+        guid DocumentId FK
+        string SubjectCode
+        bool IsCorrect
+        int TimeSpentSeconds
+        int XpEarned
+    }
+
     User ||--o{ Document : "owns"
     User ||--o{ Vote : "casts"
     User ||--o{ Report : "creates"
@@ -407,6 +458,9 @@ erDiagram
     User ||--o{ Payment : "makes"
     User ||--o{ QuizSubmission : "submits"
     User ||--o{ ChatSession : "initiates"
+    User ||--|| UserStats : "has"
+    User ||--o{ FlashcardReview : "tracks"
+    User ||--o{ StudyLog : "logs"
     User }o--|| TierMembership : "subscribes_to"
 
     Subject ||--o{ Document : "categorizes"
@@ -417,7 +471,9 @@ erDiagram
     Document ||--o{ Flashcard : "has"
     Document ||--o{ Quiz : "has"
     Document ||--o{ ChatSession : "discusses"
+    Document ||--o{ StudyLog : "referenced_by"
 
+    Flashcard ||--o{ FlashcardReview : "scheduled_for"
     Quiz ||--o{ Question : "contains"
     Quiz ||--o{ QuizSubmission : "receives"
     Question ||--o{ Answer : "has"
@@ -710,6 +766,74 @@ See **L1 — Document Ingestion Pipeline** sequence diagram above.
 
 See **L2-L5 — RAG Query Flow (Chat with Document)** sequence diagram above.
 
+### Spaced Repetition Flow (SM-2)
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Ctrl as FlashcardReviewController
+    participant Svc as FlashcardReviewService
+    participant UoW as IUnitOfWork
+    participant DB as DbContext
+
+    Client->>Ctrl: GET /api/FlashcardReview/due?limit=20
+    Ctrl->>Svc: GetDueAsync(userId, limit)
+    Svc->>DB: FlashcardReview where NextReviewDate <= UtcNow
+    DB-->>Svc: due cards
+    Svc-->>Ctrl: DueFlashcardDto[]
+    Ctrl-->>Client: 200 OK
+
+    loop Per card
+        Client->>Ctrl: POST /api/FlashcardReview/review { flashcardId, quality }
+        Ctrl->>Svc: ProcessReviewAsync(userId, flashcardId, quality)
+        Note over Svc: SM-2 math:<br/>EF' = max(1.3, EF + (0.1 - (5-q)*(0.08 + (5-q)*0.02)))<br/>interval & repetitions updated<br/>NextReviewDate = UtcNow + interval days
+        Svc->>DB: Upsert FlashcardReview (same user, same flashcard)
+        Svc->>UoW: SaveChanges
+        Svc-->>Ctrl: FlashcardReviewResponseDto (new EF, interval, nextReviewDate)
+        Ctrl-->>Client: 200 OK
+    end
+```
+
+### Gamification Flow (XP / Level / Streak)
+
+```mermaid
+sequenceDiagram
+    participant Activity as Quiz/Flashcard/Document Service
+    participant GamSvc as GamificationService
+    participant UoW as IUnitOfWork
+    participant DB as DbContext
+    participant RT as RealTimeNotificationService
+    participant Hub as NotificationsHub (SignalR)
+
+    Activity->>GamSvc: AwardXpAsync({ userId, activityType, xpDelta, ... })
+    GamSvc->>DB: SELECT UserStats FOR UPDATE
+    Note over GamSvc: totalXp += xpDelta<br/>level = 1 + floor(totalXp / 100)<br/>if today != LastActivityDate:<br/>  if (today - LastActivityDate) == 1 day:<br/>    currentStreak++<br/>  else:<br/>    currentStreak = 1<br/>bestStreak = max(bestStreak, currentStreak)<br/>LastActivityDate = today
+    GamSvc->>DB: INSERT StudyLog (append-only)
+    GamSvc->>UoW: SaveChanges
+    alt level increased
+        GamSvc->>RT: PushToUserAsync(userId, { type=TierUpgraded, payload={ newLevel, totalXp } })
+        RT->>Hub: Clients.Group(userId).SendAsync("ReceiveNotification", payload)
+    end
+    GamSvc-->>Activity: XpAwardResult { totalXp, currentLevel, leveledUp }
+```
+
+### Real-time Push Flow (SignalR)
+
+```text
+Client connects:  ws(s)://localhost:5171/hubs/notifications?access_token=<JWT>
+  -> Server upgrades + auth validates token
+Client -> Server: invoke("JoinGroup", userId)        // userId is a STRING
+Server: store connection in group(userId)
+
+Server -> Client: ReceiveNotification(RealTimeNotification {
+  userId, title, body, type, timestamp, payload
+})
+```
+
+Logout: client calls `invoke("LeaveGroup", userId)` before disposing the connection.
+
+The `IRealTimeNotificationService.PushToUserAsync` abstraction in `AIStudyHub.Business` wraps the `INotificationsHub` SignalR context so business services can push events without referencing `HubContext` or `Microsoft.AspNetCore.SignalR` directly.
+
 ## Authentication Flow
 
 ```text
@@ -785,6 +909,9 @@ Lifetimes:
 - AutoMapper: registered from Business assembly.
 - Kernel Memory: singleton.
 - Document Processing Queue: singleton.
+- **Real-time notification service**: singleton (wraps `IHubContext<NotificationsHub, INotificationsHub>` which is itself singleton).
+- **Gamification / FlashcardReview / Recommendation services**: scoped (depend on scoped repositories).
+- **SignalR Hub class**: transient (per-connection).
 
 Rules:
 
@@ -838,6 +965,7 @@ Recommended log levels:
    - Processes: text extraction, Kernel Memory import, embedding, Qdrant upsert.
    - Updates document status to Published or Failed.
    - Graceful error handling per job.
+   - On completion, pushes `ReceiveNotification` with `type=Document` so FE can show "Document ready".
 
 2. **TierExpirationCleanupService** (`BackgroundService`)
    - Runs every `TierExpirationCheckIntervalHours` (default 24h).
@@ -848,6 +976,12 @@ Recommended log levels:
    - Runs daily at midnight UTC.
    - Finds users where `!EmailConfirmed && CreatedAt < cutoffDate` (default 7 days).
    - Cascades deletes: OtpRecords, Qdrant vectors, files, DocumentChunks, Documents, Flashcards, UserRoles, Notifications, User.
+
+4. **DailyStreakResetWorker** (`BackgroundService`)
+   - Runs daily (configurable schedule).
+   - For every `UserStats` row where `LastActivityDate < UtcNow.Date.AddDays(-1)`, sets `CurrentStreak = 0`.
+   - Best streak is preserved.
+   - When a user is about to lose their streak (last activity 23h ago, end-of-day approaching), a one-time `StreakAtRisk` notification is pushed via SignalR.
 
 ## Future Scalability
 
@@ -862,6 +996,8 @@ Recommended evolution paths:
 - Add observability with metrics (Prometheus) and distributed tracing.
 - Add object storage (Azure Blob / S3) for production file storage.
 - Add audit logging for admin and payment actions.
-- Add message queue (RabbitMQ / Azure Queue) for resilient background processing.
+- Add message queue (RabbitMQ / Azure Queue) for resilient background processing — the in-memory channel queue is single-process only.
+- Replace the public `/api/Gamification/award-xp` endpoint with a server-to-server auth scheme (mTLS or shared HMAC) before going to production.
 - Split AI provider implementations behind interfaces for multi-provider support.
 - Keep the current 3-layer architecture unless scaling requirements justify a larger architecture.
+- Add unit tests for SM-2 math and XP/level/streak math (currently untested, and small off-by-one bugs here corrupt user-facing stats silently).
