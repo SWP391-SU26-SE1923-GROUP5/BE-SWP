@@ -55,8 +55,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<IDocumentProcessingService, DocumentProcessingService>();
         services.AddScoped<IEmbeddingService, EmbeddingService>();
         services.AddScoped<IVectorStoreService, QdrantVectorService>();
-        services.AddScoped<ILocalAIService,LocalAIService>();
-       // services.AddScoped<IOpenAIService, OpenAIService>();
+        services.AddScoped<IOpenAIService, OpenAIService>();
         services.AddScoped<IFlashcardAiService, FlashcardAiService>();
         services.AddScoped<IQuizAiService, QuizAiService>();
         services.AddScoped<IFileStorageService, LocalFileStorageService>();

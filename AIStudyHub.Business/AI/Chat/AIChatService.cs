@@ -17,18 +17,18 @@ public sealed class AIChatService : IAIChatService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
-    private readonly ILocalAIService _localAIService;
+    private readonly IOpenAIService _openAIService;
     private readonly ISemanticKernelOrchestrator _orchestrator;
     
     public AIChatService(
         IUnitOfWork unitOfWork,
         IMapper mapper,
-        ILocalAIService openAiService,
+        IOpenAIService openAiService,
         ISemanticKernelOrchestrator orchestrator)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
-        _localAIService = openAiService;
+        _openAIService = openAiService;
         _orchestrator = orchestrator;
     }
 
@@ -143,7 +143,7 @@ public sealed class AIChatService : IAIChatService
         {
             var historyText = string.Join("\n", history.Select(m => $"{m.Sender}: {m.Content}"));
             var prompt = $"CHAT HISTORY:\n{historyText}\n\nUSER: {request.Message}\nASSISTANT:";
-            aiResponse = await _localAIService.SendMessageAsync(prompt) ?? "Xin lỗi, tôi không thể trả lời lúc này.";
+            aiResponse = await _openAIService.SendMessageAsync(prompt) ?? "Xin lỗi, tôi không thể trả lời lúc này.";
         }
 
         var assistantMessage = new ChatMessage

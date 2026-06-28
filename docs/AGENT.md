@@ -246,7 +246,7 @@ Core entities:
 
 ## AI Pipeline Rules
 
-- AI embedding: use `IEmbeddingService` which wraps `ILocalAIService` (OpenAI SDK).
+- AI embedding: use `IEmbeddingService` which wraps `IOpenAIService` (OpenAI SDK).
 - Vector storage: use `IVectorStoreService` (Qdrant) — never call Qdrant directly from services.
 - Hybrid search: use `IHybridSearchService` — combines dense + sparse (BM25) via RRF.
 - Reranking: use `IRerankingService` — applies positional decay after initial retrieval.

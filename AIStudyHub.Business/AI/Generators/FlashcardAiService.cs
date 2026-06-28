@@ -17,7 +17,7 @@ namespace AIStudyHub.Business.AI.Generators;
 public sealed class FlashcardAiService : IFlashcardAiService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly ILocalAIService _localAIService;
+    private readonly IOpenAIService _openAIService;
     private readonly Microsoft.KernelMemory.IKernelMemory _memory;
     private readonly RagOptions _options;
     private readonly ILogger<FlashcardAiService> _logger;
@@ -28,13 +28,13 @@ public sealed class FlashcardAiService : IFlashcardAiService
 
     public FlashcardAiService(
         IUnitOfWork unitOfWork,
-        ILocalAIService localAIService,
+        IOpenAIService openAIService,
         Microsoft.KernelMemory.IKernelMemory memory,
         IOptions<RagOptions> options,
         ILogger<FlashcardAiService> logger)
     {
         _unitOfWork = unitOfWork;
-        _localAIService = localAIService;
+        _openAIService = openAIService;
         _memory = memory;
         _options = options.Value;
         _logger = logger;
@@ -197,7 +197,7 @@ RULES:
             string aiText;
             try
             {
-                aiText = await _localAIService.SendMessageAsync(prompt, 0.2f);
+                aiText = await _openAIService.SendMessageAsync(prompt, 0.2f);
             }
             catch (Exception ex)
             {

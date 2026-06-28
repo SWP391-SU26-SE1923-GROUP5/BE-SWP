@@ -655,8 +655,8 @@ sequenceDiagram
 
 | Component | Implementation | Purpose |
 |-----------|---------------|---------|
-| `ILocalAIService` | `LocalAIService` | Chat completion + embeddings via OpenAI SDK (`ChatClient`, `EmbeddingClient`) |
-| `IEmbeddingService` | `EmbeddingService` | Wraps `ILocalAIService.CreateEmbeddingsFromTexts` for dense vector generation |
+| `IOpenAIService` | `OpenAIService` | Chat completion + embeddings via OpenAI SDK (`ChatClient`, `EmbeddingClient`) |
+| `IEmbeddingService` | `EmbeddingService` | Wraps `IOpenAIService.CreateEmbeddingsFromTexts` for dense vector generation |
 | `IVectorStoreService` | `QdrantVectorService` | Dense/sparse upsert, ANN search, hybrid RRF search via REST API, collection management |
 | `ISparseVectorGenerator` | `Bm25SparseGenerator` | BM25 sparse vectors via FNV-1a 32-bit word hashing + sub-linear TF-IDF scoring |
 | `IHybridSearchService` | `HybridSearchService` | Orchestrates dense + sparse search with prefetch RRF fusion in Qdrant |

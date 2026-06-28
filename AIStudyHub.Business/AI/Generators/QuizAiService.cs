@@ -19,18 +19,18 @@ namespace AIStudyHub.Business.AI.Generators;
 public sealed class QuizAiService : IQuizAiService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly ILocalAIService _localAiService;
+    private readonly IOpenAIService _openAiService;
     private readonly IVectorStoreService _vectorStoreService;
     private readonly ILogger<QuizAiService> _logger;
 
     public QuizAiService(
         IUnitOfWork unitOfWork,
-        ILocalAIService localAiService,
+        IOpenAIService openAiService,
         IVectorStoreService vectorStoreService,
         ILogger<QuizAiService> logger)
     {
         _unitOfWork = unitOfWork;
-        _localAiService = localAiService;
+        _openAiService = openAiService;
         _vectorStoreService = vectorStoreService;
         _logger = logger;
     }
@@ -242,7 +242,7 @@ IMPORTANT:
             string aiText;
             try
             {
-                aiText = await _localAiService.SendMessageAsync(prompt, 0.2f);
+                aiText = await _openAiService.SendMessageAsync(prompt, 0.2f);
             }
             catch (Exception ex)
             {

@@ -14,7 +14,7 @@ namespace AIStudyHub.Business.AI.VectorStore;
 public sealed class EmbeddingService : IEmbeddingService
 {
     private readonly HttpClient _httpClient;
-    private readonly ILocalAIService _localAIService;
+    private readonly IOpenAIService _openAIService;
     private readonly RagOptions _options;
     private readonly ILogger<EmbeddingService> _logger;
     private int? _cachedDimension;
@@ -22,11 +22,11 @@ public sealed class EmbeddingService : IEmbeddingService
     public EmbeddingService(
         IHttpClientFactory httpClientFactory,
         IOptions<RagOptions> options,
-        ILocalAIService openAIService,
+        IOpenAIService openAIService,
         ILogger<EmbeddingService> logger)
     {
         _httpClient = httpClientFactory.CreateClient("EmbeddingClient");
-        _localAIService = openAIService;
+        _openAIService = openAIService;
         _options = options.Value;
         _logger = logger;
     }
@@ -39,7 +39,7 @@ public sealed class EmbeddingService : IEmbeddingService
 
     public async Task<List<float[]>> GenerateEmbeddingsAsync(List<string> texts)
     {
-        return await _localAIService.CreateEmbeddingsFromTexts(texts);
+        return await _openAIService.CreateEmbeddingsFromTexts(texts);
     }
 
     public int GetEmbeddingDimension()

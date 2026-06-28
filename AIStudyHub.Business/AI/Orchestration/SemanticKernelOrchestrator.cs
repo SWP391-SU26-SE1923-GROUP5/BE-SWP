@@ -22,7 +22,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
     private readonly IGroundingVerifier _groundingVerifier;
     private readonly IConfidenceScorer _confidenceScorer;
     private readonly SemanticKernelOptions _options;
-    private readonly ILocalAIService _localAiService;
+    private readonly IOpenAIService _openAiService;
     private readonly ILogger<SemanticKernelOrchestrator> _logger;
 
     public SemanticKernelOrchestrator(
@@ -34,7 +34,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         IGroundingVerifier groundingVerifier,
         IConfidenceScorer confidenceScorer,
         IOptions<SemanticKernelOptions> options,
-        ILocalAIService localAiService,
+        IOpenAIService openAiService,
         ILogger<SemanticKernelOrchestrator> logger)
     {
         _kernelMemory = kernelMemory;
@@ -45,7 +45,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _groundingVerifier = groundingVerifier;
         _confidenceScorer = confidenceScorer;
         _options = options.Value;
-        _localAiService = localAiService;
+        _openAiService = openAiService;
         _logger = logger;
     }
 
@@ -104,7 +104,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             ANSWER:
             """;
 
-        var answer = await _localAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}") ?? "Xin lỗi, tôi không thể trả lời lúc này.";
+        var answer = await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}") ?? "Xin lỗi, tôi không thể trả lời lúc này.";
 
         // L5: Guardrails
         var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
@@ -147,7 +147,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var systemPrompt = "Bạn là trợ lý ảo giúp tóm tắt nội dung tài liệu. Hãy tóm tắt văn bản dưới đây một cách ngắn gọn, súc tích và bao quát những ý chính nhất.";
         var userPrompt = $"VĂN BẢN TÀI LIỆU:\n{documentContent}\n\nYÊU CẦU: Hãy tóm tắt nội dung chính của tài liệu trên.";
 
-        var answer = await _localAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
+        var answer = await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
         return answer ?? "Không thể tóm tắt tài liệu.";
     }
 
