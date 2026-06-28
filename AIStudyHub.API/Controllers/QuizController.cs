@@ -4,7 +4,6 @@ using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Linq;
 
 namespace AIStudyHub.API.Controllers;
 
@@ -22,7 +21,7 @@ public sealed class QuizController : ControllerBase
         _documentService = documentService;
     }
 
-    /// <summary>Lấy danh sách tất cả quiz.</summary>
+    /// <summary>Láº¥y danh sÃ¡ch táº¥t cáº£ quiz.</summary>
     [HttpGet]
     public async Task<ActionResult<AIStudyHub.Business.DTOs.Common.PagedResultDto<QuizResponseDto>>> GetAll([FromQuery] AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken)
     {
@@ -64,7 +63,7 @@ public sealed class QuizController : ControllerBase
             return BadRequest(ex.Message);
         }
     }
-    /// <summary>Lấy thông tin quiz theo ID.</summary>
+    /// <summary>Láº¥y thÃ´ng tin quiz theo ID.</summary>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<QuizResponseDto>> GetById(Guid id, CancellationToken cancellationToken)
     {
@@ -125,7 +124,7 @@ public sealed class QuizController : ControllerBase
         return claim != null && Guid.TryParse(claim, out var userId) ? userId : Guid.Empty;
     }
 
-    // POST   /api/Quiz  - Đã xóa. Quiz phải được AI sinh ra từ Document.
-    // PUT    /api/Quiz/{id} - Đã xóa.
-    // DELETE /api/Quiz/{id} - Đã xóa. Xóa quiz phải đi kèm xóa Question và Answer con.
+    // POST   /api/Quiz  - ÄÃ£ xÃ³a. Quiz pháº£i Ä‘Æ°á»£c AI sinh ra tá»« Document.
+    // PUT    /api/Quiz/{id} - ÄÃ£ xÃ³a.
+    // DELETE /api/Quiz/{id} - ÄÃ£ xÃ³a. XÃ³a quiz pháº£i Ä‘i kÃ¨m xÃ³a Question vÃ  Answer con.
 }

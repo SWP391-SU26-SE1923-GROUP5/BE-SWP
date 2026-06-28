@@ -4,10 +4,6 @@ using Microsoft.KernelMemory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using AIStudyHub.Business.Interfaces.Services;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
-using System;
 
 namespace AIStudyHub.Business.AI.Orchestration;
 

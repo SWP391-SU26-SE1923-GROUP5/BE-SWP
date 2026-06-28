@@ -1,10 +1,5 @@
-using AIStudyHub.Business.AI.LLM;
-using AIStudyHub.Business.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.AI.LLM;
-using System.Text;
-using System.Text.Json;
-using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -17,7 +12,6 @@ public sealed class EmbeddingService : IEmbeddingService
     private readonly IOpenAIService _openAIService;
     private readonly RagOptions _options;
     private readonly ILogger<EmbeddingService> _logger;
-    private int? _cachedDimension;
 
     public EmbeddingService(
         IHttpClientFactory httpClientFactory,
