@@ -13,6 +13,7 @@ using AutoMapper;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 
 namespace AIStudyHub.Business.Services;
@@ -27,6 +28,8 @@ public sealed class AuthService : IAuthService
     private readonly IEmailService _emailService;
     private readonly EmailVerificationOptions _emailVerificationOptions;
     private readonly OtpOptions _otpOptions;
+    private readonly AIStudyHub.Business.Interfaces.Services.IGamificationService? _gamificationService;
+    private readonly ILogger<AuthService>? _logger;
 
     public AuthService(
         UserManager<User> userManager,
@@ -36,7 +39,9 @@ public sealed class AuthService : IAuthService
         JwtOptions jwtOptions,
         IEmailService emailService,
         EmailVerificationOptions emailVerificationOptions,
-        OtpOptions otpOptions)
+        OtpOptions otpOptions,
+        AIStudyHub.Business.Interfaces.Services.IGamificationService? gamificationService = null,
+        ILogger<AuthService>? logger = null)
     {
         _userManager = userManager;
         _dbContext = dbContext;
@@ -46,6 +51,8 @@ public sealed class AuthService : IAuthService
         _emailService = emailService;
         _emailVerificationOptions = emailVerificationOptions;
         _otpOptions = otpOptions;
+        _gamificationService = gamificationService;
+        _logger = logger;
     }
 
     public async Task<RegisterResultDto> RegisterAsync(RegisterRequestDto request, CancellationToken cancellationToken = default)
@@ -64,6 +71,19 @@ public sealed class AuthService : IAuthService
 
         await EnsureStudentRoleAsync(user);
         await SendEmailVerificationOtpAsync(user, cancellationToken);
+
+        // Wrap UserStats creation so a failure here doesn't fail registration.
+        if (_gamificationService is not null)
+        {
+            try
+            {
+                await _gamificationService.EnsureUserStatsAsync(user.Id, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Failed to ensure UserStats for newly registered user {UserId}", user.Id);
+            }
+        }
 
         return new RegisterResultDto("Registration successful. Please verify your email within 3 minutes.", normalizedEmail);
     }

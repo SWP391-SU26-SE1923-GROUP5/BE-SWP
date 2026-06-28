@@ -16,6 +16,7 @@ using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
 namespace AIStudyHub.Business.Services;
@@ -1276,11 +1277,17 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
+    private readonly AIStudyHub.Business.Interfaces.Services.IGamificationService? _gamificationService;
+    private readonly ILogger<QuizSubmissionService>? _logger;
 
-    public QuizSubmissionService(IUnitOfWork unitOfWork, IMapper mapper)
+    public QuizSubmissionService(IUnitOfWork unitOfWork, IMapper mapper,
+        AIStudyHub.Business.Interfaces.Services.IGamificationService? gamificationService = null,
+        ILogger<QuizSubmissionService>? logger = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _gamificationService = gamificationService;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<QuizSubmissionResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -1383,6 +1390,38 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             .Include(qs => qs.Quiz)
             .AsNoTracking()
             .FirstOrDefaultAsync(qs => qs.Id == submission.Id, cancellationToken);
+
+        // Wrap gamification award so a failure here doesn't fail the quiz submission.
+        // We treat "all correct" and "any incorrect" as two logs so the user sees XP per attempt.
+        if (_gamificationService is not null && quiz.Questions.Any())
+        {
+            try
+            {
+                var documentId = quiz.DocumentId;
+                var subjectCode = await _unitOfWork.Documents.Query()
+                    .Where(d => d.Id == documentId)
+                    .Select(d => d.Subject.SubjectCode)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                // Log a single StudyLog for the whole submission (IsCorrect = "all correct")
+                var allCorrect = submission.TotalCorrect == submission.MaxScore && submission.MaxScore > 0;
+                await _gamificationService.AwardXpAsync(
+                    new AIStudyHub.Business.DTOs.Gamification.XpAwardRequest(
+                        UserId: submission.UserId,
+                        XpEarned: 0, // computed inside service
+                        IsCorrect: allCorrect,
+                        ActivityType: AIStudyHub.Data.Enums.ActivityType.QuizSubmission,
+                        DocumentId: documentId,
+                        SubjectCode: subjectCode,
+                        TimeSpentSeconds: null),
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Gamification XP award failed for user {UserId}, quiz {QuizId}", submission.UserId, quiz.Id);
+                // Swallow: quiz was already graded and saved.
+            }
+        }
 
         return _mapper.Map<QuizSubmissionResponseDto>(created);
     }

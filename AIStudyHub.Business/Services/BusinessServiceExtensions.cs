@@ -41,6 +41,10 @@ public static class BusinessServiceExtensions
         services.AddScoped<IVoteService, VoteService>();
         services.AddScoped<IReportService, ReportService>();
         services.AddScoped<IFlashcardService, FlashcardService>();
+        services.AddScoped<IFlashcardReviewService, FlashcardReviewService>();
+        services.AddScoped<IGamificationService, GamificationService>();
+        services.AddScoped<IRealTimeNotificationService, RealTimeNotificationService>();
+        services.AddScoped<IRecommendationService, RecommendationService>();
         services.AddScoped<IQuizService, QuizService>();
         services.AddScoped<IQuestionService, QuestionService>();
         services.AddScoped<IAnswerService, AnswerService>();
