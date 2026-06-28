@@ -1,8 +1,18 @@
+using AIStudyHub.API.DTOs;
+using AIStudyHub.Business.AI.VectorStore;
 using AIStudyHub.Business.DTOs.Documents;
+using AIStudyHub.Business.DTOs.Rag;
+using AIStudyHub.Business.Interfaces.AI.Orchestration;
+using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
+using AIStudyHub.Business.Services;
+using AIStudyHub.Data.Entities;
+using AIStudyHub.Data.Enums;
+using AIStudyHub.Data.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AIStudyHub.API.Controllers;
@@ -13,19 +23,47 @@ namespace AIStudyHub.API.Controllers;
 public sealed class DocumentController : ControllerBase
 {
     private readonly IDocumentService _service;
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IDocumentProcessingService _documentProcessing;
+    private readonly IEmbeddingService _embeddingService;
+    private readonly IVectorStoreService _vectorStoreService;
+    private readonly IFileStorageService _fileStorage;
+    private readonly RagOptions _ragOptions;
     private readonly DocumentStorageOptions _storageOptions;
+    private readonly ILogger<DocumentController> _logger;
+    private readonly IDocumentProcessingQueue _processingQueue;
+    private readonly IKernelMemoryService _kernelMemoryService;
 
-    public DocumentController(IDocumentService service, IOptions<DocumentStorageOptions> storageOptions)
+    public DocumentController(
+        IDocumentService service,
+        IUnitOfWork unitOfWork,
+        IDocumentProcessingService documentProcessing,
+        IEmbeddingService embeddingService,
+        IVectorStoreService vectorStoreService,
+        IFileStorageService fileStorage,
+        IOptions<RagOptions> ragOptions,
+        IOptions<DocumentStorageOptions> storageOptions,
+        ILogger<DocumentController> logger,
+        IDocumentProcessingQueue processingQueue,
+        IKernelMemoryService kernelMemoryService)
     {
         _service = service;
+        _unitOfWork = unitOfWork;
+        _documentProcessing = documentProcessing;
+        _embeddingService = embeddingService;
+        _vectorStoreService = vectorStoreService;
+        _fileStorage = fileStorage;
+        _ragOptions = ragOptions.Value;
         _storageOptions = storageOptions.Value;
+        _logger = logger;
+        _processingQueue = processingQueue;
+        _kernelMemoryService = kernelMemoryService;
     }
 
-    /// <summary>Lấy danh sách tất cả tài liệu (có hỗ trợ tìm kiếm và lọc theo môn học).</summary>
     [HttpGet]
     public async Task<ActionResult<AIStudyHub.Business.DTOs.Common.PagedResultDto<DocumentResponseDto>>> GetAll(
-        [FromQuery] AIStudyHub.Business.DTOs.Common.PaginationParams @params, 
-        [FromQuery] Guid? subjectId, 
+        [FromQuery] AIStudyHub.Business.DTOs.Common.PaginationParams @params,
+        [FromQuery] Guid? subjectId,
         CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -35,18 +73,6 @@ public sealed class DocumentController : ControllerBase
         return Ok(result);
     }
 
-    private Guid GetCurrentUserId()
-    {
-        var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
-            ?? User.FindFirst("sub")
-            ?? User.FindFirst("userId");
-
-        return claim != null && Guid.TryParse(claim.Value, out var userId)
-            ? userId
-            : Guid.Empty;
-    }
-
-    /// <summary>Lấy thông tin một tài liệu theo ID.</summary>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<DocumentResponseDto>> GetById(Guid id, CancellationToken cancellationToken)
     {
@@ -59,13 +85,6 @@ public sealed class DocumentController : ControllerBase
         return Ok(result);
     }
 
-    // POST   /api/Document - Đã xóa. Dùng POST /api/DocumentUpload/upload/file để upload và tạo Document (có AI pipeline).
-
-    /// <summary>
-    /// Cập nhật metadata tài liệu (title, shareStatus...).
-    /// Lưu ý: Endpoint này CHỈ cập nhật metadata trong DB.
-    /// File vật lý và embedding vector KHÔNG thay đổi.
-    /// </summary>
     [HttpPut("{id:guid}")]
     public async Task<ActionResult<DocumentResponseDto>> Update(Guid id, [FromBody] UpdateDocumentRequestDto request, CancellationToken cancellationToken)
     {
@@ -79,10 +98,6 @@ public sealed class DocumentController : ControllerBase
         return Ok(result);
     }
 
-    /// <summary>
-    /// Lưu danh sách người dùng được chia sẻ tài liệu và cập nhật trạng thái chia sẻ.
-    /// Chỉ chủ sở hữu tài liệu mới có thể thay đổi quyền chia sẻ.
-    /// </summary>
     [HttpPost("{id:guid}/share")]
     public async Task<ActionResult<ShareDocumentResponseDto>> Share(
         Guid id,
@@ -97,26 +112,49 @@ public sealed class DocumentController : ControllerBase
         return Ok(result);
     }
 
-    /// <summary>
-    /// Xóa metadata tài liệu khỏi DB.
-    /// Lưu ý: Để xóa toàn bộ (file vật lý + chunks + vectors), dùng DELETE /api/DocumentUpload/{id}.
-    /// </summary>
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
-        var document = await _service.GetByIdAsync(id, cancellationToken);
+        var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
         if (document == null) return NotFound();
 
         var userId = GetCurrentUserId();
         if (document.UserId != userId) return Forbid();
 
-        await _service.DeleteAsync(id, cancellationToken);
-        return NoContent();
+        try
+        {
+            await _kernelMemoryService.DeleteDocumentAsync(id, cancellationToken);
+            await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
+
+            _unitOfWork.Documents.Remove(document);
+
+            if (!string.IsNullOrEmpty(document.FileLink))
+            {
+                var relativePath = document.FileLink.Replace("/uploads/", "");
+                await _fileStorage.DeleteFileAsync(relativePath, cancellationToken);
+            }
+
+            var user = await _unitOfWork.Users.GetByIdAsync(userId, cancellationToken);
+            if (user != null)
+            {
+                var fileSizeMb = document.FileSizeBytes / (1024.0 * 1024.0);
+                user.CurrentStorageCapacity = Math.Max(0, user.CurrentStorageCapacity - (int)fileSizeMb);
+                _unitOfWork.Users.Update(user);
+            }
+
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Document {DocumentId} deleted by user {UserId}", id, userId);
+            return NoContent();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to delete document {DocumentId}", id);
+            return StatusCode(500, "An error occurred while deleting the document");
+        }
     }
 
     [HttpGet("{id:guid}/download")]
-    [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Download(Guid id, CancellationToken cancellationToken)
     {
         var document = await _service.GetByIdAsync(id, cancellationToken);
@@ -142,8 +180,6 @@ public sealed class DocumentController : ControllerBase
     }
 
     [HttpGet("{id:guid}/preview")]
-    [ProducesResponseType(typeof(FileStreamResult), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Preview(Guid id, CancellationToken cancellationToken)
     {
         var document = await _service.GetByIdAsync(id, cancellationToken);
@@ -167,5 +203,200 @@ public sealed class DocumentController : ControllerBase
         var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         Response.Headers.Append("Content-Disposition", $"inline; filename=\"{fileName}\"");
         return File(stream, contentType, enableRangeProcessing: true);
+    }
+
+    [HttpGet("{id:guid}/status")]
+    public async Task<ActionResult> GetUploadStatus(Guid id, CancellationToken cancellationToken)
+    {
+        var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
+        if (document == null)
+            return NotFound("Document not found");
+
+        var userId = GetCurrentUserId();
+        if (document.UserId != userId)
+            return Forbid();
+
+        return Ok(new
+        {
+            document.Id,
+            Status = document.Status.ToString()
+        });
+    }
+
+    [HttpGet("{id:guid}/chunks")]
+    public async Task<ActionResult<List<ChunkDto>>> GetDocumentChunks(Guid id, CancellationToken cancellationToken)
+    {
+        var document = await _unitOfWork.Documents.GetByIdAsync(id);
+        if (document == null)
+            return NotFound("Document not found");
+
+        var userId = GetCurrentUserId();
+        if (document.UserId != userId)
+            return Forbid();
+
+        var payloads = await _vectorStoreService.GetPayloadsByDocumentIdAsync(id);
+
+        var chunks = payloads.Select(p => new ChunkDto(
+            Guid.NewGuid(),
+            id,
+            p.GetValueOrDefault("text", ""),
+            int.TryParse(p.GetValueOrDefault("chunkIndex", "0"), out var idx) ? idx : 0,
+            null
+        )).OrderBy(c => c.OrderIndex).ToList();
+
+        return Ok(chunks);
+    }
+
+    [HttpPost("upload/file")]
+    [Consumes("multipart/form-data")]
+    public async Task<ActionResult<UploadDocumentResponseDto>> UploadDocumentFile(
+        [FromForm] UploadDocumentFileRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        if (request.File == null || request.File.Length == 0)
+            return BadRequest("No file provided");
+
+        if (string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest("Document title is required");
+
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty)
+            return Unauthorized();
+
+        var subject = await _unitOfWork.Subjects.GetByIdAsync(request.SubjectId, cancellationToken);
+        if (subject == null)
+            return BadRequest($"Subject with ID {request.SubjectId} not found");
+
+        if (request.File.Length > _ragOptions.MaxFileSizeBytes)
+            return BadRequest($"File exceeds maximum allowed size of {_ragOptions.MaxFileSizeBytes / (1024 * 1024)}MB");
+
+        try
+        {
+            var user = await _unitOfWork.Users.GetByIdAsync(userId, cancellationToken);
+            if (user == null)
+                return Unauthorized();
+
+            var tier = await _unitOfWork.TierMemberships.GetByIdAsync(user.TierId, cancellationToken);
+            if (tier == null)
+                return StatusCode(500, "User tier not found");
+
+            var fileSizeMb = request.File.Length / (1024.0 * 1024.0);
+            if (user.CurrentStorageCapacity + fileSizeMb > tier.StorageLimitMb)
+                return StatusCode(403, $"Storage quota exceeded. Your tier ({tier.TierName}) allows {tier.StorageLimitMb}MB. Current usage: {user.CurrentStorageCapacity:F2}MB. This file: {fileSizeMb:F2}MB.");
+
+            var extension = Path.GetExtension(request.File.FileName).ToLowerInvariant();
+
+            if (!_fileStorage.IsValidExtension(extension))
+            {
+                return BadRequest($"File extension '{extension}' is not allowed. Allowed: .pdf, .docx, .txt, .md");
+            }
+
+            await using var memoryStream = new MemoryStream();
+            await request.File.CopyToAsync(memoryStream, cancellationToken);
+            var fileContent = memoryStream.ToArray();
+
+            var filePath = await _fileStorage.SaveFileAsync(fileContent, Path.GetFileNameWithoutExtension(request.File.FileName), extension, cancellationToken);
+            var fileUrl = _fileStorage.GetFileUrl(filePath);
+
+            var document = new Document
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                SubjectId = request.SubjectId,
+                Title = request.Title,
+                FileName = request.File.FileName,
+                FileExtension = extension,
+                FileType = request.File.ContentType,
+                FileLink = fileUrl,
+                FileSizeBytes = request.File.Length,
+                ShareStatus = "private",
+                Status = DocumentStatus.Processing,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            await _unitOfWork.Documents.AddAsync(document);
+            user.CurrentStorageCapacity += (int)fileSizeMb;
+            _unitOfWork.Users.Update(user);
+
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            _logger.LogInformation("Document {DocumentId} accepted for processing by user {UserId}", document.Id, userId);
+
+            var fullPath = Path.GetFullPath(Path.Combine(_storageOptions.BasePath ?? string.Empty, filePath));
+            var processRequest = new DocumentProcessRequest(
+                document.Id,
+                userId,
+                fullPath,
+                request.File.FileName,
+                request.File.ContentType);
+            await _processingQueue.EnqueueAsync(processRequest);
+
+            return Accepted(new UploadDocumentResponseDto(
+                document.Id,
+                "processing",
+                0,
+                "Document is being processed in the background"
+            ));
+        }
+        catch (NotSupportedException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to upload document file for user {UserId}", userId);
+            return StatusCode(500, "An error occurred while processing the document");
+        }
+    }
+
+    [HttpPost("{id:guid}/reprocess")]
+    public async Task<ActionResult<UploadDocumentResponseDto>> Reprocess(
+        Guid id, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
+        if (document == null) return NotFound("Document not found");
+        if (document.UserId != userId) return Forbid();
+
+        if (string.IsNullOrEmpty(document.FileLink))
+            return BadRequest("Document has no associated file on disk to re-process");
+
+        var relativePath = document.FileLink.Replace("/uploads/", "");
+        var fullPath = Path.Combine(_storageOptions.BasePath ?? string.Empty, relativePath);
+        if (!System.IO.File.Exists(fullPath))
+            return BadRequest("Source file is missing on disk; cannot re-process");
+
+        await _kernelMemoryService.DeleteDocumentAsync(id, cancellationToken);
+        await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
+
+        document.Status = DocumentStatus.Processing;
+        document.UpdatedAt = DateTime.UtcNow;
+        _unitOfWork.Documents.Update(document);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        var processRequest = new DocumentProcessRequest(
+            document.Id,
+            userId,
+            fullPath,
+            document.FileName ?? "unknown",
+            document.FileType ?? "application/octet-stream");
+        await _processingQueue.EnqueueAsync(processRequest);
+
+        return Accepted(new UploadDocumentResponseDto(id, "processing", 0,
+            "Re-processing in progress"));
+    }
+
+    private Guid GetCurrentUserId()
+    {
+        var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
+            ?? User.FindFirst("sub")
+            ?? User.FindFirst("userId");
+
+        return claim != null && Guid.TryParse(claim.Value, out var userId)
+            ? userId
+            : Guid.Empty;
     }
 }
