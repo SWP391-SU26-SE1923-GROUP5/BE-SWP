@@ -63,7 +63,7 @@ public sealed class PaymentController : ControllerBase
     [HttpPost("create-checkout-url")]
     public async Task<ActionResult<PaymentLinkResponseDto>> CreatePaymentUrl([FromBody] CreatePaymentLinkRequestDto request, CancellationToken cancellationToken)
     {
-        var response = await _service.CreatePaymentUrlAsync(request, HttpContext, cancellationToken);
+        var response = await _service.CreatePaymentUrlAsync(request, cancellationToken);
         return Ok(response);
     }
 

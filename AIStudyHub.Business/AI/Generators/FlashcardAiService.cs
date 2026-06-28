@@ -1,7 +1,9 @@
 using AIStudyHub.Business.Interfaces.AI.Generators;
 using AIStudyHub.Business.AI.Generators;
+using AIStudyHub.Business.AI.Generators.Common;
 using AIStudyHub.Business.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.LLM;
+using AIStudyHub.Business.Common;
 using AIStudyHub.Business.DTOs.Flashcards;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
@@ -373,31 +375,9 @@ RULES:
 
     private static string? ExtractBalancedObject(string text, char open, char close)
     {
-        var startIdx = text.IndexOf(open);
-        if (startIdx < 0) return null;
-
-        var depth = 0;
-        var inString = false;
-        var escape = false;
-        for (var i = startIdx; i < text.Length; i++)
-        {
-            var c = text[i];
-            if (inString)
-            {
-                if (escape) { escape = false; continue; }
-                if (c == '\\') { escape = true; continue; }
-                if (c == '"') inString = false;
-                continue;
-            }
-            if (c == '"') { inString = true; continue; }
-            if (c == open) depth++;
-            else if (c == close)
-            {
-                depth--;
-                if (depth == 0) return text.Substring(startIdx, i - startIdx + 1);
-            }
-        }
-        return null;
+        return BatchGeneratorBase<object>.ExtractBalanced(text, open, close) is { } result
+            ? result
+            : null;
     }
 
     private static string BuildContext(IEnumerable<Microsoft.KernelMemory.Citation> citations)
@@ -416,9 +396,5 @@ RULES:
         return sb.ToString();
     }
 
-    private static string Clean(string s)
-    {
-        if (string.IsNullOrWhiteSpace(s)) return string.Empty;
-        return Regex.Replace(s, @"\s*\[[^\]]+\]", "").Trim();
-    }
+    private static string Clean(string s) => TextSanitizer.CleanBracketedReferences(s);
 }

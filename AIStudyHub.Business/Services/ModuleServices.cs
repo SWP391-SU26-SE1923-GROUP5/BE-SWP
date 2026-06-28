@@ -321,6 +321,18 @@ public sealed class VoteService : IVoteService
         return vote is null ? null : _mapper.Map<VoteResponseDto>(vote);
     }
 
+    public async Task<VoteResponseDto?> GetByUserAndDocumentAsync(Guid userId, Guid documentId, CancellationToken cancellationToken = default)
+    {
+        var vote = await _unitOfWork.Votes
+            .Query()
+            .Include(v => v.User)
+            .Include(v => v.Document)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(v => v.UserId == userId && v.DocumentId == documentId, cancellationToken);
+
+        return vote is null ? null : _mapper.Map<VoteResponseDto>(vote);
+    }
+
     public async Task<VoteResponseDto> CreateVoteAsync(Guid userId, Guid documentId, VoteType type, CancellationToken cancellationToken = default)
     {
         var existing = await _unitOfWork.Votes
@@ -818,6 +830,20 @@ public sealed class QuestionService : IQuestionService
         return question is null ? null : _mapper.Map<QuestionResponseDto>(question);
     }
 
+    public async Task<IReadOnlyList<QuestionResponseDto>> GetByQuizIdAsync(Guid quizId, CancellationToken cancellationToken = default)
+    {
+        var questions = await _unitOfWork.Questions
+            .Query()
+            .Include(q => q.Quiz)
+            .Include(q => q.Answers)
+            .Where(q => q.QuizId == quizId)
+            .OrderBy(q => q.Position)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return questions.Select(_mapper.Map<QuestionResponseDto>).ToList();
+    }
+
     public async Task<QuestionResponseDto> CreateAsync(CreateQuestionRequestDto request, CancellationToken cancellationToken = default)
     {
         var quizExists = await _unitOfWork.Quizzes.GetByIdAsync(request.QuizId, cancellationToken) is not null;
@@ -904,6 +930,18 @@ public sealed class AnswerService : IAnswerService
             .FirstOrDefaultAsync(a => a.Id == id, cancellationToken);
 
         return answer is null ? null : _mapper.Map<AnswerResponseDto>(answer);
+    }
+
+    public async Task<IReadOnlyList<AnswerResponseDto>> GetByQuestionIdAsync(Guid questionId, CancellationToken cancellationToken = default)
+    {
+        var answers = await _unitOfWork.Answers
+            .Query()
+            .Include(a => a.Question)
+            .Where(a => a.QuestionId == questionId)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return answers.Select(_mapper.Map<AnswerResponseDto>).ToList();
     }
 
     public async Task<AnswerResponseDto> CreateAsync(CreateAnswerRequestDto request, CancellationToken cancellationToken = default)
@@ -994,6 +1032,20 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             .FirstOrDefaultAsync(qs => qs.Id == id, cancellationToken);
 
         return submission is null ? null : _mapper.Map<QuizSubmissionResponseDto>(submission);
+    }
+
+    public async Task<IReadOnlyList<QuizSubmissionResponseDto>> GetByUserAndQuizAsync(Guid userId, Guid quizId, CancellationToken cancellationToken = default)
+    {
+        var submissions = await _unitOfWork.QuizSubmissions
+            .Query()
+            .Include(qs => qs.User)
+            .Include(qs => qs.Quiz)
+            .Where(qs => qs.UserId == userId && qs.QuizId == quizId)
+            .OrderByDescending(qs => qs.SubmittedAt)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return submissions.Select(_mapper.Map<QuizSubmissionResponseDto>).ToList();
     }
 
     public async Task<QuizSubmissionResponseDto> CreateAsync(CreateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
@@ -1247,12 +1299,14 @@ public sealed class PaymentService : IPaymentService
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
     private readonly IVnPayService _vnPayService;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
-    public PaymentService(IUnitOfWork unitOfWork, IMapper mapper, IVnPayService vnPayService)
+    public PaymentService(IUnitOfWork unitOfWork, IMapper mapper, IVnPayService vnPayService, IHttpContextAccessor httpContextAccessor)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _vnPayService = vnPayService;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     public async Task<IReadOnlyList<PaymentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -1367,9 +1421,10 @@ public sealed class PaymentService : IPaymentService
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<PaymentLinkResponseDto> CreatePaymentUrlAsync(CreatePaymentLinkRequestDto request, HttpContext context, CancellationToken cancellationToken = default)
+    public async Task<PaymentLinkResponseDto> CreatePaymentUrlAsync(CreatePaymentLinkRequestDto request, CancellationToken cancellationToken = default)
     {
-        var userIdString = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var context = _httpContextAccessor.HttpContext;
+        var userIdString = context?.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userIdString) || !Guid.TryParse(userIdString, out var userId))
         {
             throw new UnauthorizedAccessException("User not authenticated or invalid ID.");
@@ -1381,12 +1436,16 @@ public sealed class PaymentService : IPaymentService
             throw new KeyNotFoundException($"Tier with ID {request.TierId} not found.");
         }
 
-        var amount = 100000m; // Default amount for premium tier if not specified in tier entity. Assuming 100k VND
+        if (tier.Price <= 0)
+        {
+            throw new InvalidOperationException($"Tier '{tier.TierName}' does not have a valid price configured.");
+        }
+
         var payment = new Data.Entities.Payment
         {
             UserId = userId,
             TierId = request.TierId,
-            Amount = amount,
+            Amount = tier.Price,
             Status = Data.Enums.PaymentStatus.Pending,
             PaymentInfo = $"Upgrade to {tier.TierName} tier",
             PaymentDate = DateTime.UtcNow
@@ -1395,7 +1454,8 @@ public sealed class PaymentService : IPaymentService
         await _unitOfWork.Payments.AddAsync(payment, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var url = _vnPayService.CreatePaymentUrl(context, payment.Id, payment.Amount, payment.PaymentInfo);
+        var clientIp = context?.Connection?.RemoteIpAddress?.ToString();
+        var url = _vnPayService.CreatePaymentUrl(clientIp!, payment.Id, payment.Amount, payment.PaymentInfo);
         return new PaymentLinkResponseDto(url);
     }
 

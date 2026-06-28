@@ -11,6 +11,11 @@ public sealed class TierMembership : BaseEntity
     public string TierName { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets the price in VND.
+    /// </summary>
+    public decimal Price { get; set; }
+
+    /// <summary>
     /// Gets or sets the storage limit in megabytes.
     /// </summary>
     public int StorageLimitMb { get; set; }

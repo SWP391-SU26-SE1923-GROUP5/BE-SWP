@@ -8,6 +8,7 @@ using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
 using AIStudyHub.Data;
 using AIStudyHub.Data.Entities;
+using AIStudyHub.Data.Interfaces;
 using AutoMapper;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.WebUtilities;
@@ -20,6 +21,7 @@ public sealed class AuthService : IAuthService
 {
     private readonly UserManager<User> _userManager;
     private readonly ApplicationDbContext _dbContext;
+    private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
     private readonly JwtOptions _jwtOptions;
     private readonly IEmailService _emailService;
@@ -29,6 +31,7 @@ public sealed class AuthService : IAuthService
     public AuthService(
         UserManager<User> userManager,
         ApplicationDbContext dbContext,
+        IUnitOfWork unitOfWork,
         IMapper mapper,
         JwtOptions jwtOptions,
         IEmailService emailService,
@@ -37,6 +40,7 @@ public sealed class AuthService : IAuthService
     {
         _userManager = userManager;
         _dbContext = dbContext;
+        _unitOfWork = unitOfWork;
         _mapper = mapper;
         _jwtOptions = jwtOptions;
         _emailService = emailService;
@@ -54,7 +58,7 @@ public sealed class AuthService : IAuthService
             throw new InvalidOperationException("Email is already registered.");
         }
 
-        var user = BuildStudentUser(normalizedEmail, request.FullName, request.DateOfBirth);
+        var user = await BuildStudentUserAsync(normalizedEmail, request.FullName, request.DateOfBirth, cancellationToken);
         var createResult = await _userManager.CreateAsync(user, request.Password);
         EnsureIdentitySucceeded(createResult);
 
@@ -148,7 +152,7 @@ public sealed class AuthService : IAuthService
                 ? normalizedEmail.Split('@')[0]
                 : request.FullName.Trim();
 
-            user = BuildStudentUser(normalizedEmail, fullName, null);
+            user = await BuildStudentUserAsync(normalizedEmail, fullName, null, cancellationToken);
             user.EmailConfirmed = true; // OAuth provider verified email
             var tempPassword = $"Ext#{Guid.NewGuid():N}aA1!";
             var createResult = await _userManager.CreateAsync(user, tempPassword);
@@ -229,69 +233,13 @@ public sealed class AuthService : IAuthService
             throw new InvalidOperationException("Email is already verified.");
         }
 
-        var existingOtps = await _dbContext.OtpRecords
-            .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.EmailVerification && o.ExpiresAt > DateTime.UtcNow && o.UsedAt == null)
-            .ToListAsync(cancellationToken);
+        var otp = await SendOtpAsync(normalizedEmail, user.Id, OtpType.EmailVerification, cancellationToken);
 
-        var recentSendCount = existingOtps.Count(o => o.CreatedAt >= DateTime.UtcNow.AddMinutes(-_otpOptions.SendWindowMinutes));
-        if (recentSendCount >= _otpOptions.MaxSendAttemptsPerWindow)
-        {
-            throw new InvalidOperationException($"Too many OTP requests. Please wait {_otpOptions.SendWindowMinutes} minutes before trying again.");
-        }
-
-        if (existingOtps.Any(o => o.IsLocked))
-        {
-            throw new InvalidOperationException("Account is temporarily locked due to too many failed attempts. Please try again later.");
-        }
-
-        foreach (var old in existingOtps)
-        {
-            old.UsedAt = DateTime.UtcNow;
-        }
-
-        var otp = GenerateOtp();
-        var otpHash = HashOtp(otp);
-        var expiresAt = DateTime.UtcNow.AddMinutes(_otpOptions.ExpiryMinutes);
-
-        await _dbContext.OtpRecords.AddAsync(new OtpRecord
-        {
-            UserId = user.Id,
-            Email = normalizedEmail,
-            OtpHash = otpHash,
-            Type = OtpType.EmailVerification,
-            ExpiresAt = expiresAt
-        }, cancellationToken);
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        var htmlBody = $@"
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset='utf-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-</head>
-<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;'>
-    <div style='background-color: #f8f9fa; padding: 30px; border-radius: 8px;'>
-        <h2 style='color: #2c3e50; margin-bottom: 20px;'>Email Verification - AI Study Hub</h2>
-        <p>Dear {System.Net.WebUtility.HtmlEncode(user.FullName)},</p>
-        <p>Thank you for registering with AI Study Hub. To complete your email verification, please use the following one-time verification code:</p>
-        <div style='background-color: #ffffff; padding: 20px; border-radius: 6px; text-align: center; margin: 20px 0; border: 1px solid #e0e0e0;'>
-            <span style='font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #2c3e50;'>{otp}</span>
-        </div>
-        <p><strong>Important:</strong> This verification code will expire in <em>{_otpOptions.ExpiryMinutes} minutes</em>. Please enter it promptly to avoid expiration.</p>
-        <hr style='border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;'>
-        <div style='background-color: #fff3cd; padding: 15px; border-radius: 6px; margin: 15px 0;'>
-            <p style='margin: 0;'><strong>Security Notice:</strong></p>
-            <p style='margin: 10px 0 0 0;'>If you did not initiate this account registration, please disregard this email. No further action is required on your part. Your email address will not be associated with any account without your explicit verification.</p>
-        </div>
-        <p>If you have any questions or require assistance, please contact our support team.</p>
-        <p>Thank you for choosing AI Study Hub.</p>
-        <p>Kind regards,<br><strong>AI Study Hub Support Team</strong></p>
-    </div>
-</body>
-</html>";
-        await _emailService.SendAsync(normalizedEmail, "AI Study Hub - Email Verification Code", htmlBody, cancellationToken);
+        await _emailService.SendAsync(
+            normalizedEmail,
+            "AI Study Hub - Email Verification Code",
+            BuildRegistrationEmailBody(user.FullName, otp),
+            cancellationToken);
     }
 
     public async Task ForgotPasswordAsync(ForgotPasswordRequestDto request, CancellationToken cancellationToken = default)
@@ -303,69 +251,13 @@ public sealed class AuthService : IAuthService
             return;
         }
 
-        var existingOtps = await _dbContext.OtpRecords
-            .Where(o => o.Email == normalizedEmail && o.Type == OtpType.PasswordReset && o.ExpiresAt > DateTime.UtcNow && o.UsedAt == null)
-            .ToListAsync(cancellationToken);
+        var otp = await SendOtpAsync(normalizedEmail, user.Id, OtpType.PasswordReset, cancellationToken);
 
-        var recentSendCount = existingOtps.Count(o => o.CreatedAt >= DateTime.UtcNow.AddMinutes(-_otpOptions.SendWindowMinutes));
-        if (recentSendCount >= _otpOptions.MaxSendAttemptsPerWindow)
-        {
-            throw new InvalidOperationException($"Too many OTP requests. Please wait {_otpOptions.SendWindowMinutes} minutes before trying again.");
-        }
-
-        if (existingOtps.Any(o => o.IsLocked))
-        {
-            throw new InvalidOperationException("Account is temporarily locked due to too many failed attempts. Please try again later.");
-        }
-
-        foreach (var old in existingOtps)
-        {
-            old.UsedAt = DateTime.UtcNow;
-        }
-
-        var otp = GenerateOtp();
-        var otpHash = HashOtp(otp);
-        var expiresAt = DateTime.UtcNow.AddMinutes(_otpOptions.ExpiryMinutes);
-
-        await _dbContext.OtpRecords.AddAsync(new OtpRecord
-        {
-            UserId = user.Id,
-            Email = normalizedEmail,
-            OtpHash = otpHash,
-            Type = OtpType.PasswordReset,
-            ExpiresAt = expiresAt
-        }, cancellationToken);
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        var htmlBody = $@"
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset='utf-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-</head>
-<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;'>
-    <div style='background-color: #f8f9fa; padding: 30px; border-radius: 8px;'>
-        <h2 style='color: #2c3e50; margin-bottom: 20px;'>Password Reset - AI Study Hub</h2>
-        <p>Dear {System.Net.WebUtility.HtmlEncode(user.FullName)},</p>
-        <p>We received a request to reset your AI Study Hub account password. Please use the following one-time verification code to proceed:</p>
-        <div style='background-color: #ffffff; padding: 20px; border-radius: 6px; text-align: center; margin: 20px 0; border: 1px solid #e0e0e0;'>
-            <span style='font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #2c3e50;'>{otp}</span>
-        </div>
-        <p><strong>Important:</strong> This verification code will expire in <em>{_otpOptions.ExpiryMinutes} minutes</em>. Please enter it promptly to avoid expiration.</p>
-        <hr style='border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;'>
-        <div style='background-color: #fff3cd; padding: 15px; border-radius: 6px; margin: 15px 0;'>
-            <p style='margin: 0;'><strong>Security Notice:</strong></p>
-            <p style='margin: 10px 0 0 0;'>If you did not request this password reset, please disregard this email. Your password will not be changed, and no further action is required on your part. We recommend that you keep your account secure by not sharing your password with anyone.</p>
-        </div>
-        <p>If you have any questions or require assistance, please contact our support team.</p>
-        <p>Thank you for choosing AI Study Hub.</p>
-        <p>Kind regards,<br><strong>AI Study Hub Support Team</strong></p>
-    </div>
-</body>
-</html>";
-        await _emailService.SendAsync(normalizedEmail, "AI Study Hub - Password Reset OTP", htmlBody, cancellationToken);
+        await _emailService.SendAsync(
+            normalizedEmail,
+            "AI Study Hub - Password Reset OTP",
+            BuildPasswordResetEmailBody(user.FullName, otp),
+            cancellationToken);
     }
 
     public async Task ResetPasswordAsync(ResetPasswordRequestDto request, CancellationToken cancellationToken = default)
@@ -500,8 +392,16 @@ public sealed class AuthService : IAuthService
         return new AuthResponseDto(response, accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt);
     }
 
-    private static User BuildStudentUser(string normalizedEmail, string fullName, DateOnly? dateOfBirth)
+    private async Task<User> BuildStudentUserAsync(string normalizedEmail, string fullName, DateOnly? dateOfBirth, CancellationToken cancellationToken = default)
     {
+        var freeTier = await _unitOfWork.TierMemberships
+            .Query()
+            .FirstOrDefaultAsync(t => t.TierName == "Free", cancellationToken);
+        if (freeTier is null)
+        {
+            throw new InvalidOperationException("Free tier not found in database. Please run seed data.");
+        }
+
         return new User
         {
             Id = Guid.NewGuid(),
@@ -509,7 +409,7 @@ public sealed class AuthService : IAuthService
             UserName = normalizedEmail,
             Email = normalizedEmail,
             DateOfBirth = dateOfBirth,
-            TierId = Guid.Parse("11111111-1111-1111-1111-111111111111"), // Free Tier
+            TierId = freeTier.Id,
             CurrentStorageCapacity = 0,
             CurrentAiTokenUsage = 0,
             Status = "active",
@@ -527,22 +427,66 @@ public sealed class AuthService : IAuthService
 
     private async Task SendEmailVerificationOtpAsync(User user, CancellationToken cancellationToken)
     {
+        var otp = await SendOtpAsync(user.Email!, user.Id, OtpType.EmailVerification, cancellationToken);
+
+        await _emailService.SendAsync(
+            user.Email!,
+            "AI Study Hub - Email Verification Code",
+            BuildRegistrationEmailBody(user.FullName, otp),
+            cancellationToken);
+    }
+
+    private static void EnsureUserIsActive(User user)
+    {
+        if (!user.IsActive || !string.Equals(user.Status, "active", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new UnauthorizedAccessException("User account is inactive.");
+        }
+    }
+
+    private async Task<string> SendOtpAsync(string email, Guid userId, OtpType type, CancellationToken cancellationToken = default)
+    {
+        var existingOtps = await _dbContext.OtpRecords
+            .Where(o => o.Email == email && o.UserId == userId && o.Type == type && o.ExpiresAt > DateTime.UtcNow && o.UsedAt == null)
+            .ToListAsync(cancellationToken);
+
+        var recentSendCount = existingOtps.Count(o => o.CreatedAt >= DateTime.UtcNow.AddMinutes(-_otpOptions.SendWindowMinutes));
+        if (recentSendCount >= _otpOptions.MaxSendAttemptsPerWindow)
+        {
+            throw new InvalidOperationException($"Too many OTP requests. Please wait {_otpOptions.SendWindowMinutes} minutes before trying again.");
+        }
+
+        if (existingOtps.Any(o => o.IsLocked))
+        {
+            throw new InvalidOperationException("Account is temporarily locked due to too many failed attempts. Please try again later.");
+        }
+
+        foreach (var old in existingOtps)
+        {
+            old.UsedAt = DateTime.UtcNow;
+        }
+
         var otp = GenerateOtp();
         var otpHash = HashOtp(otp);
         var expiresAt = DateTime.UtcNow.AddMinutes(_otpOptions.ExpiryMinutes);
 
         await _dbContext.OtpRecords.AddAsync(new OtpRecord
         {
-            UserId = user.Id,
-            Email = user.Email!,
+            UserId = userId,
+            Email = email,
             OtpHash = otpHash,
-            Type = OtpType.EmailVerification,
+            Type = type,
             ExpiresAt = expiresAt
         }, cancellationToken);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        var htmlBody = $@"
+        return otp;
+    }
+
+    private string BuildRegistrationEmailBody(string fullName, string otp)
+    {
+        return $@"
 <!DOCTYPE html>
 <html>
 <head>
@@ -552,7 +496,7 @@ public sealed class AuthService : IAuthService
 <body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;'>
     <div style='background-color: #f8f9fa; padding: 30px; border-radius: 8px;'>
         <h2 style='color: #2c3e50; margin-bottom: 20px;'>Email Verification - AI Study Hub</h2>
-        <p>Dear {System.Net.WebUtility.HtmlEncode(user.FullName)},</p>
+        <p>Dear {System.Net.WebUtility.HtmlEncode(fullName)},</p>
         <p>Thank you for registering with AI Study Hub. To complete your email verification, please use the following one-time verification code:</p>
         <div style='background-color: #ffffff; padding: 20px; border-radius: 6px; text-align: center; margin: 20px 0; border: 1px solid #e0e0e0;'>
             <span style='font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #2c3e50;'>{otp}</span>
@@ -569,16 +513,39 @@ public sealed class AuthService : IAuthService
     </div>
 </body>
 </html>";
-        await _emailService.SendAsync(user.Email!, "AI Study Hub - Email Verification Code", htmlBody, cancellationToken);
     }
 
-    private static void EnsureUserIsActive(User user)
+    private string BuildPasswordResetEmailBody(string fullName, string otp)
     {
-        if (!user.IsActive || !string.Equals(user.Status, "active", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new UnauthorizedAccessException("User account is inactive.");
-        }
+        return $@"
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1.0'>
+</head>
+<body style='font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;'>
+    <div style='background-color: #f8f9fa; padding: 30px; border-radius: 8px;'>
+        <h2 style='color: #2c3e50; margin-bottom: 20px;'>Password Reset - AI Study Hub</h2>
+        <p>Dear {System.Net.WebUtility.HtmlEncode(fullName)},</p>
+        <p>We received a request to reset your AI Study Hub account password. Please use the following one-time verification code to proceed:</p>
+        <div style='background-color: #ffffff; padding: 20px; border-radius: 6px; text-align: center; margin: 20px 0; border: 1px solid #e0e0e0;'>
+            <span style='font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #2c3e50;'>{otp}</span>
+        </div>
+        <p><strong>Important:</strong> This verification code will expire in <em>{_otpOptions.ExpiryMinutes} minutes</em>. Please enter it promptly to avoid expiration.</p>
+        <hr style='border: none; border-top: 1px solid #e0e0e0; margin: 20px 0;'>
+        <div style='background-color: #fff3cd; padding: 15px; border-radius: 6px; margin: 15px 0;'>
+            <p style='margin: 0;'><strong>Security Notice:</strong></p>
+            <p style='margin: 10px 0 0 0;'>If you did not request this password reset, please disregard this email. Your password will not be changed, and no further action is required on your part. We recommend that you keep your account secure by not sharing your password with anyone.</p>
+        </div>
+        <p>If you have any questions or require assistance, please contact our support team.</p>
+        <p>Thank you for choosing AI Study Hub.</p>
+        <p>Kind regards,<br><strong>AI Study Hub Support Team</strong></p>
+    </div>
+</body>
+</html>";
     }
+
 
     private string GenerateAccessToken(User user, IEnumerable<string> roles, DateTime expiresAt)
     {
