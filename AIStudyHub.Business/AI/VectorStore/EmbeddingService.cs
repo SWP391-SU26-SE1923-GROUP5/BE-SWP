@@ -38,7 +38,7 @@ public sealed class EmbeddingService : IEmbeddingService
 
     public int GetEmbeddingDimension()
     {
-        return 10;
+        return _options.VectorDimension;
     }
 
 

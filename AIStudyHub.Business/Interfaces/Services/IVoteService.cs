@@ -6,4 +6,5 @@ namespace AIStudyHub.Business.Interfaces.Services;
 public interface IVoteService : ICrudService<VoteResponseDto, CreateVoteRequestDto, UpdateVoteRequestDto>
 {
     Task<VoteResponseDto> CreateVoteAsync(Guid userId, Guid documentId, VoteType type, CancellationToken cancellationToken = default);
+    Task<VoteResponseDto?> GetByUserAndDocumentAsync(Guid userId, Guid documentId, CancellationToken cancellationToken = default);
 }
