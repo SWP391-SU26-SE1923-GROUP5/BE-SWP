@@ -43,8 +43,10 @@ public static class BusinessServiceExtensions
         services.AddScoped<IFlashcardService, FlashcardService>();
         services.AddScoped<IFlashcardReviewService, FlashcardReviewService>();
         services.AddScoped<IGamificationService, GamificationService>();
+        services.AddScoped<IBadgeService, BadgeService>();
         services.AddScoped<IRealTimeNotificationService, RealTimeNotificationService>();
         services.AddScoped<IRecommendationService, RecommendationService>();
+        services.AddScoped<IAnalyticsService, AnalyticsService>();
         services.AddScoped<IQuizService, QuizService>();
         services.AddScoped<IQuestionService, QuestionService>();
         services.AddScoped<IAnswerService, AnswerService>();
@@ -55,6 +57,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<IVnPayService, VnPayService>();
         services.AddScoped<IPaymentService, PaymentService>();
         services.AddScoped<ITierMembershipService, TierMembershipService>();
+        services.AddScoped<ISubscriptionService, SubscriptionService>();
         services.AddScoped<IAIChatService, AIChatService>();
         services.AddScoped<IDocumentProcessingService, DocumentProcessingService>();
         services.AddScoped<IEmbeddingService, EmbeddingService>();
@@ -69,6 +72,9 @@ public static class BusinessServiceExtensions
 
         // Background processor for document queue
         services.AddHostedService<DocumentBackgroundProcessor>();
+
+        // Plan C4 — daily scan for upcoming tier expirations (Plan B.3.2)
+        services.AddHostedService<TierExpiryWorker>();
 
         // Kernel Memory
         services.Configure<KernelMemorySettings>(configuration.GetSection("KernelMemory"));

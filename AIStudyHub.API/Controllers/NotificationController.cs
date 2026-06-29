@@ -66,6 +66,25 @@ public sealed class NotificationController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>Plan C4 / B.4.3 — đánh dấu một thông báo đã đọc (PUT semantic).</summary>
+    [HttpPut("{id:guid}/read")]
+    public async Task<IActionResult> MarkAsReadPut(Guid id, CancellationToken cancellationToken)
+    {
+        await _service.MarkAsReadAsync(id, cancellationToken);
+        return NoContent();
+    }
+
+    /// <summary>Plan C4 / B.4.3 — đánh dấu tất cả thông báo đã đọc (PUT semantic).</summary>
+    [HttpPut("read-all")]
+    public async Task<IActionResult> MarkAllAsReadPut(CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        await _service.MarkAllAsReadAsync(userId, cancellationToken);
+        return NoContent();
+    }
+
     // POST   /api/Notification - Đã xóa. Notification do hệ thống tạo ra (system-generated), không phải client.
     // PUT    /api/Notification/{id} - Đã xóa. Chỉ cần mark-as-read, sẽ có endpoint riêng.
     // DELETE /api/Notification/{id} - Đã xóa.
