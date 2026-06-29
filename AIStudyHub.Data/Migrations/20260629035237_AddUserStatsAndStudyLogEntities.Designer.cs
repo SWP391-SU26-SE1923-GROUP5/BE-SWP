@@ -12,8 +12,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AIStudyHub.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20260628160919_AddUserStatsAndStudyLogEntities_Final")]
-    partial class AddUserStatsAndStudyLogEntities_Final
+    [Migration("20260629035237_AddUserStatsAndStudyLogEntities")]
+    partial class AddUserStatsAndStudyLogEntities
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -618,9 +618,7 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnName("report_id");
 
                     b.Property<int>("Category")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("int")
-                        .HasDefaultValue(5)
                         .HasColumnName("category");
 
                     b.Property<DateTime>("CreatedAt")
@@ -644,9 +642,7 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnName("resolved_by");
 
                     b.Property<int>("Status")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("int")
-                        .HasDefaultValue(1)
                         .HasColumnName("status");
 
                     b.Property<DateTime?>("UpdatedAt")
@@ -955,7 +951,8 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnName("create_at");
 
                     b.Property<decimal>("Price")
-                        .HasColumnType("decimal(18,2)");
+                        .HasColumnType("decimal(18,0)")
+                        .HasColumnName("price");
 
                     b.Property<int>("StorageLimitMb")
                         .HasColumnType("int")
