@@ -58,6 +58,7 @@ public sealed class ApplicationMappingProfile : Profile
                 src.SharedUsers,
                 src.ShareStatus,
                 src.Status,
+                src.ErrorMessage,
                 src.Votes != null ? src.Votes.Count : 0,
                 src.CreatedAt,
                 src.UpdatedAt

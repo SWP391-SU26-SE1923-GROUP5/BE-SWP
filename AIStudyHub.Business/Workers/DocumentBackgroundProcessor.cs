@@ -158,6 +158,23 @@ public class DocumentBackgroundProcessor : BackgroundService
                     logger.LogWarning(badgeEx, "Badge evaluation failed for user {UserId} on document {DocumentId}", request.UserId, request.DocumentId);
                 }
             }
+
+            // Spec Module 2 / Plan C5: push a real-time "Done" signal so the
+            // connected client can celebrate without polling. Failure here must
+            // not void the successful processing path.
+            var notifier = services.GetService<IRealTimeNotificationService>();
+            if (notifier is not null)
+            {
+                try
+                {
+                    await notifier.NotifyDocumentProcessedAsync(
+                        request.UserId, request.DocumentId, request.FileName, ct);
+                }
+                catch (Exception notifyEx)
+                {
+                    logger.LogWarning(notifyEx, "Realtime 'document processed' signal failed for {DocumentId}", request.DocumentId);
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -171,8 +188,25 @@ public class DocumentBackgroundProcessor : BackgroundService
                 unitOfWork.Documents.Update(document);
                 await unitOfWork.SaveChangesAsync(ct);
             }
-            
+
             logger.LogError(ex, "Failed to process document {DocumentId}", request.DocumentId);
+
+            // Spec Module 2: also notify the user of the failure so their
+            // dashboard can render the error banner immediately.
+            var notifier = services.GetService<IRealTimeNotificationService>();
+            if (notifier is not null)
+            {
+                try
+                {
+                    await notifier.NotifyDocumentProcessedAsync(
+                        request.UserId, request.DocumentId, request.FileName, ct);
+                }
+                catch (Exception notifyEx)
+                {
+                    logger.LogWarning(notifyEx, "Realtime 'document failed' signal failed for {DocumentId}", request.DocumentId);
+                }
+            }
+
             throw;
         }
     }

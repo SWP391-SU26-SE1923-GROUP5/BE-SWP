@@ -76,6 +76,7 @@ public sealed class DocumentService : IDocumentService
             d.SharedUsers,
             d.ShareStatus,
             d.Status,
+            d.ErrorMessage,
             d.Votes.Sum(v => v.Type == AIStudyHub.Data.Enums.VoteType.Upvote ? 1 : -1),
             d.CreatedAt,
             d.UpdatedAt
@@ -107,6 +108,7 @@ public sealed class DocumentService : IDocumentService
             d.SharedUsers,
             d.ShareStatus,
             d.Status,
+            d.ErrorMessage,
             d.Votes.Count,
             d.CreatedAt,
             d.UpdatedAt)).ToList();
@@ -149,6 +151,7 @@ public sealed class DocumentService : IDocumentService
             d.SharedUsers,
             d.ShareStatus,
             d.Status,
+            d.ErrorMessage,
             d.Votes.Count,
             d.CreatedAt,
             d.UpdatedAt)).ToList();
@@ -179,6 +182,7 @@ public sealed class DocumentService : IDocumentService
             document.SharedUsers,
             document.ShareStatus,
             document.Status,
+            document.ErrorMessage,
             document.Votes.Count,
             document.CreatedAt,
             document.UpdatedAt);
