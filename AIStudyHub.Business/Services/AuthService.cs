@@ -104,6 +104,7 @@ public sealed class AuthService : IAuthService
         }
 
         EnsureUserIsActive(user);
+        await _dbContext.Entry(user).Reference(u => u.TierMembership).LoadAsync(cancellationToken);
         return await CreateAuthResponseAsync(user, cancellationToken);
     }
 
@@ -112,6 +113,7 @@ public sealed class AuthService : IAuthService
         var tokenHash = HashRefreshToken(request.RefreshToken);
         var storedToken = await _dbContext.RefreshTokens
             .Include(refreshToken => refreshToken.User)
+                .ThenInclude(user => user.TierMembership)
             .FirstOrDefaultAsync(refreshToken => refreshToken.TokenHash == tokenHash, cancellationToken);
 
         if (storedToken is null)
@@ -184,6 +186,7 @@ public sealed class AuthService : IAuthService
             EnsureUserIsActive(user);
         }
 
+        await _dbContext.Entry(user).Reference(u => u.TierMembership).LoadAsync(cancellationToken);
         return await CreateAuthResponseAsync(user, cancellationToken);
     }
 
