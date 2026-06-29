@@ -14,10 +14,12 @@ namespace AIStudyHub.API.Controllers;
 public sealed class GamificationController : ControllerBase
 {
     private readonly IGamificationService _service;
+    private readonly IBadgeService _badgeService;
 
-    public GamificationController(IGamificationService service)
+    public GamificationController(IGamificationService service, IBadgeService badgeService)
     {
         _service = service;
+        _badgeService = badgeService;
     }
 
     /// <summary>Returns XP, level, streak info for the current user.</summary>
@@ -62,6 +64,19 @@ public sealed class GamificationController : ControllerBase
         var result = await _service.AwardXpAsync(request, cancellationToken);
         if (!result.Success) return BadRequest(result.Error);
         return Ok(result.Data);
+    }
+
+    /// <summary>
+    /// Plan A.6 — full catalogue of all badges + the caller's progress / unlock state.
+    /// Frontend renders a trophy-case plus a progress bar per badge.
+    /// </summary>
+    [HttpGet("achievements")]
+    public async Task<ActionResult<IReadOnlyList<AchievementDto>>> GetAchievements(CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+        var result = await _badgeService.GetAchievementsAsync(userId, cancellationToken);
+        return Ok(result);
     }
 
     private Guid GetCurrentUserId()

@@ -11,5 +11,6 @@ public enum NotificationType
     VoteReceived = 7,
     QuizGraded = 8,
     TierUpgraded = 9,
-    TierExpired = 10
+    TierExpired = 10,
+    Achievement = 11
 }

@@ -133,20 +133,40 @@ public class DocumentBackgroundProcessor : BackgroundService
             if (document != null)
             {
                 document.Status = DocumentStatus.Done;
+                document.ErrorMessage = null;
                 document.UpdatedAt = DateTime.UtcNow;
                 unitOfWork.Documents.Update(document);
                 await unitOfWork.SaveChangesAsync(ct);
             }
 
             logger.LogInformation("Document {DocumentId} processed and indexed successfully", request.DocumentId);
+
+            // Plan C3: check Bookworm badge after the doc is marked Done.
+            var badgeService = services.GetService<AIStudyHub.Business.Interfaces.Services.IBadgeService>();
+            if (badgeService is not null && document != null)
+            {
+                try
+                {
+                    var unlocked = await badgeService.EvaluateDocumentBadgeAsync(request.UserId, ct);
+                    if (unlocked.Count > 0)
+                    {
+                        logger.LogInformation("Unlocked {Count} document badge(s) for user {UserId}", unlocked.Count, request.UserId);
+                    }
+                }
+                catch (Exception badgeEx)
+                {
+                    logger.LogWarning(badgeEx, "Badge evaluation failed for user {UserId} on document {DocumentId}", request.UserId, request.DocumentId);
+                }
+            }
         }
         catch (Exception ex)
         {
-            // Mark document as failed
+            // Mark document as failed and persist the error message (Plan A.8)
             var document = await unitOfWork.Documents.GetByIdAsync(request.DocumentId, ct);
             if (document != null)
             {
                 document.Status = DocumentStatus.Failed;
+                document.ErrorMessage = $"{ex.GetType().Name}: {ex.Message}";
                 document.UpdatedAt = DateTime.UtcNow;
                 unitOfWork.Documents.Update(document);
                 await unitOfWork.SaveChangesAsync(ct);

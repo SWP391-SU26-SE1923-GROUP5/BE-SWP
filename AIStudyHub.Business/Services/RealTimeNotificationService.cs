@@ -1,3 +1,5 @@
+using AIStudyHub.Business.DTOs.Common;
+using AIStudyHub.Business.DTOs.Gamification;
 using AIStudyHub.Business.DTOs.Notifications;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Data.Enums;
@@ -87,4 +89,27 @@ public sealed class RealTimeNotificationService : IRealTimeNotificationService
             NotificationType.TierUpgraded,
             DateTime.UtcNow,
             new LevelUpPayload(newLevel, totalXp)), cancellationToken);
+
+    public Task NotifyTierExpiringSoonAsync(
+        Guid userId,
+        string tierName,
+        DateTime expiresAt,
+        int daysRemaining,
+        CancellationToken cancellationToken = default)
+        => SendNotificationAsync(new RealTimeNotification(
+            userId,
+            "Tier expiring soon",
+            $"Your {tierName} plan expires in {daysRemaining} day(s). Renew now to keep premium features.",
+            NotificationType.TierExpired,
+            DateTime.UtcNow,
+            new TierExpiringSoonPayload(tierName, expiresAt, daysRemaining)), cancellationToken);
+
+    public Task NotifyBadgeEarnedAsync(Guid userId, AchievementDto achievement, CancellationToken cancellationToken = default)
+        => SendNotificationAsync(new RealTimeNotification(
+            userId,
+            $"Badge unlocked: {achievement.Title}",
+            $"+{achievement.XpReward} XP — {achievement.Description}",
+            NotificationType.Achievement,
+            DateTime.UtcNow,
+            achievement), cancellationToken);
 }
