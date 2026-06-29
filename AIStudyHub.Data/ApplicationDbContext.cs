@@ -32,6 +32,8 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
     public DbSet<OtpRecord> OtpRecords => Set<OtpRecord>();
     public DbSet<UserStats> UserStats => Set<UserStats>();
     public DbSet<StudyLog> StudyLogs => Set<StudyLog>();
+    public DbSet<Badge> Badges => Set<Badge>();
+    public DbSet<UserBadge> UserBadges => Set<UserBadge>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -39,6 +41,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
         SeedRoles(modelBuilder);
         SeedTiers(modelBuilder);
+        SeedBadges(modelBuilder);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
@@ -133,6 +136,75 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
                 Price = 199000m,
                 StorageLimitMb = 3072,
                 AiTokens = 30000,
+                CreatedAt = seedTimestamp
+            });
+    }
+
+    /// <summary>
+    /// Seeds the 5 Master Spec badges. Ids are deterministic so migrations stay repeatable.
+    /// </summary>
+    private static void SeedBadges(ModelBuilder modelBuilder)
+    {
+        var seedTimestamp = new DateTime(2026, 6, 29, 0, 0, 0, DateTimeKind.Utc);
+        modelBuilder.Entity<Badge>().HasData(
+            new Badge
+            {
+                Id = Guid.Parse("aaaaaaaa-0001-0000-0000-000000000001"),
+                Code = "STREAK_7D",
+                Title = "7-Day Streak",
+                Description = "Maintain a 7-day study streak.",
+                Category = "Streak",
+                TargetValue = 7m,
+                IconUrl = "/badges/streak-7d.svg",
+                XpReward = 100,
+                CreatedAt = seedTimestamp
+            },
+            new Badge
+            {
+                Id = Guid.Parse("aaaaaaaa-0002-0000-0000-000000000002"),
+                Code = "CARDS_500",
+                Title = "Memory Master",
+                Description = "Review 500 flashcards.",
+                Category = "Volume",
+                TargetValue = 500m,
+                IconUrl = "/badges/memory-master.svg",
+                XpReward = 150,
+                CreatedAt = seedTimestamp
+            },
+            new Badge
+            {
+                Id = Guid.Parse("aaaaaaaa-0003-0000-0000-000000000003"),
+                Code = "MASTERY_MATH",
+                Title = "Math Prodigy",
+                Description = "Reach 85% or higher in Mathematics.",
+                Category = "Mastery",
+                TargetValue = 85m,
+                IconUrl = "/badges/math-prodigy.svg",
+                XpReward = 120,
+                CreatedAt = seedTimestamp
+            },
+            new Badge
+            {
+                Id = Guid.Parse("aaaaaaaa-0004-0000-0000-000000000004"),
+                Code = "SHARPSHOOTER",
+                Title = "Sharpshooter",
+                Description = "Score 100% on a quiz with at least 10 questions on the first attempt.",
+                Category = "Accuracy",
+                TargetValue = 100m,
+                IconUrl = "/badges/sharpshooter.svg",
+                XpReward = 200,
+                CreatedAt = seedTimestamp
+            },
+            new Badge
+            {
+                Id = Guid.Parse("aaaaaaaa-0005-0000-0000-000000000005"),
+                Code = "BOOKWORM",
+                Title = "Bookworm",
+                Description = "Successfully process 7 documents.",
+                Category = "Content",
+                TargetValue = 7m,
+                IconUrl = "/badges/bookworm.svg",
+                XpReward = 80,
                 CreatedAt = seedTimestamp
             });
     }

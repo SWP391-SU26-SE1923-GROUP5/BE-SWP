@@ -28,6 +28,8 @@ public sealed class UnitOfWork : IUnitOfWork
         ChatMessages = new GenericRepository<ChatMessage>(_dbContext);
         UserStats = new GenericRepository<UserStats>(_dbContext);
         StudyLogs = new GenericRepository<StudyLog>(_dbContext);
+        Badges = new GenericRepository<Badge>(_dbContext);
+        UserBadges = new GenericRepository<UserBadge>(_dbContext);
     }
 
     public IRepository<User> Users { get; }
@@ -48,6 +50,8 @@ public sealed class UnitOfWork : IUnitOfWork
     public IRepository<ChatMessage> ChatMessages { get; }
     public IRepository<UserStats> UserStats { get; }
     public IRepository<StudyLog> StudyLogs { get; }
+    public IRepository<Badge> Badges { get; }
+    public IRepository<UserBadge> UserBadges { get; }
 
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

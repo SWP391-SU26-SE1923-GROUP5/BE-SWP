@@ -120,6 +120,7 @@ internal sealed class DocumentConfiguration : IEntityTypeConfiguration<Document>
         builder.Property(x => x.ShareStatus).HasColumnName("share_status").HasMaxLength(20).HasDefaultValue("private");
         builder.Property(x => x.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(20);
         builder.Property(x => x.IsNonFlaggable).HasColumnName("is_non_flaggable").HasDefaultValue(false);
+        builder.Property(x => x.ErrorMessage).HasColumnName("error_message");
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.User).WithMany(x => x.Documents).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
@@ -237,6 +238,7 @@ internal sealed class UserStatsConfiguration : IEntityTypeConfiguration<UserStat
         builder.Property(x => x.CurrentStreak).HasColumnName("current_streak").HasDefaultValue(0);
         builder.Property(x => x.BestStreak).HasColumnName("best_streak").HasDefaultValue(0);
         builder.Property(x => x.LastActivityDate).HasColumnName("last_activity_date").HasColumnType("datetime");
+        builder.Property(x => x.TotalStudySeconds).HasColumnName("total_study_seconds").HasDefaultValue(0);
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
 
@@ -420,5 +422,53 @@ internal sealed class ChatMessageConfiguration : IEntityTypeConfiguration<ChatMe
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.ChatSession).WithMany(x => x.ChatMessages).HasForeignKey(x => x.ChatSessionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+internal sealed class BadgeConfiguration : IEntityTypeConfiguration<Badge>
+{
+    public void Configure(EntityTypeBuilder<Badge> builder)
+    {
+        builder.ToTable("Badge");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("badge_id");
+        builder.Property(x => x.Code).HasColumnName("code").HasMaxLength(50).IsRequired();
+        builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(255).IsRequired();
+        builder.Property(x => x.Description).HasColumnName("description").IsRequired();
+        builder.Property(x => x.Category).HasColumnName("category").HasMaxLength(50).IsRequired();
+        builder.Property(x => x.TargetValue).HasColumnName("target_value").HasColumnType("decimal(18,2)");
+        builder.Property(x => x.IconUrl).HasColumnName("icon_url").HasMaxLength(500);
+        builder.Property(x => x.XpReward).HasColumnName("xp_reward").HasDefaultValue(0);
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+        builder.HasIndex(x => x.Code).IsUnique();
+    }
+}
+
+internal sealed class UserBadgeConfiguration : IEntityTypeConfiguration<UserBadge>
+{
+    public void Configure(EntityTypeBuilder<UserBadge> builder)
+    {
+        builder.ToTable("UserBadge");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("user_badge_id");
+        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.BadgeId).HasColumnName("badge_id").IsRequired();
+        builder.Property(x => x.EarnedDate).HasColumnName("earned_date").HasColumnType("datetime");
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+
+        // Idempotency: a user can earn a given badge at most once
+        builder.HasIndex(x => new { x.UserId, x.BadgeId }).IsUnique();
+
+        builder.HasOne(x => x.User)
+            .WithMany()
+            .HasForeignKey(x => x.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(x => x.Badge)
+            .WithMany(x => x.UserBadges)
+            .HasForeignKey(x => x.BadgeId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

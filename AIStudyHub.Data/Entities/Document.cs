@@ -17,6 +17,10 @@ public sealed class Document : BaseEntity
     public DocumentStatus? Status { get; set; }
     public bool IsNonFlaggable { get; set; } = false;
 
+    /// <summary>When Status == Failed, captures the exception message from the processing
+    /// pipeline (PDF extraction, OCR, AI extraction). Null otherwise. Added 2026-06-29 per Master Spec.</summary>
+    public string? ErrorMessage { get; set; }
+
     public User User { get; set; } = null!;
     public Subject Subject { get; set; } = null!;
     public ICollection<Vote> Votes { get; set; } = new List<Vote>();

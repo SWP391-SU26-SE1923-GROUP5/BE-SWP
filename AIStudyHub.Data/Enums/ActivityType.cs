@@ -6,5 +6,6 @@ namespace AIStudyHub.Data.Enums;
 public enum ActivityType
 {
     QuizSubmission = 0,
-    FlashcardReview = 1
+    FlashcardReview = 1,
+    BadgeEarned = 2
 }

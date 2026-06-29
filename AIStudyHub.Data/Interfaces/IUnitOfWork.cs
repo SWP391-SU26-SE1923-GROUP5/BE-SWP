@@ -22,6 +22,8 @@ public interface IUnitOfWork : IDisposable
     IRepository<ChatMessage> ChatMessages { get; }
     IRepository<UserStats> UserStats { get; }
     IRepository<StudyLog> StudyLogs { get; }
+    IRepository<Badge> Badges { get; }
+    IRepository<UserBadge> UserBadges { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
