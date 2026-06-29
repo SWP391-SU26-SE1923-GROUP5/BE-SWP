@@ -94,6 +94,7 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
 
         // Plan C2: award XP and accumulate TimeSpentSeconds. Wrapped so a failure
         // does not roll back the SM-2 schedule the user just saw.
+        int xpEarned = 0;
         if (_gamificationService is not null)
         {
             try
@@ -105,7 +106,7 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
                     .FirstOrDefaultAsync(cancellationToken);
 
                 var isCorrect = quality == ReviewQuality.Easy;
-                await _gamificationService.AwardXpAsync(
+                var xpResult = await _gamificationService.AwardXpAsync(
                     new XpAwardRequest(
                         UserId: userId,
                         XpEarned: 0,
@@ -115,6 +116,11 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
                         SubjectCode: subjectCode,
                         TimeSpentSeconds: timeSpentSeconds),
                     cancellationToken);
+
+                if (xpResult is { Success: true, Data: not null })
+                {
+                    xpEarned = xpResult.Data.XpEarned;
+                }
             }
             catch (Exception ex)
             {
@@ -148,6 +154,7 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
                 existing.EaseFactor,
                 existing.Interval,
                 existing.Repetitions),
+            xpEarned,
             newlyUnlocked);
 
         return ServiceResult<ReviewFlashcardResultDto>.Ok(response);

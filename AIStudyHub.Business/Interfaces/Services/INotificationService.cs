@@ -7,4 +7,5 @@ public interface INotificationService : ICrudService<NotificationResponseDto, Cr
     Task<IReadOnlyList<NotificationResponseDto>> GetUserNotificationsAsync(Guid userId, CancellationToken cancellationToken = default);
     Task MarkAsReadAsync(Guid notificationId, CancellationToken cancellationToken = default);
     Task MarkAllAsReadAsync(Guid userId, CancellationToken cancellationToken = default);
+    Task<int> GetUnreadCountAsync(Guid userId, CancellationToken cancellationToken = default);
 }

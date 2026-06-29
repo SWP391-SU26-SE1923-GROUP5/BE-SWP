@@ -159,22 +159,9 @@ public class DocumentBackgroundProcessor : BackgroundService
                 }
             }
 
-            // Spec Module 2 / Plan C5: push a real-time "Done" signal so the
-            // connected client can celebrate without polling. Failure here must
-            // not void the successful processing path.
-            var notifier = services.GetService<IRealTimeNotificationService>();
-            if (notifier is not null)
-            {
-                try
-                {
-                    await notifier.NotifyDocumentProcessedAsync(
-                        request.UserId, request.DocumentId, request.FileName, ct);
-                }
-                catch (Exception notifyEx)
-                {
-                    logger.LogWarning(notifyEx, "Realtime 'document processed' signal failed for {DocumentId}", request.DocumentId);
-                }
-            }
+            // Spec v4.0 / Module 2 (Pure REST API): no SignalR. Frontend re-fetches
+            // /api/Document/{id} or /api/Document?status=Failed after navigation
+            // and picks up the updated Status + ErrorMessage from SQL.
         }
         catch (Exception ex)
         {
@@ -191,23 +178,8 @@ public class DocumentBackgroundProcessor : BackgroundService
 
             logger.LogError(ex, "Failed to process document {DocumentId}", request.DocumentId);
 
-            // Spec Module 2: also notify the user of the failure so their
-            // dashboard can render the error banner immediately.
-            var notifier = services.GetService<IRealTimeNotificationService>();
-            if (notifier is not null)
-            {
-                try
-                {
-                    await notifier.NotifyDocumentProcessedAsync(
-                        request.UserId, request.DocumentId, request.FileName, ct);
-                }
-                catch (Exception notifyEx)
-                {
-                    logger.LogWarning(notifyEx, "Realtime 'document failed' signal failed for {DocumentId}", request.DocumentId);
-                }
-            }
-
-            throw;
+            // No real-time push: frontend will pick up the Failed status + ErrorMessage
+            // on the next /api/Document fetch.
         }
     }
 

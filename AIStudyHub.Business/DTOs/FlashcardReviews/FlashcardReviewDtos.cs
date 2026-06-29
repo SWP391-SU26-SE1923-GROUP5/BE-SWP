@@ -21,9 +21,10 @@ public sealed record FlashcardReviewResponseDto(
     int Interval,
     int Repetitions);
 
-/// <summary>Plan C3 / B.2.3 — wraps the review + any badges just unlocked by this turn.</summary>
+/// <summary>Plan C3 / B.2.3 — wraps the review + XP earned + any badges just unlocked by this turn.</summary>
 public sealed record ReviewFlashcardResultDto(
     FlashcardReviewResponseDto Review,
+    int XpEarned,
     IReadOnlyList<AchievementDto> NewAchievements);
 
 public sealed record DueFlashcardDto(

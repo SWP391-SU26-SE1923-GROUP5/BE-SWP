@@ -1399,55 +1399,6 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             .AsNoTracking()
             .FirstOrDefaultAsync(qs => qs.Id == submission.Id, cancellationToken);
 
-        // Wrap gamification award so a failure here doesn't fail the quiz submission.
-        // We treat "all correct" and "any incorrect" as two logs so the user sees XP per attempt.
-        if (_gamificationService is not null && quiz.Questions.Any())
-        {
-            try
-            {
-                var documentId = quiz.DocumentId;
-                var subjectCode = await _unitOfWork.Documents.Query()
-                    .Where(d => d.Id == documentId)
-                    .Select(d => d.Subject.SubjectCode)
-                    .FirstOrDefaultAsync(cancellationToken);
-
-                // Log a single StudyLog for the whole submission (IsCorrect = "all correct")
-                var allCorrect = submission.TotalCorrect == submission.MaxScore && submission.MaxScore > 0;
-                await _gamificationService.AwardXpAsync(
-                    new AIStudyHub.Business.DTOs.Gamification.XpAwardRequest(
-                        UserId: submission.UserId,
-                        XpEarned: 0, // computed inside service
-                        IsCorrect: allCorrect,
-                        ActivityType: AIStudyHub.Data.Enums.ActivityType.QuizSubmission,
-                        DocumentId: documentId,
-                        SubjectCode: subjectCode,
-                        TimeSpentSeconds: request.DurationSeconds),
-                    cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "Gamification XP award failed for user {UserId}, quiz {QuizId}", submission.UserId, quiz.Id);
-                // Swallow: quiz was already graded and saved.
-            }
-        }
-
-        // Plan C3: check badge unlocks (Sharpshooter, Math Prodigy). Idempotent.
-        if (_badgeService is not null)
-        {
-            try
-            {
-                var unlocked = await _badgeService.EvaluateQuizBadgeAsync(submission.UserId, submission, cancellationToken);
-                if (unlocked.Count > 0)
-                {
-                    _logger?.LogInformation("Unlocked {Count} quiz badge(s) for user {UserId}, quiz {QuizId}", unlocked.Count, submission.UserId, quiz.Id);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "Badge evaluation failed for user {UserId}, quiz {QuizId}", submission.UserId, quiz.Id);
-            }
-        }
-
         return _mapper.Map<QuizSubmissionResponseDto>(created);
     }
 
@@ -1459,6 +1410,48 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
     public async Task<SubmitQuizResultDto> SubmitAsync(CreateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
     {
         var submission = await CreateAsync(request, cancellationToken);
+
+        // Plan C4 / Spec v4.0: award XP here (moved out of CreateAsync) and surface
+        // the actual XpEarned in the response so the UI can celebrate without an
+        // extra round-trip to /api/Gamification/stats.
+        int xpEarned = 0;
+        if (_gamificationService is not null && submission.MaxScore > 0)
+        {
+            try
+            {
+                var quiz = await _unitOfWork.Quizzes.GetByIdAsync(submission.QuizId, cancellationToken);
+                if (quiz is not null)
+                {
+                    var documentId = quiz.DocumentId;
+                    var subjectCode = await _unitOfWork.Documents.Query()
+                        .Where(d => d.Id == documentId)
+                        .Select(d => d.Subject.SubjectCode)
+                        .FirstOrDefaultAsync(cancellationToken);
+
+                    var allCorrect = submission.TotalCorrect == submission.MaxScore;
+                    var xpResult = await _gamificationService.AwardXpAsync(
+                        new AIStudyHub.Business.DTOs.Gamification.XpAwardRequest(
+                            UserId: submission.UserId,
+                            XpEarned: 0, // computed inside service
+                            IsCorrect: allCorrect,
+                            ActivityType: AIStudyHub.Data.Enums.ActivityType.QuizSubmission,
+                            DocumentId: documentId,
+                            SubjectCode: subjectCode,
+                            TimeSpentSeconds: request.DurationSeconds),
+                        cancellationToken);
+
+                    if (xpResult is { Success: true, Data: not null })
+                    {
+                        xpEarned = xpResult.Data.XpEarned;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Gamification XP award failed for user {UserId}, submission {SubmissionId}", submission.UserId, submission.Id);
+                // Swallow: quiz was already graded and saved.
+            }
+        }
 
         IReadOnlyList<AchievementDto> unlocked = Array.Empty<AchievementDto>();
         if (_badgeService is not null)
@@ -1480,7 +1473,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             }
         }
 
-        return new SubmitQuizResultDto(submission, unlocked);
+        return new SubmitQuizResultDto(submission, xpEarned, unlocked);
     }
 
     public async Task<QuizSubmissionResponseDto> UpdateAsync(Guid id, UpdateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
@@ -1660,6 +1653,14 @@ public sealed class NotificationService : INotificationService
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<int> GetUnreadCountAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        return await _unitOfWork.Notifications
+            .Query()
+            .Where(n => n.UserId == userId && !n.IsRead)
+            .CountAsync(cancellationToken);
     }
 }
 
