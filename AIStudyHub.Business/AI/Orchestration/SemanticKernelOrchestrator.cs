@@ -124,11 +124,16 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
     public async Task<string> SummarizeAsync(Guid documentId, Guid userId, CancellationToken ct = default)
     {
+        _logger.LogInformation("SummarizeAsync START: documentId={DocumentId}, userId={UserId}", documentId, userId);
+
         // 1. Fetch all chunks from Qdrant for this document
         var payloads = await _vectorStoreService.GetPayloadsByDocumentIdAsync(documentId);
-        
+        _logger.LogInformation("SummarizeAsync: Retrieved {Count} payloads from Qdrant for documentId={DocumentId}",
+            payloads.Count, documentId);
+
         if (payloads.Count == 0)
         {
+            _logger.LogWarning("SummarizeAsync: NO payloads found in Qdrant for documentId={DocumentId}. Returning 'not found'.", documentId);
             return "Không tìm thấy nội dung tài liệu để tóm tắt.";
         }
 
@@ -140,6 +145,9 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             .ToList();
 
         var documentContent = string.Join("\n\n", sortedChunks);
+        _logger.LogInformation("SummarizeAsync: Document has {Chunks} chunks, {TotalChars} chars total",
+            sortedChunks.Count, documentContent.Length);
+
         if (string.IsNullOrWhiteSpace(documentContent))
         {
             return "Tài liệu không có văn bản.";

@@ -85,7 +85,10 @@ public class DocumentBackgroundProcessor : BackgroundService
                     ct);
 
                 // Fetch the generated chunks from KernelMemory to populate our Custom Hybrid Search Collection
+                logger.LogInformation("Document {DocumentId}: Fetching chunks from Kernel Memory for user {UserId}", request.DocumentId, request.UserId);
                 var chunks = await kernelMemoryService.SearchAsync("", request.UserId, 1000, ct);
+                logger.LogInformation("Document {DocumentId}: Kernel Memory returned {ChunkCount} chunks for user {UserId}",
+                    request.DocumentId, chunks.Count(), request.UserId);
 
                 var sparseGen = services.GetRequiredService<ISparseVectorGenerator>();
                 var qdrant = services.GetRequiredService<IVectorStoreService>();
@@ -95,9 +98,17 @@ public class DocumentBackgroundProcessor : BackgroundService
                 await qdrant.EnsureCollectionExistsAsync();
 
                 int chunkIndex = 0;
+                int upsertedCount = 0;
+                int skippedCount = 0;
+                string? firstCitationDocId = null;
                 foreach (var citation in chunks)
                 {
-                    if (citation.DocumentId != request.DocumentId.ToString()) continue;
+                    if (citation.DocumentId != request.DocumentId.ToString())
+                    {
+                        skippedCount++;
+                        firstCitationDocId ??= citation.DocumentId;
+                        continue;
+                    }
 
                     foreach (var partition in citation.Partitions)
                     {
@@ -120,8 +131,11 @@ public class DocumentBackgroundProcessor : BackgroundService
 
                         await qdrant.UpsertVectorAsync(id, dense, sparse, metadata);
                         chunkIndex++;
+                        upsertedCount++;
                     }
                 }
+                logger.LogInformation("Document {DocumentId}: Upserted {Upserted} chunks to Qdrant. Skipped {Skipped} (DocumentId mismatch). First mismatch citation.DocumentId={FirstDocId}",
+                    request.DocumentId, upsertedCount, skippedCount, firstCitationDocId ?? "(none)");
             }
             else
             {
