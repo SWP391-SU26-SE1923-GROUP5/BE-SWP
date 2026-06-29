@@ -10,10 +10,11 @@ namespace AIStudyHub.Business.Interfaces.Services;
 /// </summary>
 public interface IFlashcardReviewService
 {
-    Task<ServiceResult<FlashcardReviewResponseDto>> ProcessReviewAsync(
+    Task<ServiceResult<ReviewFlashcardResultDto>> ProcessReviewAsync(
         Guid userId,
         Guid flashcardId,
         ReviewQuality quality,
+        int? timeSpentSeconds = null,
         CancellationToken cancellationToken = default);
 
     Task<ServiceResult<IReadOnlyList<DueFlashcardDto>>> GetDueAsync(

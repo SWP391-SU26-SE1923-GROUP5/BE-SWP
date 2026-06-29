@@ -1,5 +1,6 @@
 using AIStudyHub.Business.DTOs.Common;
 using AIStudyHub.Business.DTOs.FlashcardReviews;
+using AIStudyHub.Business.DTOs.Gamification;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
@@ -21,27 +22,36 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<FlashcardReviewService> _logger;
+    private readonly IGamificationService? _gamificationService;
+    private readonly IBadgeService? _badgeService;
 
-    public FlashcardReviewService(IUnitOfWork unitOfWork, ILogger<FlashcardReviewService> logger)
+    public FlashcardReviewService(
+        IUnitOfWork unitOfWork,
+        ILogger<FlashcardReviewService> logger,
+        IGamificationService? gamificationService = null,
+        IBadgeService? badgeService = null)
     {
         _unitOfWork = unitOfWork;
         _logger = logger;
+        _gamificationService = gamificationService;
+        _badgeService = badgeService;
     }
 
-    public async Task<ServiceResult<FlashcardReviewResponseDto>> ProcessReviewAsync(
+    public async Task<ServiceResult<ReviewFlashcardResultDto>> ProcessReviewAsync(
         Guid userId,
         Guid flashcardId,
         ReviewQuality quality,
+        int? timeSpentSeconds = null,
         CancellationToken cancellationToken = default)
     {
         if (userId == Guid.Empty)
-            return ServiceResult<FlashcardReviewResponseDto>.Fail("User id is required.");
+            return ServiceResult<ReviewFlashcardResultDto>.Fail("User id is required.");
         if (flashcardId == Guid.Empty)
-            return ServiceResult<FlashcardReviewResponseDto>.Fail("Flashcard id is required.");
+            return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard id is required.");
 
         var flashcard = await _unitOfWork.Flashcards.GetByIdAsync(flashcardId, cancellationToken);
         if (flashcard is null)
-            return ServiceResult<FlashcardReviewResponseDto>.Fail("Flashcard not found.");
+            return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
 
         var existing = await _unitOfWork.FlashcardReviews
             .Query()
@@ -77,16 +87,70 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
         catch (DbUpdateException ex)
         {
             _logger.LogError(ex, "Failed to persist FlashcardReview for user {UserId}, card {FlashcardId}", userId, flashcardId);
-            return ServiceResult<FlashcardReviewResponseDto>.Fail("Could not save review.");
+            return ServiceResult<ReviewFlashcardResultDto>.Fail("Could not save review.");
         }
 
-        return ServiceResult<FlashcardReviewResponseDto>.Ok(new FlashcardReviewResponseDto(
-            existing.Id,
-            existing.FlashcardId,
-            existing.NextReviewDate,
-            existing.EaseFactor,
-            existing.Interval,
-            existing.Repetitions));
+        var newlyUnlocked = new List<AchievementDto>();
+
+        // Plan C2: award XP and accumulate TimeSpentSeconds. Wrapped so a failure
+        // does not roll back the SM-2 schedule the user just saw.
+        if (_gamificationService is not null)
+        {
+            try
+            {
+                var documentId = flashcard.DocumentId;
+                var subjectCode = await _unitOfWork.Documents.Query()
+                    .Where(d => d.Id == documentId)
+                    .Select(d => d.Subject.SubjectCode)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                var isCorrect = quality == ReviewQuality.Easy;
+                await _gamificationService.AwardXpAsync(
+                    new XpAwardRequest(
+                        UserId: userId,
+                        XpEarned: 0,
+                        IsCorrect: isCorrect,
+                        ActivityType: ActivityType.FlashcardReview,
+                        DocumentId: documentId,
+                        SubjectCode: subjectCode,
+                        TimeSpentSeconds: timeSpentSeconds),
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Gamification XP award failed for user {UserId}, card {FlashcardId}", userId, flashcardId);
+            }
+        }
+
+        // Plan C3: badge unlock hook (Memory Master after 500 distinct cards).
+        if (_badgeService is not null)
+        {
+            try
+            {
+                var unlocked = await _badgeService.EvaluateFlashcardBadgeAsync(userId, cancellationToken);
+                if (unlocked.Count > 0)
+                {
+                    newlyUnlocked.AddRange(unlocked);
+                    _logger.LogInformation("Unlocked {Count} flashcard badge(s) for user {UserId}", unlocked.Count, userId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Badge evaluation failed for user {UserId}, card {FlashcardId}", userId, flashcardId);
+            }
+        }
+
+        var response = new ReviewFlashcardResultDto(
+            new FlashcardReviewResponseDto(
+                existing.Id,
+                existing.FlashcardId,
+                existing.NextReviewDate,
+                existing.EaseFactor,
+                existing.Interval,
+                existing.Repetitions),
+            newlyUnlocked);
+
+        return ServiceResult<ReviewFlashcardResultDto>.Ok(response);
     }
 
     public async Task<ServiceResult<IReadOnlyList<DueFlashcardDto>>> GetDueAsync(

@@ -37,11 +37,16 @@ public sealed class GamificationService : IGamificationService
 
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<GamificationService> _logger;
+    private readonly IBadgeService? _badgeService;
 
-    public GamificationService(IUnitOfWork unitOfWork, ILogger<GamificationService> logger)
+    public GamificationService(
+        IUnitOfWork unitOfWork,
+        ILogger<GamificationService> logger,
+        IBadgeService? badgeService = null)
     {
         _unitOfWork = unitOfWork;
         _logger = logger;
+        _badgeService = badgeService;
     }
 
     public async Task EnsureUserStatsAsync(Guid userId, CancellationToken cancellationToken = default)
@@ -145,6 +150,13 @@ public sealed class GamificationService : IGamificationService
         stats.CurrentLevel = ComputeLevel(stats.TotalXp);
         stats.LastActivityDate = DateTime.UtcNow;
 
+        // Plan C2: accumulate TimeSpentSeconds into UserStats.TotalStudySeconds.
+        // Clamp to non-negative to avoid corrupting the column if upstream sends garbage.
+        if (request.TimeSpentSeconds is int seconds && seconds > 0)
+        {
+            stats.TotalStudySeconds += seconds;
+        }
+
         _unitOfWork.UserStats.Update(stats);
 
         var studyLog = new StudyLog
@@ -171,6 +183,23 @@ public sealed class GamificationService : IGamificationService
             return ServiceResult<XpAwardResult>.Fail("Could not save XP award.");
         }
 
+        // Plan C3: streak badge hook. Wrapped so a badge failure doesn't void the XP award.
+        if (_badgeService is not null)
+        {
+            try
+            {
+                var unlocked = await _badgeService.EvaluateStreakBadgeAsync(request.UserId, cancellationToken);
+                if (unlocked.Count > 0)
+                {
+                    _logger.LogInformation("Unlocked {Count} streak badge(s) for user {UserId}", unlocked.Count, request.UserId);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Streak badge evaluation failed for user {UserId}", request.UserId);
+            }
+        }
+
         return ServiceResult<XpAwardResult>.Ok(new XpAwardResult(
             xpAwarded,
             stats.TotalXp,
@@ -178,7 +207,8 @@ public sealed class GamificationService : IGamificationService
             stats.CurrentLevel,
             stats.CurrentLevel > previousLevel,
             stats.CurrentStreak,
-            stats.BestStreak));
+            stats.BestStreak,
+            stats.TotalStudySeconds));
     }
 
     public async Task<ServiceResult<IReadOnlyList<LeaderboardEntryDto>>> GetLeaderboardAsync(int top, CancellationToken cancellationToken = default)

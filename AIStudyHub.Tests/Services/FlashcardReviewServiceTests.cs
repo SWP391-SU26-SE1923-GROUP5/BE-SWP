@@ -4,6 +4,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using AIStudyHub.Business.DTOs.Common;
 using AIStudyHub.Business.DTOs.FlashcardReviews;
+using AIStudyHub.Business.DTOs.Gamification;
+using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Services;
 using AIStudyHub.Data;
 using AIStudyHub.Data.Entities;
@@ -57,9 +59,9 @@ public class FlashcardReviewServiceTests : IDisposable
 
         // Assert
         Assert.True(result.Success);
-        Assert.Equal(1, result.Data!.Repetitions); // Because Easy increments reps to 1
-        Assert.Equal(1, result.Data.Interval); // Interval becomes 1 on first easy review
-        
+        Assert.Equal(1, result.Data!.Review.Repetitions); // Because Easy increments reps to 1
+        Assert.Equal(1, result.Data.Review.Interval); // Interval becomes 1 on first easy review
+
         var dbReview = await _dbContext.FlashcardReviews.FirstOrDefaultAsync(r => r.FlashcardId == flashcardId && r.UserId == userId);
         Assert.NotNull(dbReview);
         Assert.Equal(1, dbReview.Repetitions);
@@ -73,14 +75,14 @@ public class FlashcardReviewServiceTests : IDisposable
         var flashcardId = Guid.NewGuid();
 
         _dbContext.Flashcards.Add(new Flashcard { Id = flashcardId, Front = "A", Back = "B", DocumentId = Guid.NewGuid() });
-        _dbContext.FlashcardReviews.Add(new FlashcardReview 
-        { 
-            Id = Guid.NewGuid(), 
-            UserId = userId, 
-            FlashcardId = flashcardId, 
-            EaseFactor = 2.5f, 
-            Interval = 1, 
-            Repetitions = 1, 
+        _dbContext.FlashcardReviews.Add(new FlashcardReview
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            FlashcardId = flashcardId,
+            EaseFactor = 2.5f,
+            Interval = 1,
+            Repetitions = 1,
             NextReviewDate = DateTime.UtcNow.AddDays(-1) // Overdue
         });
         await _dbContext.SaveChangesAsync();
@@ -90,8 +92,8 @@ public class FlashcardReviewServiceTests : IDisposable
 
         // Assert
         Assert.True(result.Success);
-        Assert.Equal(2, result.Data!.Repetitions);
-        Assert.Equal(6, result.Data.Interval); // SM-2 rules: 2nd repetition interval is 6
+        Assert.Equal(2, result.Data!.Review.Repetitions);
+        Assert.Equal(6, result.Data.Review.Interval); // SM-2 rules: 2nd repetition interval is 6
     }
 
     [Fact]
@@ -151,5 +153,48 @@ public class FlashcardReviewServiceTests : IDisposable
         _dbContext.Dispose();
         _connection.Dispose();
         _unitOfWork.Dispose();
+    }
+
+    [Fact]
+    public async Task ProcessReviewAsync_ForwardsTimeSpentSecondsToGamificationService()
+    {
+        // Arrange - construct a service that wires a mocked gamification
+        var userId = Guid.NewGuid();
+        var flashcardId = Guid.NewGuid();
+        _dbContext.Flashcards.Add(new Flashcard { Id = flashcardId, Front = "Q", Back = "A", DocumentId = Guid.NewGuid() });
+        await _dbContext.SaveChangesAsync();
+
+        var gamificationMock = new Mock<IGamificationService>();
+        gamificationMock
+            .Setup(g => g.AwardXpAsync(It.IsAny<XpAwardRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ServiceResult<XpAwardResult>.Ok(new XpAwardResult(10, 10, 1, 1, false, 1, 1, 0)));
+
+        var serviceWithGamification = new FlashcardReviewService(_unitOfWork, _loggerMock.Object, gamificationMock.Object);
+
+        // Act
+        await serviceWithGamification.ProcessReviewAsync(userId, flashcardId, ReviewQuality.Easy, timeSpentSeconds: 240);
+
+        // Assert
+        gamificationMock.Verify(
+            g => g.AwardXpAsync(
+                It.Is<XpAwardRequest>(r => r.UserId == userId && r.TimeSpentSeconds == 240 && r.ActivityType == ActivityType.FlashcardReview),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessReviewAsync_WithoutGamificationService_DoesNotThrow()
+    {
+        // Arrange - constructor without gamification must remain backward-compatible
+        var userId = Guid.NewGuid();
+        var flashcardId = Guid.NewGuid();
+        _dbContext.Flashcards.Add(new Flashcard { Id = flashcardId, Front = "Q", Back = "A", DocumentId = Guid.NewGuid() });
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var result = await _service.ProcessReviewAsync(userId, flashcardId, ReviewQuality.Easy, timeSpentSeconds: 30);
+
+        // Assert
+        Assert.True(result.Success);
     }
 }

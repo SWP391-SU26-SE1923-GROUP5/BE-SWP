@@ -125,6 +125,81 @@ public class GamificationServiceTests : IDisposable
         Assert.Equal(2, result.Data[1].Rank);
     }
 
+    [Fact]
+    public async Task AwardXpAsync_WithPositiveTimeSpentSeconds_AccumulatesTotalStudySeconds()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var request = new XpAwardRequest(userId, 0, true, ActivityType.FlashcardReview, null, null, TimeSpentSeconds: 120);
+
+        // Act
+        var result = await _gamificationService.AwardXpAsync(request);
+
+        // Assert
+        Assert.True(result.Success);
+        var stats = await _dbContext.UserStats.SingleAsync(s => s.UserId == userId);
+        Assert.Equal(120, stats.TotalStudySeconds);
+        Assert.Equal(120, result.Data!.TotalStudySeconds);
+
+        var log = await _dbContext.StudyLogs.SingleAsync();
+        Assert.Equal(120, log.TimeSpentSeconds);
+    }
+
+    [Fact]
+    public async Task AwardXpAsync_WithMultipleReviews_AccumulatesTotalStudySecondsAdditively()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var first = new XpAwardRequest(userId, 0, true, ActivityType.FlashcardReview, null, null, TimeSpentSeconds: 60);
+        var second = new XpAwardRequest(userId, 0, false, ActivityType.FlashcardReview, null, null, TimeSpentSeconds: 30);
+
+        // Act
+        await _gamificationService.AwardXpAsync(first);
+        await _gamificationService.AwardXpAsync(second);
+
+        // Assert
+        var stats = await _dbContext.UserStats.SingleAsync(s => s.UserId == userId);
+        Assert.Equal(90, stats.TotalStudySeconds);
+    }
+
+    [Fact]
+    public async Task AwardXpAsync_WithNullOrNonPositiveTimeSpentSeconds_DoesNotAccumulate()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var request = new XpAwardRequest(userId, 0, true, ActivityType.FlashcardReview, null, null, TimeSpentSeconds: null);
+
+        // Act
+        var result = await _gamificationService.AwardXpAsync(request);
+
+        // Assert
+        Assert.True(result.Success);
+        var stats = await _dbContext.UserStats.SingleAsync(s => s.UserId == userId);
+        Assert.Equal(0, stats.TotalStudySeconds);
+
+        // Negative values (e.g. malformed client) must not corrupt the column
+        var negativeRequest = new XpAwardRequest(userId, 0, true, ActivityType.FlashcardReview, null, null, TimeSpentSeconds: -5);
+        await _gamificationService.AwardXpAsync(negativeRequest);
+        stats = await _dbContext.UserStats.SingleAsync(s => s.UserId == userId);
+        Assert.Equal(0, stats.TotalStudySeconds);
+    }
+
+    [Fact]
+    public async Task AwardXpAsync_TimeSpentSecondsZero_DoesNotAccumulate()
+    {
+        // Arrange
+        var userId = Guid.NewGuid();
+        var request = new XpAwardRequest(userId, 0, true, ActivityType.FlashcardReview, null, null, TimeSpentSeconds: 0);
+
+        // Act
+        var result = await _gamificationService.AwardXpAsync(request);
+
+        // Assert
+        Assert.True(result.Success);
+        var stats = await _dbContext.UserStats.SingleAsync(s => s.UserId == userId);
+        Assert.Equal(0, stats.TotalStudySeconds);
+    }
+
     public void Dispose()
     {
         _dbContext.Database.EnsureDeleted();

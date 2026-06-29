@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using AIStudyHub.Business.DTOs.Answers;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Flashcards;
+using AIStudyHub.Business.DTOs.Gamification;
 using AIStudyHub.Business.DTOs.Notifications;
 using AIStudyHub.Business.DTOs.Payments;
 using AIStudyHub.Business.DTOs.Questions;
@@ -1278,15 +1279,18 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
     private readonly AIStudyHub.Business.Interfaces.Services.IGamificationService? _gamificationService;
+    private readonly AIStudyHub.Business.Interfaces.Services.IBadgeService? _badgeService;
     private readonly ILogger<QuizSubmissionService>? _logger;
 
     public QuizSubmissionService(IUnitOfWork unitOfWork, IMapper mapper,
         AIStudyHub.Business.Interfaces.Services.IGamificationService? gamificationService = null,
+        AIStudyHub.Business.Interfaces.Services.IBadgeService? badgeService = null,
         ILogger<QuizSubmissionService>? logger = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _gamificationService = gamificationService;
+        _badgeService = badgeService;
         _logger = logger;
     }
 
@@ -1413,7 +1417,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
                         ActivityType: AIStudyHub.Data.Enums.ActivityType.QuizSubmission,
                         DocumentId: documentId,
                         SubjectCode: subjectCode,
-                        TimeSpentSeconds: null),
+                        TimeSpentSeconds: request.DurationSeconds),
                     cancellationToken);
             }
             catch (Exception ex)
@@ -1423,7 +1427,56 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             }
         }
 
+        // Plan C3: check badge unlocks (Sharpshooter, Math Prodigy). Idempotent.
+        if (_badgeService is not null)
+        {
+            try
+            {
+                var unlocked = await _badgeService.EvaluateQuizBadgeAsync(submission.UserId, submission, cancellationToken);
+                if (unlocked.Count > 0)
+                {
+                    _logger?.LogInformation("Unlocked {Count} quiz badge(s) for user {UserId}, quiz {QuizId}", unlocked.Count, submission.UserId, quiz.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Badge evaluation failed for user {UserId}, quiz {QuizId}", submission.UserId, quiz.Id);
+            }
+        }
+
         return _mapper.Map<QuizSubmissionResponseDto>(created);
+    }
+
+    /// <summary>
+    /// Plan C3 / B.4.5 — submit a quiz attempt and return the saved submission plus
+    /// any badges the user just unlocked (Sharpshooter, Math Prodigy).
+    /// Prefer this over <see cref="CreateAsync"/> for the user-facing endpoint.
+    /// </summary>
+    public async Task<SubmitQuizResultDto> SubmitAsync(CreateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var submission = await CreateAsync(request, cancellationToken);
+
+        IReadOnlyList<AchievementDto> unlocked = Array.Empty<AchievementDto>();
+        if (_badgeService is not null)
+        {
+            try
+            {
+                var entity = await _unitOfWork.QuizSubmissions.Query()
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(q => q.Id == submission.Id, cancellationToken);
+
+                if (entity is not null)
+                {
+                    unlocked = await _badgeService.EvaluateQuizBadgeAsync(submission.UserId, entity, cancellationToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Badge evaluation failed for user {UserId}, submission {SubmissionId}", submission.UserId, submission.Id);
+            }
+        }
+
+        return new SubmitQuizResultDto(submission, unlocked);
     }
 
     public async Task<QuizSubmissionResponseDto> UpdateAsync(Guid id, UpdateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)

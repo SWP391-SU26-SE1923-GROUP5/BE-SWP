@@ -23,16 +23,22 @@ public sealed class FlashcardReviewController : ControllerBase
         _service = service;
     }
 
-    /// <summary>Submit a review for a flashcard. Triggers SM-2 update and returns the new schedule.</summary>
+    /// <summary>Submit a review for a flashcard. Triggers SM-2 update and returns the new schedule
+    /// + any badges the user just unlocked (Plan C3).</summary>
     [HttpPost("review")]
-    public async Task<ActionResult<FlashcardReviewResponseDto>> SubmitReview(
+    public async Task<ActionResult<ReviewFlashcardResultDto>> SubmitReview(
         [FromBody] ReviewFlashcardRequestDto request,
         CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
         if (userId == Guid.Empty) return Unauthorized();
 
-        var result = await _service.ProcessReviewAsync(userId, request.FlashcardId, request.Quality, cancellationToken);
+        var result = await _service.ProcessReviewAsync(
+            userId,
+            request.FlashcardId,
+            request.Quality,
+            request.TimeSpentSeconds,
+            cancellationToken);
         if (!result.Success) return BadRequest(result.Error);
         return Ok(result.Data);
     }

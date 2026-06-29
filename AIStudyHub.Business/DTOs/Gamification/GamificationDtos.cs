@@ -34,4 +34,23 @@ public sealed record XpAwardResult(
     int NewLevel,
     bool LeveledUp,
     int CurrentStreak,
-    int BestStreak);
+    int BestStreak,
+    int TotalStudySeconds);
+
+/// <summary>
+/// One achievement (badge definition + a user's progress / unlock state).
+/// Plan A.6 + B.2.1. Used by <c>GET /api/Gamification/achievements</c> and returned
+/// inline inside quiz / flashcard responses so the client can celebrate unlocks.
+/// </summary>
+public sealed record AchievementDto(
+    Guid Id,
+    string Code,
+    string Title,
+    string Description,
+    string Category,
+    decimal TargetValue,
+    string IconUrl,
+    int XpReward,
+    bool IsUnlocked,
+    DateTime? EarnedDate,
+    decimal CurrentProgress);
