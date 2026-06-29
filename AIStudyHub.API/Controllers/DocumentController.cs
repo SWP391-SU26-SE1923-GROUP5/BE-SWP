@@ -172,7 +172,7 @@ public sealed class DocumentController : ControllerBase
         if (!System.IO.File.Exists(fullPath))
             return NotFound("File not found on disk");
 
-        var contentType = document.FileType ?? "application/octet-stream";
+        var contentType = document.FileType ?? GetMimeTypeFromExtension(relativePath);
         var fileName = document.FileName ?? Path.GetFileName(relativePath);
 
         var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -197,12 +197,69 @@ public sealed class DocumentController : ControllerBase
         if (!System.IO.File.Exists(fullPath))
             return NotFound("File not found on disk");
 
-        var contentType = document.FileType ?? "application/octet-stream";
+        var contentType = document.FileType ?? GetMimeTypeFromExtension(relativePath);
         var fileName = document.FileName ?? Path.GetFileName(relativePath);
 
         var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
         Response.Headers.Append("Content-Disposition", $"inline; filename=\"{fileName}\"");
         return File(stream, contentType, enableRangeProcessing: true);
+    }
+
+    private static readonly Dictionary<string, string> MimeTypeMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Video
+        { ".mp4",  "video/mp4" },
+        { ".webm", "video/webm" },
+        { ".ogg",  "video/ogg" },
+        { ".avi",  "video/x-msvideo" },
+        { ".mkv",  "video/x-matroska" },
+        { ".mov",  "video/quicktime" },
+        { ".wmv",  "video/x-ms-wmv" },
+        { ".flv",  "video/x-flv" },
+        { ".m4v",  "video/x-m4v" },
+        // Audio
+        { ".mp3",  "audio/mpeg" },
+        { ".wav",  "audio/wav" },
+        { ".ogg",  "audio/ogg" },
+        { ".aac",  "audio/aac" },
+        { ".flac", "audio/flac" },
+        { ".m4a",  "audio/mp4" },
+        { ".wma",  "audio/x-ms-wma" },
+        { ".opus", "audio/opus" },
+        // Images
+        { ".jpg",  "image/jpeg" },
+        { ".jpeg", "image/jpeg" },
+        { ".png",  "image/png" },
+        { ".gif",  "image/gif" },
+        { ".webp", "image/webp" },
+        { ".svg",  "image/svg+xml" },
+        { ".bmp",  "image/bmp" },
+        { ".ico",  "image/x-icon" },
+        { ".tiff", "image/tiff" },
+        { ".tif",  "image/tiff" },
+        // Text / PDF
+        { ".pdf",  "application/pdf" },
+        { ".txt",  "text/plain" },
+        { ".html", "text/html" },
+        { ".htm",  "text/html" },
+        { ".css",  "text/css" },
+        { ".js",   "application/javascript" },
+        { ".json", "application/json" },
+        { ".xml",  "application/xml" },
+        { ".csv",  "text/csv" },
+        // Office
+        { ".doc",  "application/msword" },
+        { ".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+        { ".xls",  "application/vnd.ms-excel" },
+        { ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+        { ".ppt",  "application/vnd.ms-powerpoint" },
+        { ".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation" },
+    };
+
+    private static string GetMimeTypeFromExtension(string filePath)
+    {
+        var ext = Path.GetExtension(filePath);
+        return MimeTypeMap.TryGetValue(ext, out var mime) ? mime : "application/octet-stream";
     }
 
     [HttpGet("{id:guid}/status")]

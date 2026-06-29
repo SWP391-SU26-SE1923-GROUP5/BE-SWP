@@ -1,6 +1,7 @@
 using AIStudyHub.Business.DTOs.Questions;
 using AIStudyHub.Business.DTOs.Answers;
 using AIStudyHub.Business.DTOs.Quizzes;
+using AIStudyHub.Business.DTOs.QuizSubmissions;
 using AIStudyHub.Business.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -16,17 +17,20 @@ public sealed class QuizController : ControllerBase
     private readonly IDocumentService _documentService;
     private readonly IQuestionService _questionService;
     private readonly IAnswerService _answerService;
+    private readonly IQuizSubmissionService _submissionService;
 
     public QuizController(
         IQuizService service,
         IDocumentService documentService,
         IQuestionService questionService,
-        IAnswerService answerService)
+        IAnswerService answerService,
+        IQuizSubmissionService submissionService)
     {
         _service = service;
         _documentService = documentService;
         _questionService = questionService;
         _answerService = answerService;
+        _submissionService = submissionService;
     }
 
     [HttpGet]
@@ -125,6 +129,49 @@ public sealed class QuizController : ControllerBase
 
         await _service.DeleteAsync(id, cancellationToken);
         return NoContent();
+    }
+
+    /// <summary>
+    /// Plan C3 / B.4.5 — submit a quiz attempt for grading.
+    /// The quiz id is taken from the route; <c>UserId</c> and <c>QuizId</c> in the body
+    /// are ignored and replaced with server-side values to prevent spoofing.
+    /// Returns the saved submission plus any badges the user just unlocked.
+    /// </summary>
+    [HttpPost("{id:guid}/submit")]
+    public async Task<ActionResult<SubmitQuizResultDto>> Submit(
+        Guid id,
+        [FromBody] CreateQuizSubmissionRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var quiz = await _service.GetByIdAsync(id, cancellationToken);
+        if (quiz == null) return NotFound("Quiz not found");
+
+        var document = await _documentService.GetByIdAsync(quiz.DocumentId, cancellationToken);
+        if (document == null) return NotFound("Document not found");
+
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        if (string.IsNullOrWhiteSpace(request.Answers))
+            return BadRequest("Answers payload is required");
+
+        // Override client-supplied identifiers with server-side values to prevent
+        // a user from submitting as someone else or against an unrelated quiz.
+        var serverRequest = request with { UserId = userId, QuizId = id };
+
+        try
+        {
+            var result = await _submissionService.SubmitAsync(serverRequest, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (Exception)
+        {
+            return StatusCode(500, "An error occurred while submitting the quiz");
+        }
     }
 
     private Guid GetCurrentUserId()

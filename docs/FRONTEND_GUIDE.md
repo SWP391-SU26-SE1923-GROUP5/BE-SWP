@@ -297,7 +297,7 @@ sequenceDiagram
 | **Danh sách quiz (có phân trang)** | `GET /api/Quiz?pageIndex=1&pageSize=20&searchTerm=` | |
 | **Xem chi tiết quiz (chưa có answers)** | `GET /api/Quiz/{id}/questions` | Trả list câu hỏi, không kèm đáp án đúng |
 | **Xem lại 1 câu hỏi (kèm answers)** | `GET /api/Quiz/{quizId}/questions/{questionId}` | Kèm `answers[]` |
-| **Làm bài → nộp bài** | ⚠️ **Hiện CHƯA có public endpoint** - FE cần hỏi backend team endpoint submit/scoring | Đã xoá `POST /api/QuizSubmission`, workflow nộp bài qua `IQuizService.SubmitQuizAsync` (internal) |
+| **Làm bài → nộp bài** | `POST /api/Quiz/{id}/submit` (body: `CreateQuizSubmissionRequestDto` — `userId`/`quizId` trong body bị ignore, server tự lấy từ token + route) → trả `SubmitQuizResultDto` (submission + newAchievements) | Plan C3 / B.4.5 |
 | **Xem lịch sử nộp bài của tôi** | `GET /api/QuizSubmission/{id}` (với id biết trước) | Hiện chưa có endpoint list submissions của user |
 | **Xoá quiz** | `DELETE /api/Quiz/{id}` | Chỉ owner mới xoá được |
 
@@ -1130,7 +1130,7 @@ Trả về kết quả nộp bài (nếu là user thường, chỉ xem được 
 }
 ```
 
-> **QUAN TRỌNG**: Backend hiện **không có** endpoint POST `/api/QuizSubmission` để user tự nộp bài. Workflow nộp bài đi qua service Quiz riêng (xem `IQuizService.SubmitQuizAsync`). FE cần liên hệ backend team để xác nhận endpoint thực tế.
+> ✅ **Đã bổ sung**: `POST /api/Quiz/{id}/submit` (xem mục 5.5.5). Body là `CreateQuizSubmissionRequestDto { userId, quizId, answers, durationSeconds? }`. `userId`/`quizId` trong body bị server override bằng token + route để chống spoofing. Response là `SubmitQuizResultDto { submission, newAchievements[] }` để FE hiển thị badge vừa unlock.
 
 ---
 
@@ -1567,7 +1567,7 @@ erDiagram
 Tài liệu này khác với bản trước ở các điểm sau (FE phải update code):
 
 1. **Có SignalR** - Bản cũ nói "Dự án không sử dụng SignalR" - **SAI**. Hiện tại có hub `/hubs/notifications`. FE **bắt buộc** connect SignalR để nhận document processed, flashcard ready, level up, streak warning.
-2. **`POST /api/QuizSubmission` đã bị xóa** - Workflow nộp bài không qua endpoint này. FE cần hỏi backend team về endpoint thực tế để submit + grading.
+2. ✅ **Đã bổ sung `POST /api/Quiz/{id}/submit`** - FE submit bài thi qua endpoint này (xem mục 5.5.5). Backend cũ `POST /api/QuizSubmission` vẫn bị xoá và không nên dùng.
 3. **`/api/Notification` POST/PUT/DELETE đã xóa** - Notification do hệ thống tự tạo, FE chỉ GET + mark-as-read.
 4. **`/api/User` POST/DELETE đã xóa** - Đăng ký qua `/api/Auth/register`, xóa user cần nghiệp vụ riêng (chưa có API).
 5. **`/api/Question` POST/PUT/DELETE đã xóa** - Câu hỏi tạo qua AI generate quiz hoặc internal services.
