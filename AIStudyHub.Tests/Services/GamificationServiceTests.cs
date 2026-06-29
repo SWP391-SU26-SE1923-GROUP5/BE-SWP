@@ -41,6 +41,19 @@ public class GamificationServiceTests : IDisposable
         _gamificationService = new GamificationService(_unitOfWork, _loggerMock.Object);
     }
 
+    private void DebugWriteRawQuery()
+    {
+        // Helper used during development to dump raw rows for diagnostics.
+        var conn = (Microsoft.Data.Sqlite.SqliteConnection)_dbContext.Database.GetDbConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT \"u_id\", \"create_at\" FROM StudyLogs ORDER BY \"create_at\" DESC";
+        using var rdr = cmd.ExecuteReader();
+        while (rdr.Read())
+        {
+            Console.WriteLine($"LOG {rdr.GetGuid(0)} -> {rdr.GetValue(1)} (kind={rdr.GetFieldType(1).Name})");
+        }
+    }
+
     [Fact]
     public async Task GetStatsAsync_UserStatsMissing_CreatesNewStats()
     {
@@ -198,6 +211,171 @@ public class GamificationServiceTests : IDisposable
         Assert.True(result.Success);
         var stats = await _dbContext.UserStats.SingleAsync(s => s.UserId == userId);
         Assert.Equal(0, stats.TotalStudySeconds);
+    }
+
+    [Fact]
+    public async Task GetLeaderboardAsync_PeriodWeekly_AggregatesStudyLogXp()
+    {
+        // Arrange: two users with recent StudyLog activity + one user whose activity
+        // is older than 7 days must NOT appear in the Weekly ranking.
+        var activeUser = new User { Id = Guid.NewGuid(), FullName = "Active", Email = "active@test.com", PasswordHash = "hash" };
+        var inactiveUser = new User { Id = Guid.NewGuid(), FullName = "Inactive", Email = "inactive@test.com", PasswordHash = "hash" };
+        var staleUser = new User { Id = Guid.NewGuid(), FullName = "Stale", Email = "stale@test.com", PasswordHash = "hash" };
+        _dbContext.Users.AddRange(activeUser, inactiveUser, staleUser);
+
+        _dbContext.UserStats.AddRange(
+            new UserStats { Id = Guid.NewGuid(), UserId = activeUser.Id, TotalXp = 1500, CurrentLevel = 5, CreatedAt = DateTime.UtcNow },
+            new UserStats { Id = Guid.NewGuid(), UserId = inactiveUser.Id, TotalXp = 200, CurrentLevel = 2, CreatedAt = DateTime.UtcNow },
+            new UserStats { Id = Guid.NewGuid(), UserId = staleUser.Id, TotalXp = 999, CurrentLevel = 3, CreatedAt = DateTime.UtcNow });
+        
+        await _dbContext.SaveChangesAsync();
+
+        // Helper that bypasses ApplicationDbContext.ApplyAuditFields (which would otherwise
+        // overwrite CreatedAt to UtcNow on every SaveChanges). We execute the insert
+        // through a raw ADO.NET command so the historical timestamps survive intact.
+        async Task SeedLogAsync(Guid userId, int xp, DateTime createdAt)
+        {
+            var conn = _dbContext.Database.GetDbConnection();
+            if (conn.State != System.Data.ConnectionState.Open) conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"INSERT INTO StudyLogs
+                (log_id, u_id, activity_type, doc_id, subject_code, is_correct,
+                 time_spent_seconds, xp_earned, create_at, update_at)
+                VALUES ($id, $uid, $act, NULL, NULL, 0, NULL, $xp, $cat, NULL)";
+            var pId = cmd.CreateParameter(); pId.ParameterName = "$id"; pId.Value = Guid.NewGuid(); cmd.Parameters.Add(pId);
+            var pUid = cmd.CreateParameter(); pUid.ParameterName = "$uid"; pUid.Value = userId; cmd.Parameters.Add(pUid);
+            var pAct = cmd.CreateParameter(); pAct.ParameterName = "$act"; pAct.Value = (int)ActivityType.FlashcardReview; cmd.Parameters.Add(pAct);
+            var pXp = cmd.CreateParameter(); pXp.ParameterName = "$xp"; pXp.Value = xp; cmd.Parameters.Add(pXp);
+            var pCat = cmd.CreateParameter(); pCat.ParameterName = "$cat"; pCat.Value = createdAt; cmd.Parameters.Add(pCat);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var nowUtc = DateTime.UtcNow;
+        await SeedLogAsync(activeUser.Id, 20, nowUtc.AddDays(-1));
+        await SeedLogAsync(activeUser.Id, 20, nowUtc.AddDays(-3));
+        await SeedLogAsync(activeUser.Id, 20, nowUtc.AddDays(-4));
+        await SeedLogAsync(activeUser.Id, 500, nowUtc.AddDays(-10));
+        await SeedLogAsync(inactiveUser.Id, 50, nowUtc.AddDays(-15));
+        await SeedLogAsync(staleUser.Id, 999, nowUtc.AddDays(-30));
+
+        // Act
+        var result = await _gamificationService.GetLeaderboardAsync(10, LeaderboardPeriod.Weekly);
+
+        // Assert
+        Assert.True(result.Success);
+        Assert.Single(result.Data!);
+
+        var entry = result.Data![0];
+        Assert.Equal(activeUser.Id, entry.UserId);
+        Assert.Equal(60, entry.Xp);                              // Only the 3 recent logs counted
+        Assert.Equal(1500, entry.TotalXp);                       // AllTime XP is preserved for display
+        Assert.Equal(LeaderboardPeriod.Weekly, entry.Period);
+        Assert.Equal(1, entry.Rank);
+
+        // Stale + inactive users must NOT appear (no XP inside the rolling window).
+        Assert.DoesNotContain(result.Data!, e => e.UserId == staleUser.Id);
+        Assert.DoesNotContain(result.Data!, e => e.UserId == inactiveUser.Id);
+    }
+
+    [Fact]
+    public async Task GetLeaderboardAsync_PeriodMonthly_AggregatesStudyLogXp()
+    {
+        // Arrange: two active users within the last 30 days + one outside the window.
+        var top = new User { Id = Guid.NewGuid(), FullName = "Top", Email = "top@test.com", PasswordHash = "hash" };
+        var second = new User { Id = Guid.NewGuid(), FullName = "Second", Email = "second@test.com", PasswordHash = "hash" };
+        var outside = new User { Id = Guid.NewGuid(), FullName = "Outside", Email = "outside@test.com", PasswordHash = "hash" };
+        _dbContext.Users.AddRange(top, second, outside);
+
+        _dbContext.UserStats.AddRange(
+            new UserStats { Id = Guid.NewGuid(), UserId = top.Id, TotalXp = 2000, CurrentLevel = 6, CreatedAt = DateTime.UtcNow },
+            new UserStats { Id = Guid.NewGuid(), UserId = second.Id, TotalXp = 800, CurrentLevel = 4, CreatedAt = DateTime.UtcNow },
+            new UserStats { Id = Guid.NewGuid(), UserId = outside.Id, TotalXp = 5000, CurrentLevel = 7, CreatedAt = DateTime.UtcNow });
+
+        await _dbContext.SaveChangesAsync();
+
+        // See the Weekly test for an explanation of why we use a raw SQL insert to seed
+        // StudyLog rows (bypasses ApplyAuditFields which would overwrite CreatedAt).
+        async Task SeedLogAsync(Guid userId, int xp, DateTime createdAt)
+        {
+            var conn = _dbContext.Database.GetDbConnection();
+            if (conn.State != System.Data.ConnectionState.Open) conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"INSERT INTO StudyLogs
+                (log_id, u_id, activity_type, doc_id, subject_code, is_correct,
+                 time_spent_seconds, xp_earned, create_at, update_at)
+                VALUES ($id, $uid, $act, NULL, NULL, 0, NULL, $xp, $cat, NULL)";
+            var pId = cmd.CreateParameter(); pId.ParameterName = "$id"; pId.Value = Guid.NewGuid(); cmd.Parameters.Add(pId);
+            var pUid = cmd.CreateParameter(); pUid.ParameterName = "$uid"; pUid.Value = userId; cmd.Parameters.Add(pUid);
+            var pAct = cmd.CreateParameter(); pAct.ParameterName = "$act"; pAct.Value = (int)ActivityType.FlashcardReview; cmd.Parameters.Add(pAct);
+            var pXp = cmd.CreateParameter(); pXp.ParameterName = "$xp"; pXp.Value = xp; cmd.Parameters.Add(pXp);
+            var pCat = cmd.CreateParameter(); pCat.ParameterName = "$cat"; pCat.Value = createdAt; cmd.Parameters.Add(pCat);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var nowUtc = DateTime.UtcNow;
+        await SeedLogAsync(top.Id, 100, nowUtc.AddDays(-15));
+        await SeedLogAsync(top.Id, 100, nowUtc.AddDays(-25));
+        await SeedLogAsync(top.Id, 100, nowUtc.AddDays(-40));
+        await SeedLogAsync(second.Id, 40, nowUtc.AddDays(-10));
+        await SeedLogAsync(second.Id, 40, nowUtc.AddDays(-20));
+        await SeedLogAsync(outside.Id, 500, nowUtc.AddDays(-45));
+
+        // Act
+        var result = await _gamificationService.GetLeaderboardAsync(10, LeaderboardPeriod.Monthly);
+
+        // Assert
+        Assert.True(result.Success);
+        Assert.Equal(2, result.Data!.Count);
+
+        Assert.Equal(top.Id, result.Data[0].UserId);
+        Assert.Equal(200, result.Data[0].Xp);
+        Assert.Equal(2000, result.Data[0].TotalXp);
+        Assert.Equal(1, result.Data[0].Rank);
+
+        Assert.Equal(second.Id, result.Data[1].UserId);
+        Assert.Equal(80, result.Data[1].Xp);
+        Assert.Equal(800, result.Data[1].TotalXp);
+        Assert.Equal(2, result.Data[1].Rank);
+
+        Assert.All(result.Data!, e => Assert.Equal(LeaderboardPeriod.Monthly, e.Period));
+        Assert.DoesNotContain(result.Data!, e => e.UserId == outside.Id);
+    }
+
+    [Fact]
+    public async Task GetLeaderboardAsync_PeriodAllTime_UsesUserStatsTotalXp()
+    {
+        // Arrange: AllTime ignores StudyLog entirely and sorts by UserStats.TotalXp.
+        var a = new User { Id = Guid.NewGuid(), FullName = "Alpha", Email = "alpha@test.com", PasswordHash = "hash" };
+        var b = new User { Id = Guid.NewGuid(), FullName = "Beta", Email = "beta@test.com", PasswordHash = "hash" };
+        _dbContext.Users.AddRange(a, b);
+
+        _dbContext.UserStats.AddRange(
+            new UserStats { Id = Guid.NewGuid(), UserId = a.Id, TotalXp = 400, CurrentLevel = 3, CreatedAt = DateTime.UtcNow },
+            new UserStats { Id = Guid.NewGuid(), UserId = b.Id, TotalXp = 900, CurrentLevel = 5, CreatedAt = DateTime.UtcNow });
+
+        // Some StudyLogs - they MUST NOT affect the AllTime ranking.
+        _dbContext.StudyLogs.AddRange(
+            new StudyLog { Id = Guid.NewGuid(), UserId = a.Id, XpEarned = 9999, ActivityType = ActivityType.FlashcardReview, CreatedAt = DateTime.UtcNow.AddDays(-1) });
+
+        await _dbContext.SaveChangesAsync();
+
+        // Act
+        var result = await _gamificationService.GetLeaderboardAsync(10, LeaderboardPeriod.AllTime);
+
+        // Assert
+        Assert.True(result.Success);
+        Assert.Equal(2, result.Data!.Count);
+
+        Assert.Equal(b.Id, result.Data[0].UserId);
+        Assert.Equal(900, result.Data[0].TotalXp);
+        Assert.Equal(900, result.Data[0].Xp);                   // For AllTime, Xp == TotalXp
+        Assert.Equal(LeaderboardPeriod.AllTime, result.Data[0].Period);
+        Assert.Equal(1, result.Data[0].Rank);
+
+        Assert.Equal(a.Id, result.Data[1].UserId);
+        Assert.Equal(400, result.Data[1].TotalXp);
+        Assert.Equal(400, result.Data[1].Xp);
+        Assert.Equal(2, result.Data[1].Rank);
     }
 
     public void Dispose()

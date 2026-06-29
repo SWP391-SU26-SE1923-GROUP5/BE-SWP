@@ -211,30 +211,113 @@ public sealed class GamificationService : IGamificationService
             stats.TotalStudySeconds));
     }
 
-    public async Task<ServiceResult<IReadOnlyList<LeaderboardEntryDto>>> GetLeaderboardAsync(int top, CancellationToken cancellationToken = default)
+    public async Task<ServiceResult<IReadOnlyList<LeaderboardEntryDto>>> GetLeaderboardAsync(
+        int top,
+        LeaderboardPeriod period = LeaderboardPeriod.AllTime,
+        CancellationToken cancellationToken = default)
     {
         var limit = top <= 0 ? 20 : Math.Min(top, 100);
 
-        var rows = await _unitOfWork.UserStats
+        if (period == LeaderboardPeriod.AllTime)
+        {
+            // AllTime: keep the original path - sort by UserStats.TotalXp (cumulative).
+            var rows = await _unitOfWork.UserStats
+                .Query()
+                .Include(s => s.User)
+                .OrderByDescending(s => s.TotalXp)
+                .Take(limit)
+                .AsNoTracking()
+                .ToListAsync(cancellationToken);
+
+            var leaderboard = rows
+                .Where(s => s.User is not null)
+                .Select((s, idx) => new LeaderboardEntryDto(
+                    s.UserId,
+                    s.User!.FullName ?? string.Empty,
+                    s.TotalXp,
+                    s.TotalXp,
+                    s.CurrentLevel,
+                    s.CurrentStreak,
+                    idx + 1,
+                    LeaderboardPeriod.AllTime))
+                .ToList();
+
+            return ServiceResult<IReadOnlyList<LeaderboardEntryDto>>.Ok(leaderboard);
+        }
+
+        // Weekly / Monthly: aggregate SUM(XpEarned) per user from StudyLog within the
+        // rolling window. The (UserId, CreatedAt) composite index keeps this O(log n)
+        // per row scanned. We normalize the cutoff to LocalTime so the comparison is
+        // consistent with how the SQLite test provider (and, in production, the SQL
+        // Server column type configured via Fluent API) stores DateTime values.
+        var nowUtc = DateTime.UtcNow;
+        var nowLocal = nowUtc.ToLocalTime();
+        var periodXp = period switch
+        {
+            LeaderboardPeriod.Weekly => (await _unitOfWork.StudyLogs
+                .Query()
+                .Where(l => l.CreatedAt >= DateTime.SpecifyKind(nowLocal.AddDays(-7), DateTimeKind.Unspecified))
+                .GroupBy(l => l.UserId)
+                .Select(g => new { UserId = g.Key, Xp = g.Sum(x => x.XpEarned) })
+                .ToListAsync(cancellationToken))
+                .Select(x => (x.UserId, x.Xp))
+                .ToList(),
+            LeaderboardPeriod.Monthly => (await _unitOfWork.StudyLogs
+                .Query()
+                .Where(l => l.CreatedAt >= DateTime.SpecifyKind(nowLocal.AddDays(-30), DateTimeKind.Unspecified))
+                .GroupBy(l => l.UserId)
+                .Select(g => new { UserId = g.Key, Xp = g.Sum(x => x.XpEarned) })
+                .ToListAsync(cancellationToken))
+                .Select(x => (x.UserId, x.Xp))
+                .ToList(),
+            _ => new List<(Guid UserId, int Xp)>()
+        };
+
+        if (periodXp.Count == 0)
+        {
+            return ServiceResult<IReadOnlyList<LeaderboardEntryDto>>.Ok(Array.Empty<LeaderboardEntryDto>());
+        }
+
+        var userIds = periodXp.Select(p => p.UserId).ToList();
+
+        // Join back to UserStats so we can display FullName + level + streak + the cumulative
+        // AllTime XP as a secondary field. We only fetch users that actually earned XP in
+        // the window, so the leaderboard reflects real activity, not just historical stock.
+        var stats = await _unitOfWork.UserStats
             .Query()
             .Include(s => s.User)
-            .OrderByDescending(s => s.TotalXp)
-            .Take(limit)
+            .Where(s => userIds.Contains(s.UserId))
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
-        var leaderboard = rows
-            .Where(s => s.User is not null)
-            .Select((s, idx) => new LeaderboardEntryDto(
+        var periodXpByUser = periodXp.ToDictionary(p => p.UserId, p => p.Xp);
+
+        var leaderboard2 = stats
+            .Where(s => s.User is not null && periodXpByUser.ContainsKey(s.UserId))
+            .Select(s => new
+            {
                 s.UserId,
-                s.User!.FullName ?? string.Empty,
+                FullName = s.User!.FullName ?? string.Empty,
                 s.TotalXp,
+                PeriodXp = periodXpByUser[s.UserId],
                 s.CurrentLevel,
-                s.CurrentStreak,
-                idx + 1))
+                s.CurrentStreak
+            })
+            .OrderByDescending(x => x.PeriodXp)
+            .ThenByDescending(x => x.TotalXp)
+            .Take(limit)
+            .Select((x, idx) => new LeaderboardEntryDto(
+                x.UserId,
+                x.FullName,
+                x.TotalXp,
+                x.PeriodXp,
+                x.CurrentLevel,
+                x.CurrentStreak,
+                idx + 1,
+                period))
             .ToList();
 
-        return ServiceResult<IReadOnlyList<LeaderboardEntryDto>>.Ok(leaderboard);
+        return ServiceResult<IReadOnlyList<LeaderboardEntryDto>>.Ok(leaderboard2);
     }
 
     private static int ComputeXpForRequest(XpAwardRequest req) =>

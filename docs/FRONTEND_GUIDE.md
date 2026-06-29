@@ -306,7 +306,7 @@ sequenceDiagram
 | Tính năng UI | Gọi API theo thứ tự | Ghi chú |
 |---|---|---|
 | **Widget "Level & XP" ở Dashboard** | `GET /api/Gamification/stats` | Trả `totalXp`, `currentLevel`, `currentStreak`, `bestStreak`, `xpToNextLevel` |
-| **Trang "Bảng xếp hạng"** | `GET /api/Gamification/leaderboard?top=20` | Trả list user ranked theo XP |
+| **Trang "Bảng xếp hạng"** | `GET /api/Gamification/leaderboard?top=20&period=weekly\|monthly\|alltime` | `period` mặc định `alltime` nếu FE không truyền. Xem chi tiết ở mục 13.3. |
 | **Xem stats của user khác (public profile)** | `GET /api/Gamification/stats/{userId}` | |
 | **Hiển thị popup "Level Up!"** | Đợi SignalR event `ReceiveNotification` với `type=9` (TierUpgraded) và `payload={ newLevel, totalXp }` | KHÔNG cần gọi API, server tự push |
 
@@ -993,16 +993,40 @@ Stats của user hiện tại.
 
 Stats của 1 user bất kỳ.
 
-### 13.3. GET `/api/Gamification/leaderboard?top=20`
+### 13.3. GET `/api/Gamification/leaderboard?top=20&period=weekly|monthly|alltime`
 
-**Query**: `top` (int, default 20)
+Bảng xếp hạng theo XP. Hỗ trợ 3 tab thời gian: **Weekly** (7 ngày gần nhất), **Monthly** (30 ngày gần nhất), **All Time** (tổng tích lũy).
+
+**Query**:
+| Name | Type | Default | Description |
+|---|---|---|---|
+| `top` | int | 20 | Số user trả về (clamp 1..100). |
+| `period` | string | `alltime` | Một trong: `weekly`, `monthly`, `alltime` (alias `all-time` cũng chấp nhận). Không phân biệt hoa/thường. Nếu truyền giá trị khác → 400. |
+
+> **Lưu ý cho FE**: Tab Weekly/Monthly aggregate từ bảng `StudyLogs` (lịch sử hoạt động) trong khoảng **rolling** - không cần chờ đầu tuần / đầu tháng dương lịch. User nào không có StudyLog trong khoảng đó sẽ không xuất hiện trong bảng xếp hạng (kể cả khi `UserStats.TotalXp` cao). Tab All Time giữ nguyên logic cũ (sort theo `UserStats.TotalXp`).
 
 **Response 200**:
 ```json
 [
-  { "userId": "guid", "fullName": "string", "totalXp": 5000, "currentLevel": 12, "currentStreak": 30, "rank": 1 }
+  {
+    "userId": "guid",
+    "fullName": "Nguyễn Văn A",
+    "totalXp": 5200,
+    "xp": 380,
+    "currentLevel": 6,
+    "currentStreak": 5,
+    "rank": 1,
+    "period": "Weekly"
+  }
 ]
 ```
+
+| Field | Ý nghĩa |
+|---|---|
+| `totalXp` | Tổng XP tích lũy All-Time (từ `UserStats.TotalXp`) - giữ nguyên mọi period, dùng cho tooltip / so sánh. |
+| `xp` | XP theo `period` đang chọn (Weekly = tổng XP 7 ngày, Monthly = 30 ngày, AllTime = bằng `totalXp`). Đây là giá trị FE dùng để sort/rank. |
+| `rank` | Thứ hạng trong kết quả trả về, 1-based. |
+| `period` | Period đang trả về (`Weekly` / `Monthly` / `AllTime`). FE có thể dùng để verify đúng tab đang chọn. |
 
 ### 13.4. POST `/api/Gamification/award-xp`
 

@@ -40,15 +40,46 @@ public sealed class GamificationController : ControllerBase
         return Ok(result.Data);
     }
 
-    /// <summary>Top users by XP. Optional query: ?top=20.</summary>
+    /// <summary>
+    /// Top users by XP for a time window. Query params: <c>?top=20&amp;period=weekly|monthly|alltime</c>.
+    /// Defaults to <c>alltime</c> when <c>period</c> is omitted or unknown (backward-compatible).
+    /// </summary>
     [HttpGet("leaderboard")]
     public async Task<ActionResult<IReadOnlyList<LeaderboardEntryDto>>> Leaderboard(
         [FromQuery] int top = 20,
+        [FromQuery] string period = "alltime",
         CancellationToken cancellationToken = default)
     {
-        var result = await _service.GetLeaderboardAsync(top, cancellationToken);
+        if (!TryParsePeriod(period, out var parsed))
+        {
+            return BadRequest("period must be one of: weekly, monthly, alltime.");
+        }
+
+        var result = await _service.GetLeaderboardAsync(top, parsed, cancellationToken);
         if (!result.Success) return BadRequest(result.Error);
         return Ok(result.Data);
+    }
+
+    private static bool TryParsePeriod(string? raw, out LeaderboardPeriod parsed)
+    {
+        switch (raw?.Trim().ToLowerInvariant())
+        {
+            case "weekly":
+                parsed = LeaderboardPeriod.Weekly;
+                return true;
+            case "monthly":
+                parsed = LeaderboardPeriod.Monthly;
+                return true;
+            case "alltime":
+            case "all-time":
+            case "":
+            case null:
+                parsed = LeaderboardPeriod.AllTime;
+                return true;
+            default:
+                parsed = LeaderboardPeriod.AllTime;
+                return false;
+        }
     }
 
     /// <summary>
