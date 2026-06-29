@@ -5,6 +5,7 @@ using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace AIStudyHub.Business.Services;
@@ -18,20 +19,23 @@ namespace AIStudyHub.Business.Services;
 public sealed class BadgeService : IBadgeService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IGamificationService? _gamificationService;
+    private readonly IServiceProvider? _serviceProvider;
     private readonly IRealTimeNotificationService? _realTimeNotifier;
     private readonly ILogger<BadgeService> _logger;
 
     public BadgeService(
         IUnitOfWork unitOfWork,
         ILogger<BadgeService> logger,
-        IGamificationService? gamificationService = null,
-        IRealTimeNotificationService? realTimeNotifier = null)
+        IRealTimeNotificationService? realTimeNotifier = null,
+        IServiceProvider? serviceProvider = null)
     {
         _unitOfWork = unitOfWork;
         _logger = logger;
-        _gamificationService = gamificationService;
         _realTimeNotifier = realTimeNotifier;
+        // IServiceProvider is injected lazily because IGamificationService depends on
+        // IBadgeService (for the streak hook), so eager injection would form a
+        // construction-time circular dependency in DI.
+        _serviceProvider = serviceProvider;
     }
 
     public async Task<IReadOnlyList<AchievementDto>> EvaluateQuizBadgeAsync(
@@ -207,21 +211,26 @@ public sealed class BadgeService : IBadgeService
             return null;
         }
 
-        // Award bonus XP via the existing engine.
-        if (_gamificationService is not null)
+        // Award bonus XP via the existing engine. Resolved lazily to avoid
+        // a construction-time circular dependency: GamificationService -> IBadgeService.
+        if (_serviceProvider is not null)
         {
             try
             {
-                await _gamificationService.AwardXpAsync(
-                    new DTOs.Gamification.XpAwardRequest(
-                        UserId: userId,
-                        XpEarned: 0,
-                        IsCorrect: true,
-                        ActivityType: ActivityType.BadgeEarned,
-                        DocumentId: null,
-                        SubjectCode: null,
-                        TimeSpentSeconds: null),
-                    cancellationToken);
+                var gamification = _serviceProvider.GetService(typeof(IGamificationService)) as IGamificationService;
+                if (gamification is not null)
+                {
+                    await gamification.AwardXpAsync(
+                        new DTOs.Gamification.XpAwardRequest(
+                            UserId: userId,
+                            XpEarned: 0,
+                            IsCorrect: true,
+                            ActivityType: ActivityType.BadgeEarned,
+                            DocumentId: null,
+                            SubjectCode: null,
+                            TimeSpentSeconds: null),
+                        cancellationToken);
+                }
             }
             catch (Exception ex)
             {

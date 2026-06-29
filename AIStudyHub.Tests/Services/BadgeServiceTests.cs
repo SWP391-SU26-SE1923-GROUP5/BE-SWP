@@ -13,6 +13,7 @@ using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Repositories;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -56,11 +57,17 @@ public class BadgeServiceTests : IDisposable
             .ReturnsAsync(ServiceResult<XpAwardResult>.Ok(new XpAwardResult(0, 200, 1, 1, false, 7, 7, 0)));
         _notifier = new RealTimeNotificationServiceFake();
 
+        // Build a minimal ServiceProvider that resolves IGamificationService so
+        // BadgeService's lazy resolution path can hit the mocked instance.
+        var services = new ServiceCollection();
+        services.AddSingleton(_gamificationMock.Object);
+        var serviceProvider = services.BuildServiceProvider();
+
         _badgeService = new BadgeService(
             _unitOfWork,
             _loggerMock.Object,
-            _gamificationMock.Object,
-            _notifier);
+            _notifier,
+            serviceProvider);
     }
 
     [Fact]
