@@ -118,19 +118,13 @@ public sealed class AuthService : IAuthService
 
         if (storedToken is null)
         {
-            Console.WriteLine($"[DEBUG-AUTH] Refresh Token Failed: Cannot find token in Database!");
-            Console.WriteLine($"[DEBUG-AUTH] Length of received string: {request.RefreshToken.Length}");
-            Console.WriteLine($"[DEBUG-AUTH] Received string starts with: '{new string(request.RefreshToken.Take(15).ToArray())}...'");
-            Console.WriteLine($"[DEBUG-AUTH] Received string ends with: '...{new string(request.RefreshToken.TakeLast(5).ToArray())}'");
-            Console.WriteLine($"[DEBUG-AUTH] Calculated Hash: {tokenHash}");
+            _logger?.LogWarning("Refresh token validation failed: token not found in database");
             throw new UnauthorizedAccessException("Invalid refresh token.");
         }
 
         if (!storedToken.IsActive)
         {
-            Console.WriteLine($"[DEBUG-AUTH] Refresh Token Failed: Token found but IsActive is FALSE!");
-            Console.WriteLine($"[DEBUG-AUTH] IsExpired: {storedToken.IsExpired} (ExpiresAt: {storedToken.ExpiresAt}, Now: {DateTime.UtcNow})");
-            Console.WriteLine($"[DEBUG-AUTH] IsRevoked: {storedToken.IsRevoked} (RevokedAt: {storedToken.RevokedAt})");
+            _logger?.LogWarning("Refresh token validation failed: token is inactive (expired or revoked)");
             throw new UnauthorizedAccessException("Invalid refresh token.");
         }
 

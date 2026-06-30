@@ -356,61 +356,9 @@ IMPORTANT:
 
     private static List<AiGeneratedQuestionDto> ParseArrayStreaming(string array)
     {
-        var sanitized = Regex.Replace(
-            array, @"[\u0000-\u0008\u000B\u000C\u000E-\u001F]", "");
-
-        var result = new List<AiGeneratedQuestionDto>();
-        var i = 0;
-        while (i < sanitized.Length)
-        {
-            while (i < sanitized.Length && (char.IsWhiteSpace(sanitized[i]) || sanitized[i] == ','))
-                i++;
-            if (i >= sanitized.Length) break;
-
-            if (sanitized[i] != '{') { i++; continue; }
-
-            var objStart = i;
-            var depth = 0;
-            var inString = false;
-            var escape = false;
-            var found = false;
-            for (; i < sanitized.Length; i++)
-            {
-                var c = sanitized[i];
-                if (inString)
-                {
-                    if (escape) { escape = false; continue; }
-                    if (c == '\\') { escape = true; continue; }
-                    if (c == '"') inString = false;
-                    continue;
-                }
-                if (c == '"') { inString = true; continue; }
-                if (c == '{') depth++;
-                else if (c == '}')
-                {
-                    depth--;
-                    if (depth == 0) { found = true; i++; break; }
-                }
-            }
-
-            if (!found) break;
-
-            var slice = sanitized.Substring(objStart, i - objStart);
-            try
-            {
-                using var doc = JsonDocument.Parse(
-                    slice,
-                    new JsonDocumentOptions { AllowTrailingCommas = true });
-
-                result.AddRange(ExtractQuestionsFromArrayElement(
-                    WrapSingleObject(doc.RootElement.Clone())));
-            }
-            catch (JsonException)
-            {
-                // Skip broken element.
-            }
-        }
-        return result;
+        return BatchParsingHelpers.ParseArrayStreaming(
+            array,
+            arr => ExtractQuestionsFromArrayElement(arr).AsEnumerable());
     }
 
     private static JsonElement WrapSingleObject(JsonElement obj)

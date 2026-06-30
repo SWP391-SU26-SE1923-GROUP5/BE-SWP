@@ -81,7 +81,6 @@ builder.Services.AddHostedService<DailyStreakResetWorker>();
 
 builder.Services.AddHttpClient("EmbeddingClient");
 builder.Services.AddHttpClient("VectorStoreClient");
-builder.Services.AddHttpClient("LlmClient");
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddDataAccess(builder.Configuration);
 builder.Services.AddBusinessServices(builder.Configuration);

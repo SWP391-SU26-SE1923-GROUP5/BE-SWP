@@ -12,11 +12,3 @@ public sealed class CreateQuizSubmissionRequestDtoValidator : AbstractValidator<
         RuleFor(x => x.Answers).NotEmpty();
     }
 }
-
-public sealed class UpdateQuizSubmissionRequestDtoValidator : AbstractValidator<UpdateQuizSubmissionRequestDto>
-{
-    public UpdateQuizSubmissionRequestDtoValidator()
-    {
-        RuleFor(x => x.Answers).NotEmpty();
-    }
-}

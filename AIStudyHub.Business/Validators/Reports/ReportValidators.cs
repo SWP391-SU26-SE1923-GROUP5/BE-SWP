@@ -15,13 +15,6 @@ public sealed class CreateReportRequestDtoValidator : AbstractValidator<CreateRe
     }
 }
 
-public sealed class UpdateReportRequestDtoValidator : AbstractValidator<UpdateReportRequestDto>
-{
-    public UpdateReportRequestDtoValidator()
-    {
-    }
-}
-
 public sealed class UpdateReportStatusRequestDtoValidator : AbstractValidator<UpdateReportStatusRequestDto>
 {
     public UpdateReportStatusRequestDtoValidator()

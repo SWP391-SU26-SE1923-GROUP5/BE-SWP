@@ -24,5 +24,3 @@ public sealed record CreateQuizSubmissionRequestDto(
     Guid QuizId,
     string Answers,
     int? DurationSeconds = null);
-
-public sealed record UpdateQuizSubmissionRequestDto(string Answers);

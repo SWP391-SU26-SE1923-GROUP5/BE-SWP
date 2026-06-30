@@ -378,34 +378,6 @@ public sealed class VoteService : IVoteService
         return _mapper.Map<VoteResponseDto>(created);
     }
 
-    public async Task<VoteResponseDto> CreateAsync(CreateVoteRequestDto request, CancellationToken cancellationToken = default)
-    {
-        throw new NotSupportedException("Use CreateVoteAsync with explicit userId for security.");
-    }
-
-    public async Task<VoteResponseDto> UpdateAsync(Guid id, UpdateVoteRequestDto request, CancellationToken cancellationToken = default)
-    {
-        var vote = await _unitOfWork.Votes.GetByIdAsync(id, cancellationToken);
-        if (vote is null)
-        {
-            throw new KeyNotFoundException($"Vote with ID {id} not found.");
-        }
-
-        vote.Type = request.Type;
-        vote.UpdatedAt = DateTime.UtcNow;
-        _unitOfWork.Votes.Update(vote);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var updated = await _unitOfWork.Votes
-            .Query()
-            .Include(v => v.User)
-            .Include(v => v.Document)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(v => v.Id == id, cancellationToken);
-
-        return _mapper.Map<VoteResponseDto>(updated);
-    }
-
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var vote = await _unitOfWork.Votes.GetByIdAsync(id, cancellationToken);
@@ -454,11 +426,6 @@ public sealed class ReportService : IReportService
             .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 
         return report is null ? null : _mapper.Map<ReportResponseDto>(report);
-    }
-
-    public async Task<ReportResponseDto> CreateAsync(CreateReportRequestDto request, CancellationToken cancellationToken = default)
-    {
-        throw new NotSupportedException("Use CreateWithUserIdAsync instead.");
     }
 
     public async Task<ReportResponseDto> CreateWithUserIdAsync(CreateReportRequestDto request, Guid userId, CancellationToken cancellationToken = default)
@@ -759,11 +726,6 @@ public sealed class ReportService : IReportService
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         return new BulkMarkNonFlaggableResultDto(totalDocuments, totalReportsRejected);
-    }
-
-    public async Task<ReportResponseDto> UpdateAsync(Guid id, UpdateReportRequestDto request, CancellationToken cancellationToken = default)
-    {
-        throw new NotSupportedException("Use UpdateStatusAsync instead.");
     }
 
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
@@ -1223,48 +1185,6 @@ public sealed class AnswerService : IAnswerService
         return answers.Select(_mapper.Map<AnswerResponseDto>).ToList();
     }
 
-    public async Task<AnswerResponseDto> CreateAsync(CreateAnswerRequestDto request, CancellationToken cancellationToken = default)
-    {
-        var questionExists = await _unitOfWork.Questions.GetByIdAsync(request.QuestionId, cancellationToken) is not null;
-        if (!questionExists)
-        {
-            throw new KeyNotFoundException($"Question with ID {request.QuestionId} not found.");
-        }
-
-        var answer = _mapper.Map<Data.Entities.Answer>(request);
-        await _unitOfWork.Answers.AddAsync(answer, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var created = await _unitOfWork.Answers
-            .Query()
-            .Include(a => a.Question)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(a => a.Id == answer.Id, cancellationToken);
-
-        return _mapper.Map<AnswerResponseDto>(created);
-    }
-
-    public async Task<AnswerResponseDto> UpdateAsync(Guid id, UpdateAnswerRequestDto request, CancellationToken cancellationToken = default)
-    {
-        var answer = await _unitOfWork.Answers.GetByIdAsync(id, cancellationToken);
-        if (answer is null)
-        {
-            throw new KeyNotFoundException($"Answer with ID {id} not found.");
-        }
-
-        _mapper.Map(request, answer);
-        _unitOfWork.Answers.Update(answer);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var updated = await _unitOfWork.Answers
-            .Query()
-            .Include(a => a.Question)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(a => a.Id == id, cancellationToken);
-
-        return _mapper.Map<AnswerResponseDto>(updated);
-    }
-
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var answer = await _unitOfWork.Answers.GetByIdAsync(id, cancellationToken);
@@ -1476,28 +1396,6 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
         return new SubmitQuizResultDto(submission, xpEarned, unlocked);
     }
 
-    public async Task<QuizSubmissionResponseDto> UpdateAsync(Guid id, UpdateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
-    {
-        var submission = await _unitOfWork.QuizSubmissions.GetByIdAsync(id, cancellationToken);
-        if (submission is null)
-        {
-            throw new KeyNotFoundException($"Quiz submission with ID {id} not found.");
-        }
-
-        _mapper.Map(request, submission);
-        _unitOfWork.QuizSubmissions.Update(submission);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var updated = await _unitOfWork.QuizSubmissions
-            .Query()
-            .Include(qs => qs.User)
-            .Include(qs => qs.Quiz)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(qs => qs.Id == id, cancellationToken);
-
-        return _mapper.Map<QuizSubmissionResponseDto>(updated);
-    }
-
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var submission = await _unitOfWork.QuizSubmissions.GetByIdAsync(id, cancellationToken);
@@ -1542,63 +1440,6 @@ public sealed class NotificationService : INotificationService
             .FirstOrDefaultAsync(n => n.Id == id, cancellationToken);
 
         return notification is null ? null : _mapper.Map<NotificationResponseDto>(notification);
-    }
-
-    public async Task<NotificationResponseDto> CreateAsync(CreateNotificationRequestDto request, CancellationToken cancellationToken = default)
-    {
-        if (!Enum.TryParse<Data.Enums.NotificationType>(request.Type, true, out var notificationType))
-        {
-            notificationType = Data.Enums.NotificationType.System;
-        }
-
-        var notification = new Data.Entities.Notification
-        {
-            Id = Guid.NewGuid(),
-            UserId = request.UserId,
-            Message = request.Message,
-            Type = notificationType,
-            IsRead = false,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        await _unitOfWork.Notifications.AddAsync(notification, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var created = await _unitOfWork.Notifications
-            .Query()
-            .Include(n => n.User)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(n => n.Id == notification.Id, cancellationToken);
-
-        return new NotificationResponseDto(
-            created!.Id,
-            created.UserId,
-            created.Message,
-            created.IsRead,
-            created.Type.ToString(),
-            created.CreatedAt,
-            created.UpdatedAt);
-    }
-
-    public async Task<NotificationResponseDto> UpdateAsync(Guid id, UpdateNotificationRequestDto request, CancellationToken cancellationToken = default)
-    {
-        var notification = await _unitOfWork.Notifications.GetByIdAsync(id, cancellationToken);
-        if (notification is null)
-        {
-            throw new KeyNotFoundException($"Notification with ID {id} not found.");
-        }
-
-        _mapper.Map(request, notification);
-        _unitOfWork.Notifications.Update(notification);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var updated = await _unitOfWork.Notifications
-            .Query()
-            .Include(n => n.User)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(n => n.Id == id, cancellationToken);
-
-        return _mapper.Map<NotificationResponseDto>(updated);
     }
 
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
@@ -1701,94 +1542,6 @@ public sealed class PaymentService : IPaymentService
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
 
         return payment is null ? null : _mapper.Map<PaymentResponseDto>(payment);
-    }
-
-    public async Task<PaymentResponseDto> CreateAsync(CreatePaymentRequestDto request, CancellationToken cancellationToken = default)
-    {
-        if (request.TierId.HasValue)
-        {
-            var tier = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierId.Value, cancellationToken);
-            if (tier is null)
-            {
-                throw new KeyNotFoundException($"Tier membership with ID {request.TierId} not found.");
-            }
-
-            var payment = _mapper.Map<Data.Entities.Payment>(request);
-            await _unitOfWork.Payments.AddAsync(payment, cancellationToken);
-
-            var user = await _unitOfWork.Users.GetByIdAsync(request.UserId, cancellationToken);
-            if (user is not null)
-            {
-                user.TierId = request.TierId.Value;
-                if (!tier.TierName.Equals("Free", StringComparison.OrdinalIgnoreCase))
-                {
-                    user.TierExpireAt = DateTime.UtcNow.AddDays(30);
-                }
-                else
-                {
-                    user.TierExpireAt = null;
-                }
-                _unitOfWork.Users.Update(user);
-            }
-
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-            var created = await _unitOfWork.Payments
-                .Query()
-                .Include(p => p.User)
-                .Include(p => p.TierMembership)
-                .AsNoTracking()
-                .FirstOrDefaultAsync(p => p.Id == payment.Id, cancellationToken);
-
-            return _mapper.Map<PaymentResponseDto>(created);
-        }
-
-        var paymentNoTier = _mapper.Map<Data.Entities.Payment>(request);
-        await _unitOfWork.Payments.AddAsync(paymentNoTier, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var createdNoTier = await _unitOfWork.Payments
-            .Query()
-            .Include(p => p.User)
-            .Include(p => p.TierMembership)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == paymentNoTier.Id, cancellationToken);
-
-        return _mapper.Map<PaymentResponseDto>(createdNoTier);
-    }
-
-    public async Task<PaymentResponseDto> UpdateAsync(Guid id, UpdatePaymentRequestDto request, CancellationToken cancellationToken = default)
-    {
-        var payment = await _unitOfWork.Payments.GetByIdAsync(id, cancellationToken);
-        if (payment is null)
-        {
-            throw new KeyNotFoundException($"Payment with ID {id} not found.");
-        }
-
-        _mapper.Map(request, payment);
-        _unitOfWork.Payments.Update(payment);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var updated = await _unitOfWork.Payments
-            .Query()
-            .Include(p => p.User)
-            .Include(p => p.TierMembership)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
-
-        return _mapper.Map<PaymentResponseDto>(updated);
-    }
-
-    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
-    {
-        var payment = await _unitOfWork.Payments.GetByIdAsync(id, cancellationToken);
-        if (payment is null)
-        {
-            throw new KeyNotFoundException($"Payment with ID {id} not found.");
-        }
-
-        _unitOfWork.Payments.Remove(payment);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<PaymentLinkResponseDto> CreatePaymentUrlAsync(CreatePaymentLinkRequestDto request, CancellationToken cancellationToken = default)

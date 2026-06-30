@@ -11,11 +11,3 @@ public sealed class CreateVoteRequestDtoValidator : AbstractValidator<CreateVote
         RuleFor(x => x.Type).IsInEnum();
     }
 }
-
-public sealed class UpdateVoteRequestDtoValidator : AbstractValidator<UpdateVoteRequestDto>
-{
-    public UpdateVoteRequestDtoValidator()
-    {
-        RuleFor(x => x.Type).IsInEnum();
-    }
-}

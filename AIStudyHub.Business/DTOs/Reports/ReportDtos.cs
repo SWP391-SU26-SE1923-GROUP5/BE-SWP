@@ -16,8 +16,6 @@ public sealed record CreateReportRequestDto(
     ReportCategoryDto Category,
     string? Reason);
 
-public sealed record UpdateReportRequestDto();
-
 public sealed record UpdateReportStatusRequestDto(
     ReportStatusDto Status);
 

@@ -54,7 +54,8 @@ public sealed class QuestionController : ControllerBase
         return NoContent();
     }
 
-    // POST   /api/Question  - Đã xóa. Câu hỏi phải được tạo thông qua Quiz (AI generated).
-    // PUT    /api/Question/{id} - Đã xóa.
-    // DELETE /api/Question/{id} - Đã xóa. Xóa qua Quiz.
+    // POST   /api/Question — Available. Questions are typically AI-generated via Quiz, but
+    //              this endpoint is kept for manual admin fixes.
+    // PUT    /api/Question/{id} — Available. Used for manual question updates.
+    // DELETE /api/Question/{id} — Available. Used for manual question deletion.
 }
