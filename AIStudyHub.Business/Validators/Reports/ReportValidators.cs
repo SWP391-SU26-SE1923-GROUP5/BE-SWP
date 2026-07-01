@@ -7,14 +7,27 @@ public sealed class CreateReportRequestDtoValidator : AbstractValidator<CreateRe
 {
     public CreateReportRequestDtoValidator()
     {
-        RuleFor(x => x.UserId).NotEmpty();
         RuleFor(x => x.DocumentId).NotEmpty();
+        RuleFor(x => x.Category).IsInEnum();
+        RuleFor(x => x.Reason)
+            .NotEmpty().When(x => x.Category == ReportCategoryDto.Other)
+            .Length(10, 500).When(x => x.Category == ReportCategoryDto.Other);
     }
 }
 
-public sealed class UpdateReportRequestDtoValidator : AbstractValidator<UpdateReportRequestDto>
+public sealed class UpdateReportStatusRequestDtoValidator : AbstractValidator<UpdateReportStatusRequestDto>
 {
-    public UpdateReportRequestDtoValidator()
+    public UpdateReportStatusRequestDtoValidator()
     {
+        RuleFor(x => x.Status).IsInEnum().NotEqual(ReportStatusDto.Pending);
+    }
+}
+
+public sealed class ReportFilterDtoValidator : AbstractValidator<ReportFilterDto>
+{
+    public ReportFilterDtoValidator()
+    {
+        RuleFor(x => x.Page).GreaterThanOrEqualTo(1);
+        RuleFor(x => x.PageSize).InclusiveBetween(1, 100);
     }
 }

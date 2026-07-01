@@ -85,7 +85,10 @@ public class DocumentBackgroundProcessor : BackgroundService
                     ct);
 
                 // Fetch the generated chunks from KernelMemory to populate our Custom Hybrid Search Collection
+                logger.LogInformation("Document {DocumentId}: Fetching chunks from Kernel Memory for user {UserId}", request.DocumentId, request.UserId);
                 var chunks = await kernelMemoryService.SearchAsync("", request.UserId, 1000, ct);
+                logger.LogInformation("Document {DocumentId}: Kernel Memory returned {ChunkCount} chunks for user {UserId}",
+                    request.DocumentId, chunks.Count(), request.UserId);
 
                 var sparseGen = services.GetRequiredService<ISparseVectorGenerator>();
                 var qdrant = services.GetRequiredService<IVectorStoreService>();
@@ -95,9 +98,17 @@ public class DocumentBackgroundProcessor : BackgroundService
                 await qdrant.EnsureCollectionExistsAsync();
 
                 int chunkIndex = 0;
+                int upsertedCount = 0;
+                int skippedCount = 0;
+                string? firstCitationDocId = null;
                 foreach (var citation in chunks)
                 {
-                    if (citation.DocumentId != request.DocumentId.ToString()) continue;
+                    if (citation.DocumentId != request.DocumentId.ToString())
+                    {
+                        skippedCount++;
+                        firstCitationDocId ??= citation.DocumentId;
+                        continue;
+                    }
 
                     foreach (var partition in citation.Partitions)
                     {
@@ -120,8 +131,11 @@ public class DocumentBackgroundProcessor : BackgroundService
 
                         await qdrant.UpsertVectorAsync(id, dense, sparse, metadata);
                         chunkIndex++;
+                        upsertedCount++;
                     }
                 }
+                logger.LogInformation("Document {DocumentId}: Upserted {Upserted} chunks to Qdrant. Skipped {Skipped} (DocumentId mismatch). First mismatch citation.DocumentId={FirstDocId}",
+                    request.DocumentId, upsertedCount, skippedCount, firstCitationDocId ?? "(none)");
             }
             else
             {
@@ -133,27 +147,53 @@ public class DocumentBackgroundProcessor : BackgroundService
             if (document != null)
             {
                 document.Status = DocumentStatus.Done;
+                document.ErrorMessage = null;
                 document.UpdatedAt = DateTime.UtcNow;
                 unitOfWork.Documents.Update(document);
                 await unitOfWork.SaveChangesAsync(ct);
             }
 
             logger.LogInformation("Document {DocumentId} processed and indexed successfully", request.DocumentId);
+
+            // Plan C3: check Bookworm badge after the doc is marked Done.
+            var badgeService = services.GetService<AIStudyHub.Business.Interfaces.Services.IBadgeService>();
+            if (badgeService is not null && document != null)
+            {
+                try
+                {
+                    var unlocked = await badgeService.EvaluateDocumentBadgeAsync(request.UserId, ct);
+                    if (unlocked.Count > 0)
+                    {
+                        logger.LogInformation("Unlocked {Count} document badge(s) for user {UserId}", unlocked.Count, request.UserId);
+                    }
+                }
+                catch (Exception badgeEx)
+                {
+                    logger.LogWarning(badgeEx, "Badge evaluation failed for user {UserId} on document {DocumentId}", request.UserId, request.DocumentId);
+                }
+            }
+
+            // Spec v4.0 / Module 2 (Pure REST API): no SignalR. Frontend re-fetches
+            // /api/Document/{id} or /api/Document?status=Failed after navigation
+            // and picks up the updated Status + ErrorMessage from SQL.
         }
         catch (Exception ex)
         {
-            // Mark document as failed
+            // Mark document as failed and persist the error message (Plan A.8)
             var document = await unitOfWork.Documents.GetByIdAsync(request.DocumentId, ct);
             if (document != null)
             {
                 document.Status = DocumentStatus.Failed;
+                document.ErrorMessage = $"{ex.GetType().Name}: {ex.Message}";
                 document.UpdatedAt = DateTime.UtcNow;
                 unitOfWork.Documents.Update(document);
                 await unitOfWork.SaveChangesAsync(ct);
             }
-            
+
             logger.LogError(ex, "Failed to process document {DocumentId}", request.DocumentId);
-            throw;
+
+            // No real-time push: frontend will pick up the Failed status + ErrorMessage
+            // on the next /api/Document fetch.
         }
     }
 

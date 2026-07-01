@@ -94,6 +94,7 @@ internal sealed class TierMembershipConfiguration : IEntityTypeConfiguration<Tie
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).HasColumnName("tier_id");
         builder.Property(x => x.TierName).HasColumnName("tier_name").HasMaxLength(50).IsRequired();
+        builder.Property(x => x.Price).HasColumnName("price").HasColumnType("decimal(18,0)").IsRequired();
         builder.Property(x => x.StorageLimitMb).HasColumnName("storage_limit_mb").IsRequired();
         builder.Property(x => x.AiTokens).HasColumnName("ai_tokens").IsRequired();
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
@@ -118,6 +119,8 @@ internal sealed class DocumentConfiguration : IEntityTypeConfiguration<Document>
         builder.Property(x => x.SharedUsers).HasColumnName("shared_users");
         builder.Property(x => x.ShareStatus).HasColumnName("share_status").HasMaxLength(20).HasDefaultValue("private");
         builder.Property(x => x.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(20);
+        builder.Property(x => x.IsNonFlaggable).HasColumnName("is_non_flaggable").HasDefaultValue(false);
+        builder.Property(x => x.ErrorMessage).HasColumnName("error_message");
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.User).WithMany(x => x.Documents).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
@@ -154,11 +157,21 @@ internal sealed class ReportConfiguration : IEntityTypeConfiguration<Report>
         builder.Property(x => x.Id).HasColumnName("report_id");
         builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
         builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
+        builder.Property(x => x.Category).HasColumnName("category").HasSentinel((ReportCategory)(-1)).IsRequired();
         builder.Property(x => x.Reason).HasColumnName("reason");
+        builder.Property(x => x.Status).HasColumnName("status").HasSentinel((ReportStatus)(-1)).IsRequired();
+        builder.Property(x => x.ResolvedBy).HasColumnName("resolved_by");
+        builder.Property(x => x.ResolvedAt).HasColumnName("resolved_at").HasColumnType("datetime2");
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.User).WithMany(x => x.Reports).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.Document).WithMany(x => x.Reports).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne(x => x.ResolvedByUser).WithMany().HasForeignKey(x => x.ResolvedBy).OnDelete(DeleteBehavior.Restrict);
+        
+        builder.HasIndex(x => new { x.UserId, x.DocumentId })
+               .IsUnique()
+               .HasDatabaseName("IX_Reports_UserId_DocumentId_Pending")
+               .HasFilter("status = 1");
     }
 }
 
@@ -175,6 +188,105 @@ internal sealed class FlashcardConfiguration : IEntityTypeConfiguration<Flashcar
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.Document).WithMany(x => x.Flashcards).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+internal sealed class FlashcardReviewConfiguration : IEntityTypeConfiguration<FlashcardReview>
+{
+    public void Configure(EntityTypeBuilder<FlashcardReview> builder)
+    {
+        builder.ToTable("FlashcardReviews");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("review_id");
+        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.FlashcardId).HasColumnName("card_id").IsRequired();
+        builder.Property(x => x.EaseFactor).HasColumnName("ease_factor").IsRequired();
+        builder.Property(x => x.Interval).HasColumnName("interval_days").IsRequired();
+        builder.Property(x => x.Repetitions).HasColumnName("repetitions").IsRequired();
+        builder.Property(x => x.NextReviewDate).HasColumnName("next_review_date").HasColumnType("datetime").IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+
+        // One review row per (user, flashcard)
+        builder.HasIndex(x => new { x.UserId, x.FlashcardId }).IsUnique();
+
+        // Hot path: "due today" query
+        builder.HasIndex(x => new { x.UserId, x.NextReviewDate });
+
+        builder.HasOne(x => x.User)
+            .WithMany()
+            .HasForeignKey(x => x.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(x => x.Flashcard)
+            .WithMany()
+            .HasForeignKey(x => x.FlashcardId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+internal sealed class UserStatsConfiguration : IEntityTypeConfiguration<UserStats>
+{
+    public void Configure(EntityTypeBuilder<UserStats> builder)
+    {
+        builder.ToTable("UserStats");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("stats_id");
+        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.TotalXp).HasColumnName("total_xp").HasDefaultValue(0);
+        builder.Property(x => x.CurrentLevel).HasColumnName("current_level").HasDefaultValue(1);
+        builder.Property(x => x.CurrentStreak).HasColumnName("current_streak").HasDefaultValue(0);
+        builder.Property(x => x.BestStreak).HasColumnName("best_streak").HasDefaultValue(0);
+        builder.Property(x => x.LastActivityDate).HasColumnName("last_activity_date").HasColumnType("datetime");
+        builder.Property(x => x.TotalStudySeconds).HasColumnName("total_study_seconds").HasDefaultValue(0);
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+
+        // One row per user
+        builder.HasIndex(x => x.UserId).IsUnique();
+
+        // Leaderboard index
+        builder.HasIndex(x => new { x.CurrentLevel, x.TotalXp });
+
+        builder.HasOne(x => x.User)
+            .WithMany()
+            .HasForeignKey(x => x.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+internal sealed class StudyLogConfiguration : IEntityTypeConfiguration<StudyLog>
+{
+    public void Configure(EntityTypeBuilder<StudyLog> builder)
+    {
+        builder.ToTable("StudyLogs");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("log_id");
+        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.ActivityType).HasColumnName("activity_type").HasConversion<int>().IsRequired();
+        builder.Property(x => x.DocumentId).HasColumnName("doc_id");
+        builder.Property(x => x.SubjectCode).HasColumnName("subject_code").HasMaxLength(20);
+        builder.Property(x => x.IsCorrect).HasColumnName("is_correct").HasDefaultValue(false);
+        builder.Property(x => x.TimeSpentSeconds).HasColumnName("time_spent_seconds");
+        builder.Property(x => x.XpEarned).HasColumnName("xp_earned").HasDefaultValue(0);
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+
+        // Hot path: GROUP BY subject per user (mastery analytics)
+        builder.HasIndex(x => new { x.UserId, x.SubjectCode });
+
+        // Time-range scans (charts, daily streaks)
+        builder.HasIndex(x => new { x.UserId, x.CreatedAt });
+
+        builder.HasOne(x => x.User)
+            .WithMany()
+            .HasForeignKey(x => x.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(x => x.Document)
+            .WithMany()
+            .HasForeignKey(x => x.DocumentId)
+            .OnDelete(DeleteBehavior.SetNull);
     }
 }
 
@@ -310,5 +422,53 @@ internal sealed class ChatMessageConfiguration : IEntityTypeConfiguration<ChatMe
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.ChatSession).WithMany(x => x.ChatMessages).HasForeignKey(x => x.ChatSessionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+internal sealed class BadgeConfiguration : IEntityTypeConfiguration<Badge>
+{
+    public void Configure(EntityTypeBuilder<Badge> builder)
+    {
+        builder.ToTable("Badge");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("badge_id");
+        builder.Property(x => x.Code).HasColumnName("code").HasMaxLength(50).IsRequired();
+        builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(255).IsRequired();
+        builder.Property(x => x.Description).HasColumnName("description").IsRequired();
+        builder.Property(x => x.Category).HasColumnName("category").HasMaxLength(50).IsRequired();
+        builder.Property(x => x.TargetValue).HasColumnName("target_value").HasColumnType("decimal(18,2)");
+        builder.Property(x => x.IconUrl).HasColumnName("icon_url").HasMaxLength(500);
+        builder.Property(x => x.XpReward).HasColumnName("xp_reward").HasDefaultValue(0);
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+        builder.HasIndex(x => x.Code).IsUnique();
+    }
+}
+
+internal sealed class UserBadgeConfiguration : IEntityTypeConfiguration<UserBadge>
+{
+    public void Configure(EntityTypeBuilder<UserBadge> builder)
+    {
+        builder.ToTable("UserBadge");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("user_badge_id");
+        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.BadgeId).HasColumnName("badge_id").IsRequired();
+        builder.Property(x => x.EarnedDate).HasColumnName("earned_date").HasColumnType("datetime");
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+
+        // Idempotency: a user can earn a given badge at most once
+        builder.HasIndex(x => new { x.UserId, x.BadgeId }).IsUnique();
+
+        builder.HasOne(x => x.User)
+            .WithMany()
+            .HasForeignKey(x => x.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(x => x.Badge)
+            .WithMany(x => x.UserBadges)
+            .HasForeignKey(x => x.BadgeId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

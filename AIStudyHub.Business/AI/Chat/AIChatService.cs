@@ -17,18 +17,18 @@ public sealed class AIChatService : IAIChatService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
-    private readonly ILocalAIService _localAIService;
+    private readonly IOpenAIService _openAIService;
     private readonly ISemanticKernelOrchestrator _orchestrator;
     
     public AIChatService(
         IUnitOfWork unitOfWork,
         IMapper mapper,
-        ILocalAIService openAiService,
+        IOpenAIService openAiService,
         ISemanticKernelOrchestrator orchestrator)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
-        _localAIService = openAiService;
+        _openAIService = openAiService;
         _orchestrator = orchestrator;
     }
 
@@ -85,7 +85,7 @@ public sealed class AIChatService : IAIChatService
 
     public async Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request, Guid userId, CancellationToken ct = default)
     {
-        ChatSession session;
+        ChatSession? session;
         if (!request.SessionId.HasValue)
         {
             var title = request.Message.Length > 50 ? request.Message.Substring(0, 47) + "..." : request.Message;
@@ -101,7 +101,7 @@ public sealed class AIChatService : IAIChatService
         else
         {
             session = await _unitOfWork.ChatSessions.GetByIdAsync(request.SessionId.Value);
-            if (session == null || session.UserId != userId)
+            if (session is null || session.UserId != userId)
             {
                 throw new KeyNotFoundException($"Chat session with ID {request.SessionId} not found or access denied.");
             }
@@ -143,7 +143,7 @@ public sealed class AIChatService : IAIChatService
         {
             var historyText = string.Join("\n", history.Select(m => $"{m.Sender}: {m.Content}"));
             var prompt = $"CHAT HISTORY:\n{historyText}\n\nUSER: {request.Message}\nASSISTANT:";
-            aiResponse = await _localAIService.SendMessageAsync(prompt) ?? "Xin lỗi, tôi không thể trả lời lúc này.";
+            aiResponse = await _openAIService.SendMessageAsync(prompt) ?? "Xin lỗi, tôi không thể trả lời lúc này.";
         }
 
         var assistantMessage = new ChatMessage

@@ -1,33 +1,22 @@
-using AIStudyHub.Business.AI.LLM;
-using AIStudyHub.Business.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.AI.LLM;
-using System.Text;
-using System.Text.Json;
-using AIStudyHub.Business.Interfaces.Services;
-using AIStudyHub.Business.Options;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace AIStudyHub.Business.AI.VectorStore;
 
 public sealed class EmbeddingService : IEmbeddingService
 {
     private readonly HttpClient _httpClient;
-    private readonly ILocalAIService _localAIService;
-    private readonly RagOptions _options;
+    private readonly IOpenAIService _openAIService;
     private readonly ILogger<EmbeddingService> _logger;
-    private int? _cachedDimension;
 
     public EmbeddingService(
         IHttpClientFactory httpClientFactory,
-        IOptions<RagOptions> options,
-        ILocalAIService openAIService,
+        IOpenAIService openAIService,
         ILogger<EmbeddingService> logger)
     {
         _httpClient = httpClientFactory.CreateClient("EmbeddingClient");
-        _localAIService = openAIService;
-        _options = options.Value;
+        _openAIService = openAIService;
         _logger = logger;
     }
 
@@ -39,13 +28,6 @@ public sealed class EmbeddingService : IEmbeddingService
 
     public async Task<List<float[]>> GenerateEmbeddingsAsync(List<string> texts)
     {
-        return await _localAIService.CreateEmbeddingsFromTexts(texts);
+        return await _openAIService.CreateEmbeddingsFromTexts(texts);
     }
-
-    public int GetEmbeddingDimension()
-    {
-        return 10;
-    }
-
-
 }

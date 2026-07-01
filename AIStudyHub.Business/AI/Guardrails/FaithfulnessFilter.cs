@@ -1,18 +1,14 @@
 using AIStudyHub.Business.Interfaces.AI.Guardrails;
-using AIStudyHub.Business.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace AIStudyHub.Business.AI.Guardrails;
 
 public class FaithfulnessFilter : IFaithfulnessFilter
 {
-    private readonly GuardrailsOptions _options;
     private readonly ILogger<FaithfulnessFilter> _logger;
 
-    public FaithfulnessFilter(IOptions<GuardrailsOptions> options, ILogger<FaithfulnessFilter> logger)
+    public FaithfulnessFilter(ILogger<FaithfulnessFilter> logger)
     {
-        _options = options.Value;
         _logger = logger;
     }
 

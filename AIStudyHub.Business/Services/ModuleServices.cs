@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using AIStudyHub.Business.DTOs.Answers;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Flashcards;
+using AIStudyHub.Business.DTOs.Gamification;
 using AIStudyHub.Business.DTOs.Notifications;
 using AIStudyHub.Business.DTOs.Payments;
 using AIStudyHub.Business.DTOs.Questions;
@@ -16,6 +17,7 @@ using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 
 namespace AIStudyHub.Business.Services;
@@ -74,6 +76,7 @@ public sealed class DocumentService : IDocumentService
             d.SharedUsers,
             d.ShareStatus,
             d.Status,
+            d.ErrorMessage,
             d.Votes.Sum(v => v.Type == AIStudyHub.Data.Enums.VoteType.Upvote ? 1 : -1),
             d.CreatedAt,
             d.UpdatedAt
@@ -105,6 +108,7 @@ public sealed class DocumentService : IDocumentService
             d.SharedUsers,
             d.ShareStatus,
             d.Status,
+            d.ErrorMessage,
             d.Votes.Count,
             d.CreatedAt,
             d.UpdatedAt)).ToList();
@@ -147,6 +151,7 @@ public sealed class DocumentService : IDocumentService
             d.SharedUsers,
             d.ShareStatus,
             d.Status,
+            d.ErrorMessage,
             d.Votes.Count,
             d.CreatedAt,
             d.UpdatedAt)).ToList();
@@ -177,6 +182,7 @@ public sealed class DocumentService : IDocumentService
             document.SharedUsers,
             document.ShareStatus,
             document.Status,
+            document.ErrorMessage,
             document.Votes.Count,
             document.CreatedAt,
             document.UpdatedAt);
@@ -321,6 +327,18 @@ public sealed class VoteService : IVoteService
         return vote is null ? null : _mapper.Map<VoteResponseDto>(vote);
     }
 
+    public async Task<VoteResponseDto?> GetByUserAndDocumentAsync(Guid userId, Guid documentId, CancellationToken cancellationToken = default)
+    {
+        var vote = await _unitOfWork.Votes
+            .Query()
+            .Include(v => v.User)
+            .Include(v => v.Document)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(v => v.UserId == userId && v.DocumentId == documentId, cancellationToken);
+
+        return vote is null ? null : _mapper.Map<VoteResponseDto>(vote);
+    }
+
     public async Task<VoteResponseDto> CreateVoteAsync(Guid userId, Guid documentId, VoteType type, CancellationToken cancellationToken = default)
     {
         var existing = await _unitOfWork.Votes
@@ -360,34 +378,6 @@ public sealed class VoteService : IVoteService
         return _mapper.Map<VoteResponseDto>(created);
     }
 
-    public async Task<VoteResponseDto> CreateAsync(CreateVoteRequestDto request, CancellationToken cancellationToken = default)
-    {
-        throw new NotSupportedException("Use CreateVoteAsync with explicit userId for security.");
-    }
-
-    public async Task<VoteResponseDto> UpdateAsync(Guid id, UpdateVoteRequestDto request, CancellationToken cancellationToken = default)
-    {
-        var vote = await _unitOfWork.Votes.GetByIdAsync(id, cancellationToken);
-        if (vote is null)
-        {
-            throw new KeyNotFoundException($"Vote with ID {id} not found.");
-        }
-
-        vote.Type = request.Type;
-        vote.UpdatedAt = DateTime.UtcNow;
-        _unitOfWork.Votes.Update(vote);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var updated = await _unitOfWork.Votes
-            .Query()
-            .Include(v => v.User)
-            .Include(v => v.Document)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(v => v.Id == id, cancellationToken);
-
-        return _mapper.Map<VoteResponseDto>(updated);
-    }
-
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var vote = await _unitOfWork.Votes.GetByIdAsync(id, cancellationToken);
@@ -418,6 +408,7 @@ public sealed class ReportService : IReportService
             .Query()
             .Include(r => r.User)
             .Include(r => r.Document)
+            .Include(r => r.ResolvedByUser)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
@@ -430,35 +421,120 @@ public sealed class ReportService : IReportService
             .Query()
             .Include(r => r.User)
             .Include(r => r.Document)
+            .Include(r => r.ResolvedByUser)
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 
         return report is null ? null : _mapper.Map<ReportResponseDto>(report);
     }
 
-    public async Task<ReportResponseDto> CreateAsync(CreateReportRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<ReportResponseDto> CreateWithUserIdAsync(CreateReportRequestDto request, Guid userId, CancellationToken cancellationToken = default)
     {
-        var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
-        if (!documentExists)
+        var document = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken);
+        if (document is null)
         {
             throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
         }
 
-        var report = _mapper.Map<Data.Entities.Report>(request);
+        if (document.IsNonFlaggable)
+        {
+            throw new InvalidOperationException("This document is marked as non-flaggable.");
+        }
+
+        var existingPending = await _unitOfWork.Reports.Query()
+            .AnyAsync(r => r.UserId == userId && r.DocumentId == request.DocumentId && r.Status == AIStudyHub.Data.Enums.ReportStatus.Pending, cancellationToken);
+        if (existingPending)
+        {
+            throw new InvalidOperationException("You already have a pending report for this document.");
+        }
+
+        var report = new Data.Entities.Report
+        {
+            UserId = userId,
+            DocumentId = request.DocumentId,
+            Category = (AIStudyHub.Data.Enums.ReportCategory)request.Category,
+            Reason = request.Reason,
+            Status = AIStudyHub.Data.Enums.ReportStatus.Pending
+        };
+
         await _unitOfWork.Reports.AddAsync(report, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var created = await _unitOfWork.Reports
-            .Query()
+        var created = await _unitOfWork.Reports.Query()
             .Include(r => r.User)
             .Include(r => r.Document)
+            .Include(r => r.ResolvedByUser)
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == report.Id, cancellationToken);
 
         return _mapper.Map<ReportResponseDto>(created);
     }
 
-    public async Task<ReportResponseDto> UpdateAsync(Guid id, UpdateReportRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<ReportResponseDto>> GetMyReportsAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var reports = await _unitOfWork.Reports.Query()
+            .Include(r => r.User)
+            .Include(r => r.Document)
+            .Include(r => r.ResolvedByUser)
+            .Where(r => r.UserId == userId)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return reports.Select(_mapper.Map<ReportResponseDto>).ToList();
+    }
+
+    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<ReportResponseDto>> SearchAsync(ReportFilterDto filter, CancellationToken cancellationToken = default)
+    {
+        var query = _unitOfWork.Reports.Query()
+            .Include(r => r.User)
+            .Include(r => r.Document)
+            .Include(r => r.ResolvedByUser)
+            .AsNoTracking();
+
+        if (filter.Status.HasValue)
+        {
+            var statusEntity = (AIStudyHub.Data.Enums.ReportStatus)filter.Status.Value;
+            query = query.Where(r => r.Status == statusEntity);
+        }
+
+        if (filter.DocumentId.HasValue)
+        {
+            query = query.Where(r => r.DocumentId == filter.DocumentId.Value);
+        }
+
+        if (filter.UserId.HasValue)
+        {
+            query = query.Where(r => r.UserId == filter.UserId.Value);
+        }
+
+        if (filter.FromDate.HasValue)
+        {
+            query = query.Where(r => r.CreatedAt >= filter.FromDate.Value);
+        }
+
+        if (filter.ToDate.HasValue)
+        {
+            query = query.Where(r => r.CreatedAt <= filter.ToDate.Value);
+        }
+
+        var total = await query.CountAsync(cancellationToken);
+        
+        var items = await query
+            .OrderByDescending(r => r.CreatedAt)
+            .Skip((filter.Page - 1) * filter.PageSize)
+            .Take(filter.PageSize)
+            .ToListAsync(cancellationToken);
+
+        return new AIStudyHub.Business.DTOs.Common.PagedResultDto<ReportResponseDto>
+        {
+            Items = items.Select(_mapper.Map<ReportResponseDto>).ToList(),
+            TotalCount = total,
+            Offset = (filter.Page - 1) * filter.PageSize,
+            Limit = filter.PageSize
+        };
+    }
+
+    public async Task<ReportResponseDto> UpdateStatusAsync(Guid id, ReportStatusDto status, Guid adminUserId, CancellationToken cancellationToken = default)
     {
         var report = await _unitOfWork.Reports.GetByIdAsync(id, cancellationToken);
         if (report is null)
@@ -466,18 +542,190 @@ public sealed class ReportService : IReportService
             throw new KeyNotFoundException($"Report with ID {id} not found.");
         }
 
-        _mapper.Map(request, report);
+        var newStatus = (AIStudyHub.Data.Enums.ReportStatus)status;
+
+        // Optimistic concurrency check (since it's not a real RowVersion, we simulate by ensuring state is valid)
+        if (report.Status == AIStudyHub.Data.Enums.ReportStatus.Resolved || report.Status == AIStudyHub.Data.Enums.ReportStatus.Rejected)
+        {
+            throw new InvalidOperationException("Cannot update a report that is already Resolved or Rejected.");
+        }
+        
+        if (newStatus == AIStudyHub.Data.Enums.ReportStatus.Pending)
+        {
+            throw new InvalidOperationException("Cannot transition back to Pending.");
+        }
+        if (newStatus == AIStudyHub.Data.Enums.ReportStatus.Resolved || newStatus == AIStudyHub.Data.Enums.ReportStatus.Rejected)
+        {
+            if (report.Status != AIStudyHub.Data.Enums.ReportStatus.Reviewed)
+            {
+                throw new InvalidOperationException("Must transition to Reviewed before Resolved/Rejected.");
+            }
+        }
+
+        report.Status = newStatus;
+        report.ResolvedBy = adminUserId;
+        report.ResolvedAt = DateTime.UtcNow;
+
         _unitOfWork.Reports.Update(report);
+        
+        // Add Notification
+        var message = $"Your report for Document has been updated to {newStatus}.";
+        await _unitOfWork.Notifications.AddAsync(new Data.Entities.Notification
+        {
+            UserId = report.UserId,
+            Message = message,
+            IsRead = false
+        }, cancellationToken);
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var updated = await _unitOfWork.Reports
-            .Query()
+        var updated = await _unitOfWork.Reports.Query()
             .Include(r => r.User)
             .Include(r => r.Document)
+            .Include(r => r.ResolvedByUser)
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 
         return _mapper.Map<ReportResponseDto>(updated);
+    }
+
+    public async Task<int> MarkDocumentNonFlaggableAsync(Guid documentId, Guid adminUserId, CancellationToken cancellationToken = default)
+    {
+        var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken);
+        if (document is null)
+        {
+            throw new KeyNotFoundException($"Document with ID {documentId} not found.");
+        }
+
+        if (document.IsNonFlaggable) return 0; // Already marked
+
+        document.IsNonFlaggable = true;
+        _unitOfWork.Documents.Update(document);
+
+        // Reject all pending/reviewed reports
+        var pendingReports = await _unitOfWork.Reports.Query()
+            .Where(r => r.DocumentId == documentId && (r.Status == AIStudyHub.Data.Enums.ReportStatus.Pending || r.Status == AIStudyHub.Data.Enums.ReportStatus.Reviewed))
+            .ToListAsync(cancellationToken);
+
+        foreach (var report in pendingReports)
+        {
+            report.Status = AIStudyHub.Data.Enums.ReportStatus.Rejected;
+            report.ResolvedBy = adminUserId;
+            report.ResolvedAt = DateTime.UtcNow;
+            _unitOfWork.Reports.Update(report);
+        }
+
+        // Add Notification deduplicated by Reporter (each user gets 1 notification)
+        var userIdsToNotify = pendingReports.Select(r => r.UserId).Distinct().ToList();
+        foreach (var userId in userIdsToNotify)
+        {
+            await _unitOfWork.Notifications.AddAsync(new Data.Entities.Notification
+            {
+                UserId = userId,
+                Message = "Your report(s) were rejected because the document was verified as legitimate.",
+                IsRead = false
+            }, cancellationToken);
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        return pendingReports.Count;
+    }
+
+    public async Task<BulkReportStatusResultDto> BulkUpdateStatusAsync(IReadOnlyList<Guid> ids, ReportStatusDto status, Guid adminUserId, CancellationToken cancellationToken = default)
+    {
+        var newStatus = (AIStudyHub.Data.Enums.ReportStatus)status;
+        var reports = await _unitOfWork.Reports.Query()
+            .Where(r => ids.Contains(r.Id))
+            .ToListAsync(cancellationToken);
+
+        int updated = 0;
+        var failed = new List<BulkFailureDto>();
+        var userIdsToNotify = new HashSet<Guid>();
+
+        foreach (var report in reports)
+        {
+            if (report.Status == AIStudyHub.Data.Enums.ReportStatus.Resolved || report.Status == AIStudyHub.Data.Enums.ReportStatus.Rejected)
+            {
+                failed.Add(new BulkFailureDto(report.Id, "Already resolved/rejected."));
+                continue;
+            }
+            if (newStatus == AIStudyHub.Data.Enums.ReportStatus.Pending)
+            {
+                failed.Add(new BulkFailureDto(report.Id, "Cannot revert to Pending."));
+                continue;
+            }
+            if ((newStatus == AIStudyHub.Data.Enums.ReportStatus.Resolved || newStatus == AIStudyHub.Data.Enums.ReportStatus.Rejected) && report.Status != AIStudyHub.Data.Enums.ReportStatus.Reviewed)
+            {
+                failed.Add(new BulkFailureDto(report.Id, "Must be Reviewed first."));
+                continue;
+            }
+
+            report.Status = newStatus;
+            report.ResolvedBy = adminUserId;
+            report.ResolvedAt = DateTime.UtcNow;
+            _unitOfWork.Reports.Update(report);
+            userIdsToNotify.Add(report.UserId);
+            updated++;
+        }
+
+        foreach (var userId in userIdsToNotify)
+        {
+            await _unitOfWork.Notifications.AddAsync(new Data.Entities.Notification
+            {
+                UserId = userId,
+                Message = $"One or more of your reports have been updated to {newStatus}.",
+                IsRead = false
+            }, cancellationToken);
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        return new BulkReportStatusResultDto(updated, failed);
+    }
+
+    public async Task<BulkMarkNonFlaggableResultDto> BulkMarkNonFlaggableAsync(IReadOnlyList<Guid> documentIds, Guid adminUserId, CancellationToken cancellationToken = default)
+    {
+        int totalDocuments = 0;
+        int totalReportsRejected = 0;
+
+        foreach (var docId in documentIds)
+        {
+            var document = await _unitOfWork.Documents.GetByIdAsync(docId, cancellationToken);
+            if (document != null && !document.IsNonFlaggable)
+            {
+                document.IsNonFlaggable = true;
+                _unitOfWork.Documents.Update(document);
+                totalDocuments++;
+
+                var pendingReports = await _unitOfWork.Reports.Query()
+                    .Where(r => r.DocumentId == docId && (r.Status == AIStudyHub.Data.Enums.ReportStatus.Pending || r.Status == AIStudyHub.Data.Enums.ReportStatus.Reviewed))
+                    .ToListAsync(cancellationToken);
+
+                var distinctUsers = new HashSet<Guid>();
+                foreach (var report in pendingReports)
+                {
+                    report.Status = AIStudyHub.Data.Enums.ReportStatus.Rejected;
+                    report.ResolvedBy = adminUserId;
+                    report.ResolvedAt = DateTime.UtcNow;
+                    _unitOfWork.Reports.Update(report);
+                    distinctUsers.Add(report.UserId);
+                    totalReportsRejected++;
+                }
+
+                foreach (var userId in distinctUsers)
+                {
+                    await _unitOfWork.Notifications.AddAsync(new Data.Entities.Notification
+                    {
+                        UserId = userId,
+                        Message = "Your report(s) were rejected because the document was verified as legitimate.",
+                        IsRead = false
+                    }, cancellationToken);
+                }
+            }
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        return new BulkMarkNonFlaggableResultDto(totalDocuments, totalReportsRejected);
     }
 
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
@@ -486,6 +734,11 @@ public sealed class ReportService : IReportService
         if (report is null)
         {
             throw new KeyNotFoundException($"Report with ID {id} not found.");
+        }
+
+        if (report.Status == AIStudyHub.Data.Enums.ReportStatus.Pending)
+        {
+            throw new InvalidOperationException("Cannot delete a report that is Pending (Audit Trail intact).");
         }
 
         _unitOfWork.Reports.Remove(report);
@@ -818,6 +1071,20 @@ public sealed class QuestionService : IQuestionService
         return question is null ? null : _mapper.Map<QuestionResponseDto>(question);
     }
 
+    public async Task<IReadOnlyList<QuestionResponseDto>> GetByQuizIdAsync(Guid quizId, CancellationToken cancellationToken = default)
+    {
+        var questions = await _unitOfWork.Questions
+            .Query()
+            .Include(q => q.Quiz)
+            .Include(q => q.Answers)
+            .Where(q => q.QuizId == quizId)
+            .OrderBy(q => q.Position)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return questions.Select(_mapper.Map<QuestionResponseDto>).ToList();
+    }
+
     public async Task<QuestionResponseDto> CreateAsync(CreateQuestionRequestDto request, CancellationToken cancellationToken = default)
     {
         var quizExists = await _unitOfWork.Quizzes.GetByIdAsync(request.QuizId, cancellationToken) is not null;
@@ -906,46 +1173,16 @@ public sealed class AnswerService : IAnswerService
         return answer is null ? null : _mapper.Map<AnswerResponseDto>(answer);
     }
 
-    public async Task<AnswerResponseDto> CreateAsync(CreateAnswerRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<AnswerResponseDto>> GetByQuestionIdAsync(Guid questionId, CancellationToken cancellationToken = default)
     {
-        var questionExists = await _unitOfWork.Questions.GetByIdAsync(request.QuestionId, cancellationToken) is not null;
-        if (!questionExists)
-        {
-            throw new KeyNotFoundException($"Question with ID {request.QuestionId} not found.");
-        }
-
-        var answer = _mapper.Map<Data.Entities.Answer>(request);
-        await _unitOfWork.Answers.AddAsync(answer, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var created = await _unitOfWork.Answers
+        var answers = await _unitOfWork.Answers
             .Query()
             .Include(a => a.Question)
+            .Where(a => a.QuestionId == questionId)
             .AsNoTracking()
-            .FirstOrDefaultAsync(a => a.Id == answer.Id, cancellationToken);
+            .ToListAsync(cancellationToken);
 
-        return _mapper.Map<AnswerResponseDto>(created);
-    }
-
-    public async Task<AnswerResponseDto> UpdateAsync(Guid id, UpdateAnswerRequestDto request, CancellationToken cancellationToken = default)
-    {
-        var answer = await _unitOfWork.Answers.GetByIdAsync(id, cancellationToken);
-        if (answer is null)
-        {
-            throw new KeyNotFoundException($"Answer with ID {id} not found.");
-        }
-
-        _mapper.Map(request, answer);
-        _unitOfWork.Answers.Update(answer);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var updated = await _unitOfWork.Answers
-            .Query()
-            .Include(a => a.Question)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(a => a.Id == id, cancellationToken);
-
-        return _mapper.Map<AnswerResponseDto>(updated);
+        return answers.Select(_mapper.Map<AnswerResponseDto>).ToList();
     }
 
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
@@ -965,11 +1202,20 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
+    private readonly AIStudyHub.Business.Interfaces.Services.IGamificationService? _gamificationService;
+    private readonly AIStudyHub.Business.Interfaces.Services.IBadgeService? _badgeService;
+    private readonly ILogger<QuizSubmissionService>? _logger;
 
-    public QuizSubmissionService(IUnitOfWork unitOfWork, IMapper mapper)
+    public QuizSubmissionService(IUnitOfWork unitOfWork, IMapper mapper,
+        AIStudyHub.Business.Interfaces.Services.IGamificationService? gamificationService = null,
+        AIStudyHub.Business.Interfaces.Services.IBadgeService? badgeService = null,
+        ILogger<QuizSubmissionService>? logger = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _gamificationService = gamificationService;
+        _badgeService = badgeService;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<QuizSubmissionResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -994,6 +1240,20 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             .FirstOrDefaultAsync(qs => qs.Id == id, cancellationToken);
 
         return submission is null ? null : _mapper.Map<QuizSubmissionResponseDto>(submission);
+    }
+
+    public async Task<IReadOnlyList<QuizSubmissionResponseDto>> GetByUserAndQuizAsync(Guid userId, Guid quizId, CancellationToken cancellationToken = default)
+    {
+        var submissions = await _unitOfWork.QuizSubmissions
+            .Query()
+            .Include(qs => qs.User)
+            .Include(qs => qs.Quiz)
+            .Where(qs => qs.UserId == userId && qs.QuizId == quizId)
+            .OrderByDescending(qs => qs.SubmittedAt)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return submissions.Select(_mapper.Map<QuizSubmissionResponseDto>).ToList();
     }
 
     public async Task<QuizSubmissionResponseDto> CreateAsync(CreateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
@@ -1062,26 +1322,78 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
         return _mapper.Map<QuizSubmissionResponseDto>(created);
     }
 
-    public async Task<QuizSubmissionResponseDto> UpdateAsync(Guid id, UpdateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Plan C3 / B.4.5 — submit a quiz attempt and return the saved submission plus
+    /// any badges the user just unlocked (Sharpshooter, Math Prodigy).
+    /// Prefer this over <see cref="CreateAsync"/> for the user-facing endpoint.
+    /// </summary>
+    public async Task<SubmitQuizResultDto> SubmitAsync(CreateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
     {
-        var submission = await _unitOfWork.QuizSubmissions.GetByIdAsync(id, cancellationToken);
-        if (submission is null)
+        var submission = await CreateAsync(request, cancellationToken);
+
+        // Plan C4 / Spec v4.0: award XP here (moved out of CreateAsync) and surface
+        // the actual XpEarned in the response so the UI can celebrate without an
+        // extra round-trip to /api/Gamification/stats.
+        int xpEarned = 0;
+        if (_gamificationService is not null && submission.MaxScore > 0)
         {
-            throw new KeyNotFoundException($"Quiz submission with ID {id} not found.");
+            try
+            {
+                var quiz = await _unitOfWork.Quizzes.GetByIdAsync(submission.QuizId, cancellationToken);
+                if (quiz is not null)
+                {
+                    var documentId = quiz.DocumentId;
+                    var subjectCode = await _unitOfWork.Documents.Query()
+                        .Where(d => d.Id == documentId)
+                        .Select(d => d.Subject.SubjectCode)
+                        .FirstOrDefaultAsync(cancellationToken);
+
+                    var allCorrect = submission.TotalCorrect == submission.MaxScore;
+                    var xpResult = await _gamificationService.AwardXpAsync(
+                        new AIStudyHub.Business.DTOs.Gamification.XpAwardRequest(
+                            UserId: submission.UserId,
+                            XpEarned: 0, // computed inside service
+                            IsCorrect: allCorrect,
+                            ActivityType: AIStudyHub.Data.Enums.ActivityType.QuizSubmission,
+                            DocumentId: documentId,
+                            SubjectCode: subjectCode,
+                            TimeSpentSeconds: request.DurationSeconds),
+                        cancellationToken);
+
+                    if (xpResult is { Success: true, Data: not null })
+                    {
+                        xpEarned = xpResult.Data.XpEarned;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Gamification XP award failed for user {UserId}, submission {SubmissionId}", submission.UserId, submission.Id);
+                // Swallow: quiz was already graded and saved.
+            }
         }
 
-        _mapper.Map(request, submission);
-        _unitOfWork.QuizSubmissions.Update(submission);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        IReadOnlyList<AchievementDto> unlocked = Array.Empty<AchievementDto>();
+        if (_badgeService is not null)
+        {
+            try
+            {
+                var entity = await _unitOfWork.QuizSubmissions.Query()
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(q => q.Id == submission.Id, cancellationToken);
 
-        var updated = await _unitOfWork.QuizSubmissions
-            .Query()
-            .Include(qs => qs.User)
-            .Include(qs => qs.Quiz)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(qs => qs.Id == id, cancellationToken);
+                if (entity is not null)
+                {
+                    unlocked = await _badgeService.EvaluateQuizBadgeAsync(submission.UserId, entity, cancellationToken);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Badge evaluation failed for user {UserId}, submission {SubmissionId}", submission.UserId, submission.Id);
+            }
+        }
 
-        return _mapper.Map<QuizSubmissionResponseDto>(updated);
+        return new SubmitQuizResultDto(submission, xpEarned, unlocked);
     }
 
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
@@ -1128,63 +1440,6 @@ public sealed class NotificationService : INotificationService
             .FirstOrDefaultAsync(n => n.Id == id, cancellationToken);
 
         return notification is null ? null : _mapper.Map<NotificationResponseDto>(notification);
-    }
-
-    public async Task<NotificationResponseDto> CreateAsync(CreateNotificationRequestDto request, CancellationToken cancellationToken = default)
-    {
-        if (!Enum.TryParse<Data.Enums.NotificationType>(request.Type, true, out var notificationType))
-        {
-            notificationType = Data.Enums.NotificationType.System;
-        }
-
-        var notification = new Data.Entities.Notification
-        {
-            Id = Guid.NewGuid(),
-            UserId = request.UserId,
-            Message = request.Message,
-            Type = notificationType,
-            IsRead = false,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        await _unitOfWork.Notifications.AddAsync(notification, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var created = await _unitOfWork.Notifications
-            .Query()
-            .Include(n => n.User)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(n => n.Id == notification.Id, cancellationToken);
-
-        return new NotificationResponseDto(
-            created!.Id,
-            created.UserId,
-            created.Message,
-            created.IsRead,
-            created.Type.ToString(),
-            created.CreatedAt,
-            created.UpdatedAt);
-    }
-
-    public async Task<NotificationResponseDto> UpdateAsync(Guid id, UpdateNotificationRequestDto request, CancellationToken cancellationToken = default)
-    {
-        var notification = await _unitOfWork.Notifications.GetByIdAsync(id, cancellationToken);
-        if (notification is null)
-        {
-            throw new KeyNotFoundException($"Notification with ID {id} not found.");
-        }
-
-        _mapper.Map(request, notification);
-        _unitOfWork.Notifications.Update(notification);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var updated = await _unitOfWork.Notifications
-            .Query()
-            .Include(n => n.User)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(n => n.Id == id, cancellationToken);
-
-        return _mapper.Map<NotificationResponseDto>(updated);
     }
 
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
@@ -1240,6 +1495,14 @@ public sealed class NotificationService : INotificationService
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
+
+    public async Task<int> GetUnreadCountAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        return await _unitOfWork.Notifications
+            .Query()
+            .Where(n => n.UserId == userId && !n.IsRead)
+            .CountAsync(cancellationToken);
+    }
 }
 
 public sealed class PaymentService : IPaymentService
@@ -1247,12 +1510,14 @@ public sealed class PaymentService : IPaymentService
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
     private readonly IVnPayService _vnPayService;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
-    public PaymentService(IUnitOfWork unitOfWork, IMapper mapper, IVnPayService vnPayService)
+    public PaymentService(IUnitOfWork unitOfWork, IMapper mapper, IVnPayService vnPayService, IHttpContextAccessor httpContextAccessor)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _vnPayService = vnPayService;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     public async Task<IReadOnlyList<PaymentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -1279,97 +1544,10 @@ public sealed class PaymentService : IPaymentService
         return payment is null ? null : _mapper.Map<PaymentResponseDto>(payment);
     }
 
-    public async Task<PaymentResponseDto> CreateAsync(CreatePaymentRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<PaymentLinkResponseDto> CreatePaymentUrlAsync(CreatePaymentLinkRequestDto request, CancellationToken cancellationToken = default)
     {
-        if (request.TierId.HasValue)
-        {
-            var tier = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierId.Value, cancellationToken);
-            if (tier is null)
-            {
-                throw new KeyNotFoundException($"Tier membership with ID {request.TierId} not found.");
-            }
-
-            var payment = _mapper.Map<Data.Entities.Payment>(request);
-            await _unitOfWork.Payments.AddAsync(payment, cancellationToken);
-
-            var user = await _unitOfWork.Users.GetByIdAsync(request.UserId, cancellationToken);
-            if (user is not null)
-            {
-                user.TierId = request.TierId.Value;
-                if (!tier.TierName.Equals("Free", StringComparison.OrdinalIgnoreCase))
-                {
-                    user.TierExpireAt = DateTime.UtcNow.AddDays(30);
-                }
-                else
-                {
-                    user.TierExpireAt = null;
-                }
-                _unitOfWork.Users.Update(user);
-            }
-
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-            var created = await _unitOfWork.Payments
-                .Query()
-                .Include(p => p.User)
-                .Include(p => p.TierMembership)
-                .AsNoTracking()
-                .FirstOrDefaultAsync(p => p.Id == payment.Id, cancellationToken);
-
-            return _mapper.Map<PaymentResponseDto>(created);
-        }
-
-        var paymentNoTier = _mapper.Map<Data.Entities.Payment>(request);
-        await _unitOfWork.Payments.AddAsync(paymentNoTier, cancellationToken);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var createdNoTier = await _unitOfWork.Payments
-            .Query()
-            .Include(p => p.User)
-            .Include(p => p.TierMembership)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == paymentNoTier.Id, cancellationToken);
-
-        return _mapper.Map<PaymentResponseDto>(createdNoTier);
-    }
-
-    public async Task<PaymentResponseDto> UpdateAsync(Guid id, UpdatePaymentRequestDto request, CancellationToken cancellationToken = default)
-    {
-        var payment = await _unitOfWork.Payments.GetByIdAsync(id, cancellationToken);
-        if (payment is null)
-        {
-            throw new KeyNotFoundException($"Payment with ID {id} not found.");
-        }
-
-        _mapper.Map(request, payment);
-        _unitOfWork.Payments.Update(payment);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var updated = await _unitOfWork.Payments
-            .Query()
-            .Include(p => p.User)
-            .Include(p => p.TierMembership)
-            .AsNoTracking()
-            .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
-
-        return _mapper.Map<PaymentResponseDto>(updated);
-    }
-
-    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
-    {
-        var payment = await _unitOfWork.Payments.GetByIdAsync(id, cancellationToken);
-        if (payment is null)
-        {
-            throw new KeyNotFoundException($"Payment with ID {id} not found.");
-        }
-
-        _unitOfWork.Payments.Remove(payment);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-    }
-
-    public async Task<PaymentLinkResponseDto> CreatePaymentUrlAsync(CreatePaymentLinkRequestDto request, HttpContext context, CancellationToken cancellationToken = default)
-    {
-        var userIdString = context.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var context = _httpContextAccessor.HttpContext;
+        var userIdString = context?.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
         if (string.IsNullOrEmpty(userIdString) || !Guid.TryParse(userIdString, out var userId))
         {
             throw new UnauthorizedAccessException("User not authenticated or invalid ID.");
@@ -1381,12 +1559,16 @@ public sealed class PaymentService : IPaymentService
             throw new KeyNotFoundException($"Tier with ID {request.TierId} not found.");
         }
 
-        var amount = 100000m; // Default amount for premium tier if not specified in tier entity. Assuming 100k VND
+        if (tier.Price <= 0)
+        {
+            throw new InvalidOperationException($"Tier '{tier.TierName}' does not have a valid price configured.");
+        }
+
         var payment = new Data.Entities.Payment
         {
             UserId = userId,
             TierId = request.TierId,
-            Amount = amount,
+            Amount = tier.Price,
             Status = Data.Enums.PaymentStatus.Pending,
             PaymentInfo = $"Upgrade to {tier.TierName} tier",
             PaymentDate = DateTime.UtcNow
@@ -1395,7 +1577,8 @@ public sealed class PaymentService : IPaymentService
         await _unitOfWork.Payments.AddAsync(payment, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var url = _vnPayService.CreatePaymentUrl(context, payment.Id, payment.Amount, payment.PaymentInfo);
+        var clientIp = context?.Connection?.RemoteIpAddress?.ToString();
+        var url = _vnPayService.CreatePaymentUrl(clientIp!, payment.Id, payment.Amount, payment.PaymentInfo);
         return new PaymentLinkResponseDto(url);
     }
 

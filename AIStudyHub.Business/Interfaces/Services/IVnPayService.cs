@@ -4,6 +4,6 @@ namespace AIStudyHub.Business.Interfaces.Services;
 
 public interface IVnPayService
 {
-    string CreatePaymentUrl(HttpContext context, Guid paymentId, decimal amount, string orderInfo);
+    string CreatePaymentUrl(string clientIp, Guid paymentId, decimal amount, string orderInfo);
     bool ValidateSignature(IQueryCollection query);
 }

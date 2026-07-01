@@ -1,8 +1,10 @@
 using AIStudyHub.Business.Interfaces.AI.Generators;
 using AIStudyHub.Business.AI.Generators;
+using AIStudyHub.Business.AI.Generators.Common;
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.LLM;
+using AIStudyHub.Business.Common;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -19,18 +21,18 @@ namespace AIStudyHub.Business.AI.Generators;
 public sealed class QuizAiService : IQuizAiService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly ILocalAIService _localAiService;
+    private readonly IOpenAIService _openAiService;
     private readonly IVectorStoreService _vectorStoreService;
     private readonly ILogger<QuizAiService> _logger;
 
     public QuizAiService(
         IUnitOfWork unitOfWork,
-        ILocalAIService localAiService,
+        IOpenAIService openAiService,
         IVectorStoreService vectorStoreService,
         ILogger<QuizAiService> logger)
     {
         _unitOfWork = unitOfWork;
-        _localAiService = localAiService;
+        _openAiService = openAiService;
         _vectorStoreService = vectorStoreService;
         _logger = logger;
     }
@@ -242,7 +244,7 @@ IMPORTANT:
             string aiText;
             try
             {
-                aiText = await _localAiService.SendMessageAsync(prompt, 0.2f);
+                aiText = await _openAiService.SendMessageAsync(prompt, 0.2f);
             }
             catch (Exception ex)
             {
@@ -354,61 +356,9 @@ IMPORTANT:
 
     private static List<AiGeneratedQuestionDto> ParseArrayStreaming(string array)
     {
-        var sanitized = Regex.Replace(
-            array, @"[\u0000-\u0008\u000B\u000C\u000E-\u001F]", "");
-
-        var result = new List<AiGeneratedQuestionDto>();
-        var i = 0;
-        while (i < sanitized.Length)
-        {
-            while (i < sanitized.Length && (char.IsWhiteSpace(sanitized[i]) || sanitized[i] == ','))
-                i++;
-            if (i >= sanitized.Length) break;
-
-            if (sanitized[i] != '{') { i++; continue; }
-
-            var objStart = i;
-            var depth = 0;
-            var inString = false;
-            var escape = false;
-            var found = false;
-            for (; i < sanitized.Length; i++)
-            {
-                var c = sanitized[i];
-                if (inString)
-                {
-                    if (escape) { escape = false; continue; }
-                    if (c == '\\') { escape = true; continue; }
-                    if (c == '"') inString = false;
-                    continue;
-                }
-                if (c == '"') { inString = true; continue; }
-                if (c == '{') depth++;
-                else if (c == '}')
-                {
-                    depth--;
-                    if (depth == 0) { found = true; i++; break; }
-                }
-            }
-
-            if (!found) break;
-
-            var slice = sanitized.Substring(objStart, i - objStart);
-            try
-            {
-                using var doc = JsonDocument.Parse(
-                    slice,
-                    new JsonDocumentOptions { AllowTrailingCommas = true });
-
-                result.AddRange(ExtractQuestionsFromArrayElement(
-                    WrapSingleObject(doc.RootElement.Clone())));
-            }
-            catch (JsonException)
-            {
-                // Skip broken element.
-            }
-        }
-        return result;
+        return BatchParsingHelpers.ParseArrayStreaming(
+            array,
+            arr => ExtractQuestionsFromArrayElement(arr).AsEnumerable());
     }
 
     private static JsonElement WrapSingleObject(JsonElement obj)
@@ -504,31 +454,9 @@ IMPORTANT:
 
     private static string? ExtractBalancedObject(string text, char open, char close)
     {
-        var startIdx = text.IndexOf(open);
-        if (startIdx < 0) return null;
-
-        var depth = 0;
-        var inString = false;
-        var escape = false;
-        for (var i = startIdx; i < text.Length; i++)
-        {
-            var c = text[i];
-            if (inString)
-            {
-                if (escape) { escape = false; continue; }
-                if (c == '\\') { escape = true; continue; }
-                if (c == '"') inString = false;
-                continue;
-            }
-            if (c == '"') { inString = true; continue; }
-            if (c == open) depth++;
-            else if (c == close)
-            {
-                depth--;
-                if (depth == 0) return text.Substring(startIdx, i - startIdx + 1);
-            }
-        }
-        return null;
+        return BatchGeneratorBase<object>.ExtractBalanced(text, open, close) is { } result
+            ? result
+            : null;
     }
 
     private static AiGeneratedQuestionDto? NormalizeQuestion(
@@ -591,41 +519,9 @@ IMPORTANT:
     /// <summary>
     /// Fixes mojibake (UTF-8 bytes misread as Latin-1) commonly found in PDF-extracted Vietnamese text.
     /// </summary>
-    private static string FixMojibake(string input)
-    {
-        if (string.IsNullOrEmpty(input)) return input;
+    private static string FixMojibake(string input) => TextSanitizer.FixMojibake(input);
 
-        // Detect mojibake: if the text contains common mojibake patterns for Vietnamese diacritics
-        // (e.g., "Ã " for "à", "Ä" for "Đ", "áº" sequences), try to fix it.
-        if (!input.Contains("Ã") && !input.Contains("Ä") && !input.Contains("áº"))
-            return input;
-
-        try
-        {
-            // The text was UTF-8 but was decoded as Latin-1 (ISO 8859-1).
-            // To fix: encode back to Latin-1 bytes, then decode as UTF-8.
-            var latin1 = Encoding.GetEncoding("ISO-8859-1");
-            var bytes = latin1.GetBytes(input);
-            var fixed_ = Encoding.UTF8.GetString(bytes);
-
-            // Sanity check: the fixed version should be shorter (multi-byte → single char)
-            // and should not contain replacement characters.
-            if (fixed_.Length < input.Length && !fixed_.Contains('�'))
-                return fixed_;
-        }
-        catch
-        {
-            // If encoding conversion fails, return original
-        }
-
-        return input;
-    }
-
-    private static string CleanText(string s)
-    {
-        if (string.IsNullOrWhiteSpace(s)) return string.Empty;
-        return Regex.Replace(s, @"\s*\[[^\]]+\]", "").Trim();
-    }
+    private static string CleanText(string s) => TextSanitizer.CleanBracketedReferences(s);
 
     private async Task<Quiz> PersistQuizAsync(
         Guid documentId,

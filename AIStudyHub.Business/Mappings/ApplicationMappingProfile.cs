@@ -58,6 +58,7 @@ public sealed class ApplicationMappingProfile : Profile
                 src.SharedUsers,
                 src.ShareStatus,
                 src.Status,
+                src.ErrorMessage,
                 src.Votes != null ? src.Votes.Count : 0,
                 src.CreatedAt,
                 src.UpdatedAt
@@ -67,11 +68,13 @@ public sealed class ApplicationMappingProfile : Profile
 
         CreateMap<Vote, VoteResponseDto>();
         CreateMap<CreateVoteRequestDto, Vote>();
-        CreateMap<UpdateVoteRequestDto, Vote>();
 
-        CreateMap<Report, ReportResponseDto>();
+        CreateMap<Report, ReportResponseDto>()
+            .ForMember(d => d.UserFullName, o => o.MapFrom(s => s.User != null ? s.User.FullName : string.Empty))
+            .ForMember(d => d.DocumentTitle, o => o.MapFrom(s => s.Document != null ? s.Document.Title : string.Empty))
+            .ForMember(d => d.ResolvedByFullName,
+                o => o.MapFrom(s => s.ResolvedByUser != null ? s.ResolvedByUser.FullName : null));
         CreateMap<CreateReportRequestDto, Report>();
-        CreateMap<UpdateReportRequestDto, Report>();
 
         CreateMap<Flashcard, FlashcardResponseDto>();
         CreateMap<CreateFlashcardRequestDto, Flashcard>();
@@ -86,26 +89,16 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<UpdateQuestionRequestDto, Question>();
         CreateMap<Answer, AnswerResponseDto>();
 
-        CreateMap<Answer, AnswerResponseDto>();
-        CreateMap<CreateAnswerRequestDto, Answer>();
-        CreateMap<UpdateAnswerRequestDto, Answer>();
-
         CreateMap<QuizSubmission, QuizSubmissionResponseDto>()
             .ForMember(dest => dest.Score, opt => opt.MapFrom(src => src.Score))
             .ForMember(dest => dest.MaxScore, opt => opt.MapFrom(src => src.MaxScore))
             .ForMember(dest => dest.TotalCorrect, opt => opt.MapFrom(src => src.TotalCorrect))
             .ForMember(dest => dest.GradedAt, opt => opt.MapFrom(src => src.GradedAt));
         CreateMap<CreateQuizSubmissionRequestDto, QuizSubmission>();
-        CreateMap<UpdateQuizSubmissionRequestDto, QuizSubmission>();
 
         CreateMap<Notification, NotificationResponseDto>();
-        CreateMap<CreateNotificationRequestDto, Notification>();
-        CreateMap<UpdateNotificationRequestDto, Notification>();
 
         CreateMap<Payment, PaymentResponseDto>();
-        CreateMap<CreatePaymentRequestDto, Payment>()
-            .ForMember(dest => dest.PaymentDate, opt => opt.MapFrom(src => src.PaymentDate ?? DateTime.UtcNow));
-        CreateMap<UpdatePaymentRequestDto, Payment>();
 
         CreateMap<TierMembership, TierMembershipResponseDto>();
         CreateMap<CreateTierMembershipRequestDto, TierMembership>();

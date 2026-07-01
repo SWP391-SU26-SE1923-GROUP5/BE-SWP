@@ -39,7 +39,7 @@ public class HybridSearchService : IHybridSearchService
         int topK = 10,
         CancellationToken ct = default)
     {
-        _logger.LogInformation("Performing true hybrid search for user {UserId} with query: {Query}", userId, query);
+        _logger.LogInformation("HybridSearch START: query='{Query}', userId={UserId}, documentId={DocumentId}", query, userId, documentId);
 
         // 1. Generate query representations
         var denseEmbedding = await _embeddingService.GenerateEmbeddingAsync(query);
@@ -51,7 +51,10 @@ public class HybridSearchService : IHybridSearchService
         {
             filter.Add("documentId", documentId.Value.ToString());
         }
+        _logger.LogInformation("HybridSearch: Calling Qdrant with filter={Filter}", string.Join(",", filter.Select(kv => $"{kv.Key}={kv.Value}")));
+
         var qdrantResults = await _vectorStore.HybridSearchAsync(denseEmbedding, sparseVector, topK * 2, filter);
+        _logger.LogInformation("HybridSearch: Qdrant returned {Count} results", qdrantResults.Count);
 
         // Map to SearchResult
         var results = qdrantResults.Select(r => new SearchResult(
@@ -63,6 +66,7 @@ public class HybridSearchService : IHybridSearchService
 
         // 3. Rerank the fused results
         var rerankedResults = await _rerankingService.RerankAsync(query, results, topK, ct);
+        _logger.LogInformation("HybridSearch: After rerank: {Count} results", rerankedResults.Count());
 
         return rerankedResults;
     }

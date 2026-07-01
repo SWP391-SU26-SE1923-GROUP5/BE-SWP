@@ -57,6 +57,130 @@ namespace AIStudyHub.Data.Migrations
                     b.ToTable("Answer", (string)null);
                 });
 
+            modelBuilder.Entity("AIStudyHub.Data.Entities.Badge", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("badge_id");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("category");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("code");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("create_at");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("description");
+
+                    b.Property<string>("IconUrl")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("icon_url");
+
+                    b.Property<decimal>("TargetValue")
+                        .HasColumnType("decimal(18,2)")
+                        .HasColumnName("target_value");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("title");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("update_at");
+
+                    b.Property<int>("XpReward")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("xp_reward");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("Badge", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Id = new Guid("aaaaaaaa-0001-0000-0000-000000000001"),
+                            Category = "Streak",
+                            Code = "STREAK_7D",
+                            CreatedAt = new DateTime(2026, 6, 29, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "Maintain a 7-day study streak.",
+                            IconUrl = "/badges/streak-7d.svg",
+                            TargetValue = 7m,
+                            Title = "7-Day Streak",
+                            XpReward = 100
+                        },
+                        new
+                        {
+                            Id = new Guid("aaaaaaaa-0002-0000-0000-000000000002"),
+                            Category = "Volume",
+                            Code = "CARDS_500",
+                            CreatedAt = new DateTime(2026, 6, 29, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "Review 500 flashcards.",
+                            IconUrl = "/badges/memory-master.svg",
+                            TargetValue = 500m,
+                            Title = "Memory Master",
+                            XpReward = 150
+                        },
+                        new
+                        {
+                            Id = new Guid("aaaaaaaa-0003-0000-0000-000000000003"),
+                            Category = "Mastery",
+                            Code = "MASTERY_MATH",
+                            CreatedAt = new DateTime(2026, 6, 29, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "Reach 85% or higher in Mathematics.",
+                            IconUrl = "/badges/math-prodigy.svg",
+                            TargetValue = 85m,
+                            Title = "Math Prodigy",
+                            XpReward = 120
+                        },
+                        new
+                        {
+                            Id = new Guid("aaaaaaaa-0004-0000-0000-000000000004"),
+                            Category = "Accuracy",
+                            Code = "SHARPSHOOTER",
+                            CreatedAt = new DateTime(2026, 6, 29, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "Score 100% on a quiz with at least 10 questions on the first attempt.",
+                            IconUrl = "/badges/sharpshooter.svg",
+                            TargetValue = 100m,
+                            Title = "Sharpshooter",
+                            XpReward = 200
+                        },
+                        new
+                        {
+                            Id = new Guid("aaaaaaaa-0005-0000-0000-000000000005"),
+                            Category = "Content",
+                            Code = "BOOKWORM",
+                            CreatedAt = new DateTime(2026, 6, 29, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Description = "Successfully process 7 documents.",
+                            IconUrl = "/badges/bookworm.svg",
+                            TargetValue = 7m,
+                            Title = "Bookworm",
+                            XpReward = 80
+                        });
+                });
+
             modelBuilder.Entity("AIStudyHub.Data.Entities.ChatMessage", b =>
                 {
                     b.Property<Guid>("Id")
@@ -143,6 +267,10 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("datetime")
                         .HasColumnName("create_at");
 
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("error_message");
+
                     b.Property<string>("FileExtension")
                         .HasMaxLength(255)
                         .HasColumnType("nvarchar(255)")
@@ -164,6 +292,12 @@ namespace AIStudyHub.Data.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)")
                         .HasColumnName("file_type");
+
+                    b.Property<bool>("IsNonFlaggable")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_non_flaggable");
 
                     b.Property<string>("ShareStatus")
                         .IsRequired()
@@ -243,6 +377,57 @@ namespace AIStudyHub.Data.Migrations
                     b.HasIndex("DocumentId");
 
                     b.ToTable("Flashcard", (string)null);
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.FlashcardReview", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("review_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("create_at");
+
+                    b.Property<float>("EaseFactor")
+                        .HasColumnType("real")
+                        .HasColumnName("ease_factor");
+
+                    b.Property<Guid>("FlashcardId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("card_id");
+
+                    b.Property<int>("Interval")
+                        .HasColumnType("int")
+                        .HasColumnName("interval_days");
+
+                    b.Property<DateTime>("NextReviewDate")
+                        .HasColumnType("datetime")
+                        .HasColumnName("next_review_date");
+
+                    b.Property<int>("Repetitions")
+                        .HasColumnType("int")
+                        .HasColumnName("repetitions");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("update_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("u_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FlashcardId");
+
+                    b.HasIndex("UserId", "FlashcardId")
+                        .IsUnique();
+
+                    b.HasIndex("UserId", "NextReviewDate");
+
+                    b.ToTable("FlashcardReviews", (string)null);
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.Notification", b =>
@@ -557,6 +742,10 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("report_id");
 
+                    b.Property<int>("Category")
+                        .HasColumnType("int")
+                        .HasColumnName("category");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime")
                         .HasColumnName("create_at");
@@ -568,6 +757,18 @@ namespace AIStudyHub.Data.Migrations
                     b.Property<string>("Reason")
                         .HasColumnType("nvarchar(max)")
                         .HasColumnName("reason");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("datetime2")
+                        .HasColumnName("resolved_at");
+
+                    b.Property<Guid?>("ResolvedBy")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("resolved_by");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int")
+                        .HasColumnName("status");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime")
@@ -581,9 +782,73 @@ namespace AIStudyHub.Data.Migrations
 
                     b.HasIndex("DocumentId");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("ResolvedBy");
+
+                    b.HasIndex("UserId", "DocumentId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Reports_UserId_DocumentId_Pending")
+                        .HasFilter("status = 1");
 
                     b.ToTable("Report", (string)null);
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.StudyLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("log_id");
+
+                    b.Property<int>("ActivityType")
+                        .HasColumnType("int")
+                        .HasColumnName("activity_type");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("create_at");
+
+                    b.Property<Guid?>("DocumentId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("doc_id");
+
+                    b.Property<bool>("IsCorrect")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false)
+                        .HasColumnName("is_correct");
+
+                    b.Property<string>("SubjectCode")
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasColumnName("subject_code");
+
+                    b.Property<int?>("TimeSpentSeconds")
+                        .HasColumnType("int")
+                        .HasColumnName("time_spent_seconds");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("update_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("u_id");
+
+                    b.Property<int>("XpEarned")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("xp_earned");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DocumentId");
+
+                    b.HasIndex("UserId", "CreatedAt");
+
+                    b.HasIndex("UserId", "SubjectCode");
+
+                    b.ToTable("StudyLogs", (string)null);
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.Subject", b =>
@@ -810,6 +1075,10 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("datetime")
                         .HasColumnName("create_at");
 
+                    b.Property<decimal>("Price")
+                        .HasColumnType("decimal(18,0)")
+                        .HasColumnName("price");
+
                     b.Property<int>("StorageLimitMb")
                         .HasColumnType("int")
                         .HasColumnName("storage_limit_mb");
@@ -833,15 +1102,26 @@ namespace AIStudyHub.Data.Migrations
                         {
                             Id = new Guid("11111111-1111-1111-1111-111111111111"),
                             AiTokens = 10000,
-                            CreatedAt = new DateTime(2026, 6, 26, 2, 56, 3, 123, DateTimeKind.Utc).AddTicks(3539),
+                            CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Price = 0m,
                             StorageLimitMb = 1024,
                             TierName = "Free"
                         },
                         new
                         {
+                            Id = new Guid("33333333-3333-3333-3333-333333333333"),
+                            AiTokens = 50000,
+                            CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Price = 499000m,
+                            StorageLimitMb = 5120,
+                            TierName = "Pro"
+                        },
+                        new
+                        {
                             Id = new Guid("55555555-5555-5555-5555-555555555555"),
                             AiTokens = 30000,
-                            CreatedAt = new DateTime(2026, 6, 26, 2, 56, 3, 123, DateTimeKind.Utc).AddTicks(3541),
+                            CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            Price = 199000m,
                             StorageLimitMb = 3072,
                             TierName = "Premium"
                         });
@@ -979,6 +1259,106 @@ namespace AIStudyHub.Data.Migrations
                     b.HasIndex("TierId");
 
                     b.ToTable("Users", (string)null);
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.UserBadge", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("user_badge_id");
+
+                    b.Property<Guid>("BadgeId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("badge_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("create_at");
+
+                    b.Property<DateTime>("EarnedDate")
+                        .HasColumnType("datetime")
+                        .HasColumnName("earned_date");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("update_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("u_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BadgeId");
+
+                    b.HasIndex("UserId", "BadgeId")
+                        .IsUnique();
+
+                    b.ToTable("UserBadge", (string)null);
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.UserStats", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("stats_id");
+
+                    b.Property<int>("BestStreak")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("best_streak");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("create_at");
+
+                    b.Property<int>("CurrentLevel")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1)
+                        .HasColumnName("current_level");
+
+                    b.Property<int>("CurrentStreak")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("current_streak");
+
+                    b.Property<DateTime?>("LastActivityDate")
+                        .HasColumnType("datetime")
+                        .HasColumnName("last_activity_date");
+
+                    b.Property<int>("TotalStudySeconds")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("total_study_seconds");
+
+                    b.Property<int>("TotalXp")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("total_xp");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("update_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("u_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
+
+                    b.HasIndex("CurrentLevel", "TotalXp");
+
+                    b.ToTable("UserStats", (string)null);
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.Vote", b =>
@@ -1237,6 +1617,25 @@ namespace AIStudyHub.Data.Migrations
                     b.Navigation("Document");
                 });
 
+            modelBuilder.Entity("AIStudyHub.Data.Entities.FlashcardReview", b =>
+                {
+                    b.HasOne("AIStudyHub.Data.Entities.Flashcard", "Flashcard")
+                        .WithMany()
+                        .HasForeignKey("FlashcardId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("AIStudyHub.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Flashcard");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("AIStudyHub.Data.Entities.Notification", b =>
                 {
                     b.HasOne("AIStudyHub.Data.Entities.User", "User")
@@ -1337,10 +1736,35 @@ namespace AIStudyHub.Data.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("AIStudyHub.Data.Entities.User", "ResolvedByUser")
+                        .WithMany()
+                        .HasForeignKey("ResolvedBy")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("AIStudyHub.Data.Entities.User", "User")
                         .WithMany("Reports")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Document");
+
+                    b.Navigation("ResolvedByUser");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.StudyLog", b =>
+                {
+                    b.HasOne("AIStudyHub.Data.Entities.Document", "Document")
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("AIStudyHub.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
                     b.Navigation("Document");
@@ -1357,6 +1781,36 @@ namespace AIStudyHub.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("TierMembership");
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.UserBadge", b =>
+                {
+                    b.HasOne("AIStudyHub.Data.Entities.Badge", "Badge")
+                        .WithMany("UserBadges")
+                        .HasForeignKey("BadgeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("AIStudyHub.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Badge");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.UserStats", b =>
+                {
+                    b.HasOne("AIStudyHub.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.Vote", b =>
@@ -1427,6 +1881,11 @@ namespace AIStudyHub.Data.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.Badge", b =>
+                {
+                    b.Navigation("UserBadges");
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.ChatSession", b =>

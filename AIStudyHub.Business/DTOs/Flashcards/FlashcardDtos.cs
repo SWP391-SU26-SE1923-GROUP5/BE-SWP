@@ -1,5 +1,3 @@
-using System;
-using System.Collections.Generic;
 
 namespace AIStudyHub.Business.DTOs.Flashcards;
 

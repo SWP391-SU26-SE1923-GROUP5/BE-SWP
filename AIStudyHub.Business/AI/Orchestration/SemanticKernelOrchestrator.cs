@@ -5,6 +5,7 @@ using AIStudyHub.Business.Interfaces.AI.Search;
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.Guardrails;
+using AIStudyHub.Business.Common;
 using System.Text;
 using AIStudyHub.Business.Configuration;
 using Microsoft.Extensions.Logging;
@@ -22,7 +23,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
     private readonly IGroundingVerifier _groundingVerifier;
     private readonly IConfidenceScorer _confidenceScorer;
     private readonly SemanticKernelOptions _options;
-    private readonly ILocalAIService _localAiService;
+    private readonly IOpenAIService _openAiService;
     private readonly ILogger<SemanticKernelOrchestrator> _logger;
 
     public SemanticKernelOrchestrator(
@@ -34,7 +35,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         IGroundingVerifier groundingVerifier,
         IConfidenceScorer confidenceScorer,
         IOptions<SemanticKernelOptions> options,
-        ILocalAIService localAiService,
+        IOpenAIService openAiService,
         ILogger<SemanticKernelOrchestrator> logger)
     {
         _kernelMemory = kernelMemory;
@@ -45,7 +46,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _groundingVerifier = groundingVerifier;
         _confidenceScorer = confidenceScorer;
         _options = options.Value;
-        _localAiService = localAiService;
+        _openAiService = openAiService;
         _logger = logger;
     }
 
@@ -104,7 +105,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             ANSWER:
             """;
 
-        var answer = await _localAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}") ?? "Xin lỗi, tôi không thể trả lời lúc này.";
+        var answer = await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}") ?? "Xin lỗi, tôi không thể trả lời lúc này.";
 
         // L5: Guardrails
         var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
@@ -123,11 +124,16 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
     public async Task<string> SummarizeAsync(Guid documentId, Guid userId, CancellationToken ct = default)
     {
+        _logger.LogInformation("SummarizeAsync START: documentId={DocumentId}, userId={UserId}", documentId, userId);
+
         // 1. Fetch all chunks from Qdrant for this document
         var payloads = await _vectorStoreService.GetPayloadsByDocumentIdAsync(documentId);
-        
+        _logger.LogInformation("SummarizeAsync: Retrieved {Count} payloads from Qdrant for documentId={DocumentId}",
+            payloads.Count, documentId);
+
         if (payloads.Count == 0)
         {
+            _logger.LogWarning("SummarizeAsync: NO payloads found in Qdrant for documentId={DocumentId}. Returning 'not found'.", documentId);
             return "Không tìm thấy nội dung tài liệu để tóm tắt.";
         }
 
@@ -139,6 +145,9 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             .ToList();
 
         var documentContent = string.Join("\n\n", sortedChunks);
+        _logger.LogInformation("SummarizeAsync: Document has {Chunks} chunks, {TotalChars} chars total",
+            sortedChunks.Count, documentContent.Length);
+
         if (string.IsNullOrWhiteSpace(documentContent))
         {
             return "Tài liệu không có văn bản.";
@@ -147,29 +156,12 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var systemPrompt = "Bạn là trợ lý ảo giúp tóm tắt nội dung tài liệu. Hãy tóm tắt văn bản dưới đây một cách ngắn gọn, súc tích và bao quát những ý chính nhất.";
         var userPrompt = $"VĂN BẢN TÀI LIỆU:\n{documentContent}\n\nYÊU CẦU: Hãy tóm tắt nội dung chính của tài liệu trên.";
 
-        var answer = await _localAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
+        var answer = await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}");
         return answer ?? "Không thể tóm tắt tài liệu.";
     }
 
     /// <summary>
     /// Fixes mojibake (UTF-8 bytes misread as Latin-1) commonly found in PDF-extracted Vietnamese text.
     /// </summary>
-    private static string FixMojibake(string input)
-    {
-        if (string.IsNullOrEmpty(input)) return input;
-        if (!input.Contains("Ã") && !input.Contains("Ä") && !input.Contains("áº"))
-            return input;
-
-        try
-        {
-            var latin1 = Encoding.GetEncoding("ISO-8859-1");
-            var bytes = latin1.GetBytes(input);
-            var fixed_ = Encoding.UTF8.GetString(bytes);
-            if (fixed_.Length < input.Length && !fixed_.Contains('\uFFFD'))
-                return fixed_;
-        }
-        catch { }
-
-        return input;
-    }
+    private static string FixMojibake(string input) => TextSanitizer.FixMojibake(input);
 }

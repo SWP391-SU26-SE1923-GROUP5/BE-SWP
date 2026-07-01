@@ -15,6 +15,11 @@ public sealed class Document : BaseEntity
     public string? SharedUsers { get; set; }
     public string ShareStatus { get; set; } = "private";
     public DocumentStatus? Status { get; set; }
+    public bool IsNonFlaggable { get; set; } = false;
+
+    /// <summary>When Status == Failed, captures the exception message from the processing
+    /// pipeline (PDF extraction, OCR, AI extraction). Null otherwise. Added 2026-06-29 per Master Spec.</summary>
+    public string? ErrorMessage { get; set; }
 
     public User User { get; set; } = null!;
     public Subject Subject { get; set; } = null!;

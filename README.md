@@ -38,13 +38,13 @@ Client
 ## Project Overview
 
 ### AIStudyHub.API
-Presentation layer. Hosts 18 REST controllers, configures middleware pipeline, JWT + OAuth authentication, rate limiting, Serilog, Swagger/OpenAPI, and static file serving.
+Presentation layer. Hosts 19 REST controllers + the SignalR `NotificationsHub`, configures middleware pipeline, JWT + OAuth authentication, rate limiting, Serilog, Swagger/OpenAPI, and static file serving.
 
 ### AIStudyHub.Business
-Business layer. Contains the entire AI pipeline (L3-L5), 14+ business services, 16 FluentValidation modules, AutoMapper profiles, MediatR CQRS handlers for Auth and Users, and 3 background hosted services.
+Business layer. Contains the entire AI pipeline (L3-L5), 16+ business services, FluentValidation modules, AutoMapper profiles, MediatR CQRS handlers for Auth and Users, **gamification / spaced-repetition / recommendation services**, the `RealTimeNotificationService` SignalR wrapper, and **4 background hosted services**.
 
 ### AIStudyHub.Data
-Data access layer. Holds 18 entity classes (all inheriting `BaseEntity`), 7 enums, Fluent API configurations, generic Repository + UnitOfWork, and 15 EF Core migrations.
+Data access layer. Holds **21 entity classes** (all inheriting `BaseEntity`, except `User` which inherits `IdentityUser<Guid>`), **8 enums**, Fluent API configurations, generic Repository + UnitOfWork, and **21 EF Core migrations**.
 
 ## Main Modules
 
@@ -55,17 +55,20 @@ Data access layer. Holds 18 entity classes (all inheriting `BaseEntity`), 7 enum
 | **Document Management** | Upload (multipart/form-data), text extraction (PDF/DOCX/TXT/MD), chunking, versioning, sharing, vote/report |
 | **RAG Pipeline** | Hybrid search (dense + sparse BM25 via Qdrant RRF), reranking, Semantic Kernel orchestration, guardrails (faithfulness, grounding, confidence), document Q&A, summarization |
 | **Flashcard Generation** | AI-powered flashcard creation from document chunks, auto-persisted |
+| **Spaced Repetition Review** | SM-2 algorithm — per-user schedule (ease factor / interval / repetitions), due-today list, daily counts |
 | **Quiz Generation** | AI-powered multiple-choice quiz creation, auto-persisted with questions and answers |
 | **Quiz Submission** | Submit answers, auto-grading, score tracking |
 | **AI Chat** | Session-based chat with document context, RAG-augmented responses |
-| **Notifications** | System and feature-driven notifications |
+| **Gamification** | XP / level / current-best streak, leaderboard, activity logging via `StudyLog` |
+| **Recommendations** | Per-subject mastery analytics + AI-driven study suggestions |
+| **Notifications** | DB-backed list + real-time push via SignalR `/hubs/notifications` |
 | **Payments** | VNPay checkout, webhook processing, tier upgrade on success |
 | **Tier Memberships** | Subscription tiers with storage and AI token quotas |
 | **Admin** | Dashboard data, document reindexing, user/document/report moderation |
 
 ## AI Architecture
 
-See full sequence diagrams in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Key flows:
+See full sequence diagrams in [`ARCHITECTURE.md`](ARCHITECTURE.md). Key flows:
 
 #### L1 — Document Ingestion Pipeline
 
@@ -243,9 +246,10 @@ sequenceDiagram
 ```text
 AIStudyHub.slnx
 ├── AIStudyHub.API
-│   ├── Controllers/          (18 controllers)
+│   ├── Controllers/          (19 controllers)
 │   ├── DTOs/
 │   ├── Extensions/           (JWT, Swagger, Rate Limiting)
+│   ├── Hubs/                 (NotificationsHub)
 │   ├── Middleware/           (GlobalException, FluentValidation filter)
 │   ├── Swagger/
 │   ├── Program.cs
@@ -261,31 +265,30 @@ AIStudyHub.slnx
 │   │   └── VectorStore/      (QdrantVectorService, EmbeddingService)
 │   ├── Behaviors/            (MediatR pipeline behaviors)
 │   ├── Configuration/        (Retrieval, KernelMemory, SemanticKernel, Guardrails options)
-│   ├── DTOs/                 (16 module DTOs)
+│   ├── DTOs/                 (21 module DTOs - incl. Gamification, FlashcardReview, Recommendations, UserStats)
 │   ├── Features/             (MediatR CQRS - Auth, Users)
+│   ├── Hubs/                 (INotificationsHub abstraction)
 │   ├── Interfaces/           (AI + Service interfaces)
 │   ├── Mappings/             (AutoMapper profiles)
 │   ├── Options/              (JWT, SMTP, VnPay, Rag, etc.)
-│   ├── Services/             (Business services + VnPay + Email + FileStorage)
-│   ├── Validators/           (16 FluentValidation modules)
-│   └── Workers/              (DocumentProcessor, TierCleanup, UnverifiedCleanup)
+│   ├── Services/             (Business services + VnPay + Email + FileStorage + Gamification + FlashcardReview + Recommendation + RealTimeNotification)
+│   ├── Validators/           (FluentValidation modules)
+│   └── Workers/              (DocumentProcessor, TierCleanup, UnverifiedCleanup, DailyStreakReset)
 ├── AIStudyHub.Data
-│   ├── Configurations/       (EF Core Fluent API for 16 entities)
-│   ├── Entities/             (18 entities + BaseEntity)
-│   ├── Enums/                (7 enums)
+│   ├── Configurations/       (EF Core Fluent API for 21 entities)
+│   ├── Entities/             (21 entities + BaseEntity - incl. UserStats, FlashcardReview, StudyLog)
+│   ├── Enums/                (8 enums - incl. ActivityType, ShareStatus)
 │   ├── Extensions/           (DataAccess DI, AdminSeed)
 │   ├── Interfaces/            (Repository + UnitOfWork interfaces)
 │   ├── Repositories/         (GenericRepository, UnitOfWork)
-│   └── Migrations/           (15 EF Core migrations)
+│   └── Migrations/           (21 EF Core migrations)
 ├── AIStudyHub.Tests/
 ├── docs/
-│   ├── AGENT.md              (Coding rules & conventions)
-│   ├── ARCHITECTURE.md        (Architecture deep-dive)
-│   ├── NET8_3_LAYER_GUIDE.md  (Implementation guide)
-│   └── EF_MIGRATION_COMMANDS.md
+│   ├── FRONTEND_GUIDE.md         (frontend integration guide)
+│   └── EF_MIGRATION_COMMANDS.md  (database migration cheatsheet)
 ├── .github/workflows/
 ├── .gitignore
-└── README.md
+├── README.md
 ```
 
 ## Database Entities (18)
@@ -480,34 +483,39 @@ erDiagram
     ChatSession ||--o{ ChatMessage : "contains"
 ```
 
-## API Controllers (18)
+## API Controllers (19)
 
 | Controller | Route | Description |
 |------------|-------|-------------|
 | `AuthController` | `/api/Auth` | Register, login, OTP, OAuth, JWT refresh |
 | `UserController` | `/api/User` | Profile, tier, sharing |
-| `DocumentController` | `/api/Document` | Metadata CRUD, sharing, download |
-| `DocumentUploadController` | `/api/DocumentUpload` | File upload, processing queue, chunk retrieval |
+| `DocumentController` | `/api/Document` | Full lifecycle: upload, metadata CRUD, share, download, preview, full delete, reprocess, chunks |
 | `ChatController` | `/api/Chat` | Sessions and messages |
-| `FlashcardController` | `/api/Flashcard` | CRUD + AI generation |
-| `QuizController` | `/api/Quiz` | CRUD + AI generation |
-| `QuestionController` | `/api/Question` | Question CRUD |
-| `AnswerController` | `/api/Answer` | Answer CRUD |
-| `QuizSubmissionController` | `/api/QuizSubmission` | Submission results |
-| `VoteController` | `/api/Vote` | Upvote/downvote documents |
-| `ReportController` | `/api/Report` | Document violation reports |
+| `FlashcardController` | `/api/Flashcard` | CRUD only. AI generation at `/api/AI/flashcards/generate` |
+| `FlashcardReviewController` | `/api/FlashcardReview` | SM-2 spaced repetition: due list, due count, submit review, user stats |
+| `QuizController` | `/api/Quiz` | CRUD + sub-resources (questions, answers). AI generation at `/api/AI/quizzes/generate` |
+| `QuestionController` | `/api/Question` | GetById only. GetAll/CRUD removed — use Quiz sub-resources |
+| `QuizSubmissionController` | `/api/QuizSubmission` | Submission results, ownership-protected |
+| `VoteController` | `/api/Vote` | Upvote/downvote documents, ownership-protected |
+| `ReportController` | `/api/Report` | Document violation reports (workflow status) |
 | `NotificationController` | `/api/Notification` | User notifications |
 | `SubjectController` | `/api/Subject` | Academic subjects |
 | `PaymentController` | `/api/Payment` | VNPay checkout and webhook |
 | `TierMembershipController` | `/api/TierMembership` | Subscription tiers |
-| `RagController` | `/api/Rag` | RAG query and summarization |
+| `AIController` | `/api/AI` | RAG query, summarization, AI flashcard/quiz generation |
+| `GamificationController` | `/api/Gamification` | XP / level / streak stats, leaderboard, award-xp |
+| `RecommendationsController` | `/api/Recommendations` | Per-subject mastery + AI study suggestions |
 | `AdminController` | `/api/Admin` | Reindexing and moderation |
+| **SignalR Hub** | `/hubs/notifications` | Real-time push (`ReceiveNotification` event) |
+
+**Removed:** `DocumentUploadController` (merged into `DocumentController`), `AnswerController` (answers accessed via Quiz sub-resources), `RagController` (merged into `AIController`).
 
 ## Background Workers
 
-1. **DocumentBackgroundProcessor** — dequeues uploaded documents, extracts text, chunks, embeds via OpenAI, upserts to Qdrant, updates DB status
-2. **TierExpirationCleanupService** — runs every 24h, downgrades expired subscriptions to Free tier
-3. **UnverifiedAccountCleanupService** — runs daily, removes accounts older than 7 days that are still unverified
+1. **DocumentBackgroundProcessor** — dequeues uploaded documents, extracts text, chunks, embeds via OpenAI, upserts to Qdrant, updates DB status, and pushes a `ReceiveNotification` event when done.
+2. **TierExpirationCleanupService** — runs every 24h, downgrades expired subscriptions to Free tier.
+3. **UnverifiedAccountCleanupService** — runs daily, removes accounts older than 7 days that are still unverified.
+4. **DailyStreakResetWorker** — runs daily, resets `CurrentStreak` to 0 for users whose `LastActivityDate` is older than yesterday, and pushes a `StreakAtRisk` notification when a streak is about to lapse.
 
 ## Prerequisites
 
@@ -603,9 +611,9 @@ Serilog configured for console and rolling file output (`logs/`). Structured log
 
 ## Documentation
 
-- [Agent Guide](docs/AGENT.md) — coding conventions and rules
-- [Architecture Reference](docs/ARCHITECTURE.md) — architecture deep-dive with diagrams
-- [.NET 8 3-Layer Guide](docs/NET8_3_LAYER_GUIDE.md) — implementation template and patterns
+- [Agent Guide](AGENT.md) — coding conventions and rules (root-level `AGENT.md`)
+- [Architecture Reference](ARCHITECTURE.md) — architecture deep-dive with diagrams (root-level `ARCHITECTURE.md`)
+- [Frontend Integration Guide](docs/FRONTEND_GUIDE.md) — REST + SignalR contract for frontend devs
 - [EF Migration Commands](docs/EF_MIGRATION_COMMANDS.md) — database migration cheatsheet
 
 ## Status

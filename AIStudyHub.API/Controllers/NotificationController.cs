@@ -46,24 +46,50 @@ public sealed class NotificationController : ControllerBase
         return Ok(result);
     }
 
-    /// <summary>Đánh dấu một thông báo đã đọc.</summary>
+    /// <summary>Đánh dấu một thông báo đã đọc. Trả về unreadCount mới nhất để UI giảm badge đỏ ngay.</summary>
     [HttpPost("{id:guid}/read")]
-    public async Task<IActionResult> MarkAsRead(Guid id, CancellationToken cancellationToken)
-    {
-        await _service.MarkAsReadAsync(id, cancellationToken);
-        return NoContent();
-    }
-
-    /// <summary>Đánh dấu tất cả thông báo đã đọc.</summary>
-    [HttpPost("mark-all-read")]
-    public async Task<IActionResult> MarkAllAsRead(CancellationToken cancellationToken)
+    public async Task<ActionResult<MarkAsReadResponseDto>> MarkAsRead(Guid id, CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
-        if (userId == Guid.Empty)
-            return Unauthorized();
+        if (userId == Guid.Empty) return Unauthorized();
+        await _service.MarkAsReadAsync(id, cancellationToken);
+        var unreadCount = await _service.GetUnreadCountAsync(userId, cancellationToken);
+        return Ok(new MarkAsReadResponseDto(true, unreadCount));
+    }
+
+    /// <summary>Đánh dấu tất cả thông báo đã đọc. Trả về unreadCount mới nhất (thường = 0).</summary>
+    [HttpPost("mark-all-read")]
+    public async Task<ActionResult<MarkAsReadResponseDto>> MarkAllAsRead(CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
 
         await _service.MarkAllAsReadAsync(userId, cancellationToken);
-        return NoContent();
+        var unreadCount = await _service.GetUnreadCountAsync(userId, cancellationToken);
+        return Ok(new MarkAsReadResponseDto(true, unreadCount));
+    }
+
+    /// <summary>Plan C4 / B.4.3 — đánh dấu một thông báo đã đọc (PUT semantic).</summary>
+    [HttpPut("{id:guid}/read")]
+    public async Task<ActionResult<MarkAsReadResponseDto>> MarkAsReadPut(Guid id, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+        await _service.MarkAsReadAsync(id, cancellationToken);
+        var unreadCount = await _service.GetUnreadCountAsync(userId, cancellationToken);
+        return Ok(new MarkAsReadResponseDto(true, unreadCount));
+    }
+
+    /// <summary>Plan C4 / B.4.3 — đánh dấu tất cả thông báo đã đọc (PUT semantic).</summary>
+    [HttpPut("read-all")]
+    public async Task<ActionResult<MarkAsReadResponseDto>> MarkAllAsReadPut(CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        await _service.MarkAllAsReadAsync(userId, cancellationToken);
+        var unreadCount = await _service.GetUnreadCountAsync(userId, cancellationToken);
+        return Ok(new MarkAsReadResponseDto(true, unreadCount));
     }
 
     // POST   /api/Notification - Đã xóa. Notification do hệ thống tạo ra (system-generated), không phải client.

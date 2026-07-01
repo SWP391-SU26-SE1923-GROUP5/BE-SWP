@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using AIStudyHub.Data.Enums;
 
 namespace AIStudyHub.Business.DTOs.Quizzes;

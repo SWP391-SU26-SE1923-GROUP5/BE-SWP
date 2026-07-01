@@ -1,5 +1,3 @@
-using AIStudyHub.Business.Interfaces.AI.Generators;
-using AIStudyHub.Business.AI.Generators;
 using AIStudyHub.Business.DTOs.Flashcards;
 using AIStudyHub.Business.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -13,25 +11,12 @@ namespace AIStudyHub.API.Controllers;
 public sealed class FlashcardController : ControllerBase
 {
     private readonly IFlashcardService _service;
-    private readonly IFlashcardAiService _flashcardAiService;
     private readonly IDocumentService _documentService;
 
-    public FlashcardController(IFlashcardService service, IFlashcardAiService flashcardAiService, IDocumentService documentService)
+    public FlashcardController(IFlashcardService service, IDocumentService documentService)
     {
         _service = service;
-        _flashcardAiService = flashcardAiService;
         _documentService = documentService;
-    }
-
-    [HttpPost("/api/flashcard/document/{docId:guid}/ai-gen")]
-    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> GenerateFromDocument(Guid docId, [FromBody] CreateFlashcardsViaAiRequestDto request, CancellationToken cancellationToken)
-    {
-        var userIdClaim = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier || c.Type == "sub" || c.Type == "userId")?.Value;
-        if (!Guid.TryParse(userIdClaim, out var userId))
-            return Forbid();
-
-        var aiResult = await _flashcardAiService.GenerateFlashcardsAsync(docId, request, userId, cancellationToken);
-        return Ok(aiResult);
     }
 
     private Guid GetCurrentUserId()
@@ -40,7 +25,7 @@ public sealed class FlashcardController : ControllerBase
         return claim != null && Guid.TryParse(claim, out var userId) ? userId : Guid.Empty;
     }
 
-    [HttpGet("/api/flashcard/document/{docId:guid}")]
+    [HttpGet("{docId:guid}/flashcards")]
     public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> GetByDocument(
         Guid docId,
         CancellationToken cancellationToken)
@@ -52,9 +37,6 @@ public sealed class FlashcardController : ControllerBase
         return Ok(result);
     }
 
-
-
-    /// <summary>Lấy danh sách tất cả flashcard.</summary>
     [HttpGet]
     public async Task<ActionResult<AIStudyHub.Business.DTOs.Common.PagedResultDto<FlashcardResponseDto>>> GetAll([FromQuery] AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken)
     {
@@ -65,7 +47,6 @@ public sealed class FlashcardController : ControllerBase
         return Ok(result);
     }
 
-    /// <summary>Lấy thông tin flashcard theo ID.</summary>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<FlashcardResponseDto>> GetById(Guid id, CancellationToken cancellationToken)
     {

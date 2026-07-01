@@ -1,6 +1,4 @@
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
-using AIStudyHub.Business.AI.VectorStore;
-using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;

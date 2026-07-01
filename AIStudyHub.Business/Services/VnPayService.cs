@@ -21,7 +21,7 @@ public sealed class VnPayService : IVnPayService
         _logger = logger;
     }
 
-    public string CreatePaymentUrl(HttpContext context, Guid paymentId, decimal amount, string orderInfo)
+    public string CreatePaymentUrl(string clientIp, Guid paymentId, decimal amount, string orderInfo)
     {
         var vnpayData = new SortedList<string, string>(new VnPayCompare())
         {
@@ -31,7 +31,7 @@ public sealed class VnPayService : IVnPayService
             { "vnp_Amount", ((long)(amount * 100)).ToString() },
             { "vnp_CreateDate", DateTime.UtcNow.AddHours(7).ToString("yyyyMMddHHmmss") },
             { "vnp_CurrCode", "VND" },
-            { "vnp_IpAddr", GetIpAddress(context) },
+            { "vnp_IpAddr", !string.IsNullOrEmpty(clientIp) ? clientIp : "127.0.0.1" },
             { "vnp_Locale", "vn" },
             { "vnp_OrderInfo", orderInfo },
             { "vnp_OrderType", "other" },
@@ -74,12 +74,6 @@ public sealed class VnPayService : IVnPayService
         _logger.LogInformation($"[VNPay DEBUG] calculated checksum: {checkSum}");
 
         return checkSum.Equals(vnp_SecureHash, StringComparison.InvariantCultureIgnoreCase);
-    }
-
-    private static string GetIpAddress(HttpContext context)
-    {
-        var ipAddress = context.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
-        return ipAddress;
     }
 
     private static string BuildQueryString(SortedList<string, string> requestData)
