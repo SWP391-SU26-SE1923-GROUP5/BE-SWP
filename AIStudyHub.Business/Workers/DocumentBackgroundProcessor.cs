@@ -31,7 +31,6 @@ public class DocumentBackgroundProcessor : BackgroundService
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Document Background Processor started");
@@ -68,78 +67,195 @@ public class DocumentBackgroundProcessor : BackgroundService
         var kernelMemoryService = services.GetRequiredService<IKernelMemoryService>();
         var unitOfWork = services.GetRequiredService<IUnitOfWork>();
         var logger = services.GetRequiredService<ILogger<DocumentBackgroundProcessor>>();
+        var realTimeNotifier = services.GetService<IRealTimeNotificationService>();
 
         try
         {
             var extension = Path.GetExtension(request.FileName).ToLowerInvariant();
             var isTextDocument = new[] { ".pdf", ".docx", ".txt", ".md" }.Contains(extension);
+            var isImageFile = new[] { ".jpg", ".png", ".jpeg", ".webp", ".gif"}.Contains(extension);
 
-            if (isTextDocument)
+
+           if (isTextDocument)
+{
+    var fileContent = await System.IO.File.ReadAllBytesAsync(request.FilePath, ct);
+    var documentProcessing = services.GetRequiredService<IDocumentProcessingService>();
+    
+    // Detect: scanned PDF → OCR, text PDF → Kernel Memory
+    if (extension == ".pdf" && documentProcessing.IsScannedPdf(fileContent))
+    {
+        // === SCANNED PDF: OCR FLOW ===
+        logger.LogInformation("Document {DocumentId}: Detected as scanned PDF, using OCR", 
+            request.DocumentId);
+
+        var ocrText = await documentProcessing.ExtractTextAsync(fileContent, extension);
+        
+        if (string.IsNullOrWhiteSpace(ocrText) || ocrText.Length < 10)
+        {
+            throw new InvalidOperationException(
+                $"OCR extracted insufficient text ({ocrText?.Length ?? 0} chars). " +
+                "PDF may be encrypted or contain no readable content.");
+        }
+
+        logger.LogInformation("Document {DocumentId}: OCR extracted {TextLength} chars",
+            request.DocumentId, ocrText.Length);
+
+        var chunks = await documentProcessing.ChunkTextAsync(ocrText, 1024, 128);
+        logger.LogInformation("Document {DocumentId}: Split into {ChunkCount} chunks",
+            request.DocumentId, chunks.Count);
+
+        var sparseGen = services.GetRequiredService<ISparseVectorGenerator>();
+        var qdrant = services.GetRequiredService<IVectorStoreService>();
+        var embeddingService = services.GetRequiredService<IEmbeddingService>();
+
+        await qdrant.EnsureCollectionExistsAsync();
+
+        for (int i = 0; i < chunks.Count; i++)
+        {
+            var chunkText = chunks[i];
+            if (string.IsNullOrWhiteSpace(chunkText)) continue;
+
+            var dense = await embeddingService.GenerateEmbeddingAsync(chunkText);
+            var sparse = sparseGen.GenerateSparseVector(chunkText);
+
+            var metadata = new Dictionary<string, string>
             {
-                // Import document to Kernel Memory (handles L1-L2: chunking, embedding, indexing)
-                await kernelMemoryService.ImportDocumentAsync(
-                    request.FilePath,
-                    request.DocumentId,
-                    request.UserId,
-                    request.FileName,
-                    ct);
+                { "documentId", request.DocumentId.ToString() },
+                { "userId", request.UserId.ToString() },
+                { "text", chunkText },
+                { "fileName", request.FileName },
+                { "chunkIndex", i.ToString() }
+            };
 
-                // Fetch the generated chunks from KernelMemory to populate our Custom Hybrid Search Collection
-                logger.LogInformation("Document {DocumentId}: Fetching chunks from Kernel Memory for user {UserId}", request.DocumentId, request.UserId);
-                var chunks = await kernelMemoryService.SearchAsync("", request.UserId, 1000, ct);
-                logger.LogInformation("Document {DocumentId}: Kernel Memory returned {ChunkCount} chunks for user {UserId}",
-                    request.DocumentId, chunks.Count(), request.UserId);
+            await qdrant.UpsertVectorAsync(Guid.NewGuid().ToString(), dense, sparse, metadata);
+        }
 
+        logger.LogInformation("Document {DocumentId}: Scanned PDF processed. {ChunkCount} chunks upserted",
+            request.DocumentId, chunks.Count);
+    }
+    else
+    {
+        // === TEXT PDF / DOCX: KERNEL MEMORY FLOW ===
+        await kernelMemoryService.ImportDocumentAsync(
+            request.FilePath,
+            request.DocumentId,
+            request.UserId,
+            request.FileName,
+            ct);
+
+        logger.LogInformation("Document {DocumentId}: Fetching chunks from Kernel Memory", 
+            request.DocumentId);
+        var chunks = await kernelMemoryService.SearchAsync("", request.UserId, 1000, ct);
+
+        var sparseGen = services.GetRequiredService<ISparseVectorGenerator>();
+        var qdrant = services.GetRequiredService<IVectorStoreService>();
+        var embeddingService = services.GetRequiredService<IEmbeddingService>();
+
+        await qdrant.EnsureCollectionExistsAsync();
+
+        int chunkIndex = 0;
+        int upsertedCount = 0;
+        int skippedCount = 0;
+        string? firstCitationDocId = null;
+
+        foreach (var citation in chunks)
+        {
+            if (citation.DocumentId != request.DocumentId.ToString())
+            {
+                skippedCount++;
+                firstCitationDocId ??= citation.DocumentId;
+                continue;
+            }
+
+            foreach (var partition in citation.Partitions)
+            {
+                var text = partition.Text;
+                if (string.IsNullOrWhiteSpace(text)) continue;
+
+                var dense = await embeddingService.GenerateEmbeddingAsync(text);
+                var sparse = sparseGen.GenerateSparseVector(text);
+
+                var metadata = new Dictionary<string, string>
+                {
+                    { "documentId", request.DocumentId.ToString() },
+                    { "userId", request.UserId.ToString() },
+                    { "text", text },
+                    { "fileName", request.FileName },
+                    { "chunkIndex", chunkIndex.ToString() }
+                };
+
+                await qdrant.UpsertVectorAsync(Guid.NewGuid().ToString(), dense, sparse, metadata);
+                chunkIndex++;
+                upsertedCount++;
+            }
+        }
+
+        logger.LogInformation("Document {DocumentId}: Upserted {Upserted} chunks to Qdrant",
+            request.DocumentId, upsertedCount);
+    }
+}
+            else if (isImageFile)
+            {
+                logger.LogInformation("Document {DocumentId}: Processing image file {FileName} via OCR",
+                    request.DocumentId, request.FileName);
+
+                var documentProcessing = services.GetRequiredService<IDocumentProcessingService>();
                 var sparseGen = services.GetRequiredService<ISparseVectorGenerator>();
                 var qdrant = services.GetRequiredService<IVectorStoreService>();
                 var embeddingService = services.GetRequiredService<IEmbeddingService>();
 
-                // Ensure our custom Hybrid collection is created and configured with Sparse vectors
+                var fileContent = await System.IO.File.ReadAllBytesAsync(request.FilePath, ct);
+
+                var text = await documentProcessing.ExtractTextAsync(fileContent, extension);
+                if (string.IsNullOrWhiteSpace(text) || text.Length < 10)
+                {
+                    throw new InvalidOperationException(
+                        $"OCR extracted insufficient text ({text?.Length ?? 0} chars). "
+                        + "Image may be empty, blurred, or contain only graphics.");
+                }
+
+                logger.LogInformation("Document {DocumentId}: OCR extracted {TextLength} chars from image",
+                    request.DocumentId, text.Length);
+
+                var chunks = await documentProcessing.ChunkTextAsync(text, 1024, 128);
+                logger.LogInformation("Document {DocumentId}: Split into {ChunkCount} chunks",
+                    request.DocumentId, chunks.Count);
+
                 await qdrant.EnsureCollectionExistsAsync();
 
-                int chunkIndex = 0;
-                int upsertedCount = 0;
-                int skippedCount = 0;
-                string? firstCitationDocId = null;
-                foreach (var citation in chunks)
+                for (int i = 0; i < chunks.Count; i++)
                 {
-                    if (citation.DocumentId != request.DocumentId.ToString())
+                    var chunkText = chunks[i];
+                    if (string.IsNullOrWhiteSpace(chunkText)) continue;
+
+                    var dense = await embeddingService.GenerateEmbeddingAsync(chunkText);
+                    var sparse = sparseGen.GenerateSparseVector(chunkText);
+
+                    var metadata = new Dictionary<string, string>
                     {
-                        skippedCount++;
-                        firstCitationDocId ??= citation.DocumentId;
-                        continue;
-                    }
+                        { "documentId", request.DocumentId.ToString() },
+                        { "userId", request.UserId.ToString() },
+                        { "text", chunkText },
+                        { "fileName", request.FileName },
+                        { "chunkIndex", i.ToString() }
+                    };
 
-                    foreach (var partition in citation.Partitions)
-                    {
-                        var text = partition.Text;
-                        if (string.IsNullOrWhiteSpace(text)) continue;
-
-                        // Generate both Dense and Sparse representations
-                        var dense = await embeddingService.GenerateEmbeddingAsync(text);
-                        var sparse = sparseGen.GenerateSparseVector(text);
-
-                        var id = Guid.NewGuid().ToString();
-                        var metadata = new Dictionary<string, string>
-                        {
-                            { "documentId", request.DocumentId.ToString() },
-                            { "userId", request.UserId.ToString() },
-                            { "text", text },
-                            { "fileName", request.FileName },
-                            { "chunkIndex", chunkIndex.ToString() }
-                        };
-
-                        await qdrant.UpsertVectorAsync(id, dense, sparse, metadata);
-                        chunkIndex++;
-                        upsertedCount++;
-                    }
+                    await qdrant.UpsertVectorAsync(Guid.NewGuid().ToString(), dense, sparse, metadata);
                 }
-                logger.LogInformation("Document {DocumentId}: Upserted {Upserted} chunks to Qdrant. Skipped {Skipped} (DocumentId mismatch). First mismatch citation.DocumentId={FirstDocId}",
-                    request.DocumentId, upsertedCount, skippedCount, firstCitationDocId ?? "(none)");
+
+                logger.LogInformation("Document {DocumentId}: OCR image processing complete. "
+                    + "{ChunkCount} chunks upserted to Qdrant", request.DocumentId, chunks.Count);
+
+                var imageDoc = await unitOfWork.Documents.GetByIdAsync(request.DocumentId, ct);
+                if (imageDoc != null)
+                {
+                    imageDoc.IsOcrApplied = true;
+                }
             }
             else
             {
-                logger.LogInformation("Document {DocumentId} is a media file ({Extension}), skipping vectorization", request.DocumentId, extension);
+                logger.LogInformation("Document {DocumentId} is a media file ({Extension}), skipping vectorization",
+                    request.DocumentId, extension);
             }
 
             // Update document status in database
@@ -154,6 +270,20 @@ public class DocumentBackgroundProcessor : BackgroundService
             }
 
             logger.LogInformation("Document {DocumentId} processed and indexed successfully", request.DocumentId);
+
+            // Real-time push to notify user the document is ready
+            if (realTimeNotifier is not null)
+            {
+                try
+                {
+                    await realTimeNotifier.NotifyDocumentProcessedAsync(
+                        request.UserId, request.DocumentId, request.FileName, ct);
+                }
+                catch (Exception notifyEx)
+                {
+                    logger.LogWarning(notifyEx, "Real-time notify (document processed) failed for document {DocumentId}", request.DocumentId);
+                }
+            }
 
             // Plan C3: check Bookworm badge after the doc is marked Done.
             var badgeService = services.GetService<AIStudyHub.Business.Interfaces.Services.IBadgeService>();
@@ -192,8 +322,19 @@ public class DocumentBackgroundProcessor : BackgroundService
 
             logger.LogError(ex, "Failed to process document {DocumentId}", request.DocumentId);
 
-            // No real-time push: frontend will pick up the Failed status + ErrorMessage
-            // on the next /api/Document fetch.
+            // Real-time push to notify user the document failed
+            if (realTimeNotifier is not null)
+            {
+                try
+                {
+                    await realTimeNotifier.NotifyDocumentFailedAsync(
+                        request.UserId, request.DocumentId, request.FileName, ex.Message, ct);
+                }
+                catch (Exception notifyEx)
+                {
+                    logger.LogWarning(notifyEx, "Real-time notify (document failed) failed for document {DocumentId}", request.DocumentId);
+                }
+            }
         }
     }
 

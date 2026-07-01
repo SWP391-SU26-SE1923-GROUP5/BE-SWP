@@ -16,6 +16,7 @@ public sealed class Document : BaseEntity
     public string ShareStatus { get; set; } = "private";
     public DocumentStatus? Status { get; set; }
     public bool IsNonFlaggable { get; set; } = false;
+    public bool? IsOcrApplied { get; set; }
 
     /// <summary>When Status == Failed, captures the exception message from the processing
     /// pipeline (PDF extraction, OCR, AI extraction). Null otherwise. Added 2026-06-29 per Master Spec.</summary>

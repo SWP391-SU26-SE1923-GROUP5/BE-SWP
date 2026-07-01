@@ -296,11 +296,17 @@ public sealed class VoteService : IVoteService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
+    private readonly IRealTimeNotificationService? _realTimeNotifier;
+    private readonly ILogger<VoteService>? _logger;
 
-    public VoteService(IUnitOfWork unitOfWork, IMapper mapper)
+    public VoteService(IUnitOfWork unitOfWork, IMapper mapper,
+        IRealTimeNotificationService? realTimeNotifier = null,
+        ILogger<VoteService>? logger = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _realTimeNotifier = realTimeNotifier;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<VoteResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -375,6 +381,26 @@ public sealed class VoteService : IVoteService
             .AsNoTracking()
             .FirstOrDefaultAsync(v => v.Id == vote.Id, cancellationToken);
 
+        // Real-time vote-received push to the document owner (skip self-votes).
+        if (_realTimeNotifier is not null && created is not null && created.Document is not null
+            && created.Document.UserId != userId)
+        {
+            try
+            {
+                await _realTimeNotifier.NotifyVoteReceivedAsync(
+                    created.Document.UserId,
+                    userId,
+                    documentId,
+                    created.Document.Title ?? "Document",
+                    type,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Vote-received real-time notify failed for document {DocumentId}", documentId);
+            }
+        }
+
         return _mapper.Map<VoteResponseDto>(created);
     }
 
@@ -395,11 +421,17 @@ public sealed class ReportService : IReportService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
+    private readonly IRealTimeNotificationService? _realTimeNotifier;
+    private readonly ILogger<ReportService>? _logger;
 
-    public ReportService(IUnitOfWork unitOfWork, IMapper mapper)
+    public ReportService(IUnitOfWork unitOfWork, IMapper mapper,
+        IRealTimeNotificationService? realTimeNotifier = null,
+        ILogger<ReportService>? logger = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _realTimeNotifier = realTimeNotifier;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<ReportResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -536,7 +568,9 @@ public sealed class ReportService : IReportService
 
     public async Task<ReportResponseDto> UpdateStatusAsync(Guid id, ReportStatusDto status, Guid adminUserId, CancellationToken cancellationToken = default)
     {
-        var report = await _unitOfWork.Reports.GetByIdAsync(id, cancellationToken);
+        var report = await _unitOfWork.Reports.Query()
+            .Include(r => r.Document)
+            .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
         if (report is null)
         {
             throw new KeyNotFoundException($"Report with ID {id} not found.");
@@ -567,17 +601,29 @@ public sealed class ReportService : IReportService
         report.ResolvedAt = DateTime.UtcNow;
 
         _unitOfWork.Reports.Update(report);
-        
-        // Add Notification
-        var message = $"Your report for Document has been updated to {newStatus}.";
-        await _unitOfWork.Notifications.AddAsync(new Data.Entities.Notification
-        {
-            UserId = report.UserId,
-            Message = message,
-            IsRead = false
-        }, cancellationToken);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Real-time push to the report's reporter (no DB row per pure-SignalR design).
+        if (_realTimeNotifier is not null)
+        {
+            try
+            {
+                var documentTitle = report.Document?.Title ?? "Document";
+                await _realTimeNotifier.SendNotificationAsync(new RealTimeNotification(
+                    report.UserId,
+                    "Report updated",
+                    $"Your report for \"{documentTitle}\" has been updated to {newStatus}.",
+                    NotificationType.System,
+                    DateTime.UtcNow,
+                    new ReportUpdatedPayload(report.Id, report.DocumentId, newStatus)),
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Report-updated real-time notify failed for report {ReportId}", report.Id);
+            }
+        }
 
         var updated = await _unitOfWork.Reports.Query()
             .Include(r => r.User)
@@ -628,6 +674,32 @@ public sealed class ReportService : IReportService
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Real-time push to each affected reporter.
+        if (_realTimeNotifier is not null)
+        {
+            var documentTitle = document.Title ?? "Document";
+            foreach (var userId in userIdsToNotify)
+            {
+                try
+                {
+                    await _realTimeNotifier.SendNotificationAsync(new RealTimeNotification(
+                        userId,
+                        "Report rejected",
+                        $"Your report for \"{documentTitle}\" was rejected. The document was verified as legitimate.",
+                        NotificationType.System,
+                        DateTime.UtcNow,
+                        new ReportRejectedPayload(
+                            pendingReports.Where(r => r.UserId == userId).Select(r => r.Id).ToList(),
+                            documentId)),
+                        cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Report-rejected real-time notify failed for user {UserId}", userId);
+                }
+            }
+        }
 
         return pendingReports.Count;
     }
@@ -680,6 +752,30 @@ public sealed class ReportService : IReportService
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Real-time push to all affected reporters.
+        if (_realTimeNotifier is not null)
+        {
+            foreach (var userId in userIdsToNotify)
+            {
+                try
+                {
+                    await _realTimeNotifier.SendNotificationAsync(new RealTimeNotification(
+                        userId,
+                        "Bulk report update",
+                        $"One or more of your reports have been updated to {newStatus}.",
+                        NotificationType.System,
+                        DateTime.UtcNow,
+                        null),
+                        cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Bulk-report-updated real-time notify failed for user {UserId}", userId);
+                }
+            }
+        }
+
         return new BulkReportStatusResultDto(updated, failed);
     }
 
@@ -687,6 +783,7 @@ public sealed class ReportService : IReportService
     {
         int totalDocuments = 0;
         int totalReportsRejected = 0;
+        var affectedUsers = new HashSet<Guid>();
 
         foreach (var docId in documentIds)
         {
@@ -709,6 +806,7 @@ public sealed class ReportService : IReportService
                     report.ResolvedAt = DateTime.UtcNow;
                     _unitOfWork.Reports.Update(report);
                     distinctUsers.Add(report.UserId);
+                    affectedUsers.Add(report.UserId);
                     totalReportsRejected++;
                 }
 
@@ -725,6 +823,30 @@ public sealed class ReportService : IReportService
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Real-time push to affected reporters.
+        if (_realTimeNotifier is not null)
+        {
+            foreach (var userId in affectedUsers)
+            {
+                try
+                {
+                    await _realTimeNotifier.SendNotificationAsync(new RealTimeNotification(
+                        userId,
+                        "Reports rejected",
+                        "One or more of your reports were rejected. Documents were verified as legitimate.",
+                        NotificationType.System,
+                        DateTime.UtcNow,
+                        null),
+                        cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Bulk-report-rejected real-time notify failed for user {UserId}", userId);
+                }
+            }
+        }
+
         return new BulkMarkNonFlaggableResultDto(totalDocuments, totalReportsRejected);
     }
 
@@ -1204,17 +1326,20 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
     private readonly IMapper _mapper;
     private readonly AIStudyHub.Business.Interfaces.Services.IGamificationService? _gamificationService;
     private readonly AIStudyHub.Business.Interfaces.Services.IBadgeService? _badgeService;
+    private readonly IRealTimeNotificationService? _realTimeNotifier;
     private readonly ILogger<QuizSubmissionService>? _logger;
 
     public QuizSubmissionService(IUnitOfWork unitOfWork, IMapper mapper,
         AIStudyHub.Business.Interfaces.Services.IGamificationService? gamificationService = null,
         AIStudyHub.Business.Interfaces.Services.IBadgeService? badgeService = null,
+        IRealTimeNotificationService? realTimeNotifier = null,
         ILogger<QuizSubmissionService>? logger = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _gamificationService = gamificationService;
         _badgeService = badgeService;
+        _realTimeNotifier = realTimeNotifier;
         _logger = logger;
     }
 
@@ -1393,6 +1518,31 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             }
         }
 
+        // Real-time quiz-graded push (in addition to the synchronous HTTP response).
+        if (_realTimeNotifier is not null && submission.MaxScore > 0)
+        {
+            try
+            {
+                var quiz = await _unitOfWork.Quizzes
+                    .Query()
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(q => q.Id == submission.QuizId, cancellationToken);
+                var quizTitle = quiz?.Title ?? "Quiz";
+
+                await _realTimeNotifier.NotifyQuizGradedAsync(
+                    submission.UserId,
+                    submission.QuizId,
+                    quizTitle,
+                    submission.Score,
+                    submission.MaxScore,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Quiz-graded real-time notify failed for submission {SubmissionId}", submission.Id);
+            }
+        }
+
         return new SubmitQuizResultDto(submission, xpEarned, unlocked);
     }
 
@@ -1511,13 +1661,20 @@ public sealed class PaymentService : IPaymentService
     private readonly IMapper _mapper;
     private readonly IVnPayService _vnPayService;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IRealTimeNotificationService? _realTimeNotifier;
+    private readonly ILogger<PaymentService>? _logger;
 
-    public PaymentService(IUnitOfWork unitOfWork, IMapper mapper, IVnPayService vnPayService, IHttpContextAccessor httpContextAccessor)
+    public PaymentService(IUnitOfWork unitOfWork, IMapper mapper, IVnPayService vnPayService,
+        IHttpContextAccessor httpContextAccessor,
+        IRealTimeNotificationService? realTimeNotifier = null,
+        ILogger<PaymentService>? logger = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _vnPayService = vnPayService;
         _httpContextAccessor = httpContextAccessor;
+        _realTimeNotifier = realTimeNotifier;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<PaymentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -1659,6 +1816,8 @@ public sealed class PaymentService : IPaymentService
             _unitOfWork.Payments.Update(payment);
 
             var user = await _unitOfWork.Users.GetByIdAsync(payment.UserId, cancellationToken);
+            string? tierName = null;
+            DateTime? expiresAt = null;
             if (user is not null && payment.TierId.HasValue)
             {
                 var tier = await _unitOfWork.TierMemberships.GetByIdAsync(payment.TierId.Value, cancellationToken);
@@ -1667,9 +1826,28 @@ public sealed class PaymentService : IPaymentService
                     ? DateTime.UtcNow.AddDays(30)
                     : null;
                 _unitOfWork.Users.Update(user);
+
+                tierName = tier?.TierName;
+                expiresAt = user.TierExpireAt;
             }
 
             await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            // Real-time payment-succeeded push.
+            if (_realTimeNotifier is not null && user is not null && tierName is not null)
+            {
+                try
+                {
+                    var activatedAt = DateTime.UtcNow;
+                    var effectiveExpiry = expiresAt ?? activatedAt.AddDays(30);
+                    await _realTimeNotifier.NotifyPaymentSucceededAsync(
+                        user.Id, tierName, activatedAt, effectiveExpiry, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Payment-succeeded real-time notify failed for user {UserId}", payment.UserId);
+                }
+            }
 
             return new VnpayReturnResult
             {

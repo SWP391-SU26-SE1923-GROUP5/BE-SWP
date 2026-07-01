@@ -404,5 +404,17 @@ public class BadgeServiceTests : IDisposable
             NotificationsSent++;
             return Task.CompletedTask;
         }
+
+        public Task NotifyQuizGradedAsync(Guid userId, Guid quizId, string quizTitle, int score, int maxScore, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task NotifyVoteReceivedAsync(Guid documentOwnerId, Guid voterId, Guid documentId, string documentTitle, VoteType voteType, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task NotifyPaymentSucceededAsync(Guid userId, string tierName, DateTime activatedAt, DateTime expiresAt, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task NotifyDocumentFailedAsync(Guid userId, Guid documentId, string title, string errorMessage, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
     }
 }

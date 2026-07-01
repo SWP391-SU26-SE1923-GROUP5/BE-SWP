@@ -112,4 +112,62 @@ public sealed class RealTimeNotificationService : IRealTimeNotificationService
             NotificationType.Achievement,
             DateTime.UtcNow,
             achievement), cancellationToken);
+
+    public Task NotifyQuizGradedAsync(
+        Guid userId,
+        Guid quizId,
+        string quizTitle,
+        int score,
+        int maxScore,
+        CancellationToken cancellationToken = default)
+        => SendNotificationAsync(new RealTimeNotification(
+            userId,
+            "Quiz graded",
+            $"You scored {score}/{maxScore} on \"{quizTitle}\".",
+            NotificationType.QuizGraded,
+            DateTime.UtcNow,
+            new QuizGradedPayload(quizId, quizTitle, score, maxScore)), cancellationToken);
+
+    public Task NotifyVoteReceivedAsync(
+        Guid documentOwnerId,
+        Guid voterId,
+        Guid documentId,
+        string documentTitle,
+        VoteType voteType,
+        CancellationToken cancellationToken = default)
+        => SendNotificationAsync(new RealTimeNotification(
+            documentOwnerId,
+            "Vote received",
+            $"Someone {(voteType == VoteType.Upvote ? "upvoted" : "downvoted")} your document \"{documentTitle}\".",
+            NotificationType.VoteReceived,
+            DateTime.UtcNow,
+            new VoteReceivedPayload(documentId, documentTitle, voteType)), cancellationToken);
+
+    public Task NotifyPaymentSucceededAsync(
+        Guid userId,
+        string tierName,
+        DateTime activatedAt,
+        DateTime expiresAt,
+        CancellationToken cancellationToken = default)
+        => SendNotificationAsync(new RealTimeNotification(
+            userId,
+            "Payment successful",
+            $"Your {tierName} plan is now active until {expiresAt:MMM dd, yyyy}.",
+            NotificationType.PaymentSucceeded,
+            DateTime.UtcNow,
+            new PaymentSucceededPayload(tierName, activatedAt, expiresAt)), cancellationToken);
+
+    public Task NotifyDocumentFailedAsync(
+        Guid userId,
+        Guid documentId,
+        string title,
+        string errorMessage,
+        CancellationToken cancellationToken = default)
+        => SendNotificationAsync(new RealTimeNotification(
+            userId,
+            "Document processing failed",
+            $"Failed to process \"{title}\": {errorMessage}",
+            NotificationType.Document,
+            DateTime.UtcNow,
+            new DocumentFailedPayload(documentId, title, errorMessage)), cancellationToken);
 }
