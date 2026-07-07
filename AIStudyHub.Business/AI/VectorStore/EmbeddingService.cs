@@ -1,21 +1,18 @@
-using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.AI.LLM;
+using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using Microsoft.Extensions.Logging;
 
 namespace AIStudyHub.Business.AI.VectorStore;
 
 public sealed class EmbeddingService : IEmbeddingService
 {
-    private readonly HttpClient _httpClient;
     private readonly IOpenAIService _openAIService;
     private readonly ILogger<EmbeddingService> _logger;
 
     public EmbeddingService(
-        IHttpClientFactory httpClientFactory,
         IOpenAIService openAIService,
         ILogger<EmbeddingService> logger)
     {
-        _httpClient = httpClientFactory.CreateClient("EmbeddingClient");
         _openAIService = openAIService;
         _logger = logger;
     }

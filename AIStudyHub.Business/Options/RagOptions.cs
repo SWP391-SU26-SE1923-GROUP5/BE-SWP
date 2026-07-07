@@ -7,8 +7,10 @@ public class RagOptions
     public string CollectionName { get; set; } = "documents";
 
     public int TopKChunks { get; set; } = 10;
-    public int ChunkSize { get; set; } = 1000;
-    public int ChunkOverlap { get; set; } = 200;
+    /// <summary>Target chunk size in characters (approximate, sentence-aligned). 1 token ≈ 4 chars.</summary>
+    public int ChunkSize { get; set; } = 2048;
+    /// <summary>Overlap between chunks in characters (approximate, sentence-aligned).</summary>
+    public int ChunkOverlap { get; set; } = 256;
     public long MaxFileSizeBytes { get; set; } = 50 * 1024 * 1024;
     public string OpenAIApiKey { get; set; } = "";
     public string OpenAIChatModel { get; set; } = "gpt-5-mini";

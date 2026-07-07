@@ -55,10 +55,15 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _logger.LogInformation("Processing RAG query for user {UserId}", userId);
 
         // L3: Retrieval with hybrid search and reranking
-        var searchResults = await _searchService.SearchAsync(question, userId, documentId, 10, ct);
-        var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 5, ct);
+        var searchResults = await _searchService.SearchAsync(question, userId, documentId, 40, ct);
+        var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 40, ct);
+        _logger.LogInformation("After 1st rerank ({Count}): {Chunks}",
+            rerankedResults.Count(),
+            string.Join("\n===\n", rerankedResults.Take(5).Select(r => r.Content.Length > 250 ? r.Content[..250] + "..." : r.Content)));
         
         var resultList = rerankedResults.ToList();
+        _logger.LogInformation("Ask query: '{Question}' | Retrieved chunks: {Chunks}",
+            question, string.Join("\n---\n", resultList.Select(r => r.Content.Length > 200 ? r.Content[..200] + "..." : r.Content)));
         if (!resultList.Any())
         {
             return new RagResponse("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", new(), 0.0);
@@ -72,6 +77,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             contextBuilder.AppendLine(r.Content);
             contextBuilder.AppendLine();
         }
+
+        _logger.LogInformation("RAG Context being fed to AI:\n{Context}", contextBuilder.ToString());
 
         var systemPrompt = """
             You are 'AIStudyHub Assistant', a helpful and friendly AI tutor.

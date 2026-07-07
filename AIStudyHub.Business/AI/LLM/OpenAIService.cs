@@ -61,7 +61,7 @@ namespace AIStudyHub.Business.AI.LLM
         {
             var result = new List<float[]>();
 
-            int batchSize = 100;
+            int batchSize = 500;
             for (int i = 0; i < messages.Count; i += batchSize)
             {
                 var batch = messages.Skip(i).Take(batchSize).ToList();

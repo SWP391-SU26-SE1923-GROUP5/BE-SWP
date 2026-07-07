@@ -64,9 +64,13 @@ public class HybridSearchService : IHybridSearchService
             Metadata: r.Metadata
         )).ToList();
 
+        _logger.LogInformation("Search query: '{Query}' | Results: {Sources}",
+            query, string.Join(" | ", results.Select(r => r.Source)));
+
         // 3. Rerank the fused results
         var rerankedResults = await _rerankingService.RerankAsync(query, results, topK, ct);
-        _logger.LogInformation("HybridSearch: After rerank: {Count} results", rerankedResults.Count());
+        _logger.LogInformation("HybridSearch: After rerank: {Count} results | Sources: {Sources}",
+            rerankedResults.Count(), string.Join(" | ", rerankedResults.Select(r => r.Source)));
 
         return rerankedResults;
     }
