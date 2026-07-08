@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using FluentValidation;
+using AIStudyHub.Business.Exceptions;
 
 namespace AIStudyHub.API.Middleware;
 
@@ -37,6 +38,10 @@ public sealed class GlobalExceptionMiddleware
         {
             await WriteErrorResponseAsync(context, HttpStatusCode.Conflict, exception.Message);
         }
+        catch (QuotaExceededException exception)
+        {
+            await WriteQuotaExceededResponseAsync(context, exception);
+        }
         catch (Exception exception)
         {
             _logger.LogError(exception, "Unhandled exception: {Message}\nStackTrace: {StackTrace}", exception.Message, exception.StackTrace);
@@ -59,6 +64,24 @@ public sealed class GlobalExceptionMiddleware
         {
             statusCode = context.Response.StatusCode,
             message
+        };
+
+        await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
+    }
+
+    private static async Task WriteQuotaExceededResponseAsync(HttpContext context, QuotaExceededException exception)
+    {
+        context.Response.ContentType = "application/json";
+        context.Response.StatusCode = (int)HttpStatusCode.Forbidden;
+
+        var payload = new
+        {
+            statusCode = context.Response.StatusCode,
+            message = exception.Message,
+            error = "QuotaExceeded",
+            currentUsage = exception.CurrentUsage,
+            limit = exception.Limit,
+            requestedTokens = exception.RequestedTokens
         };
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(payload));

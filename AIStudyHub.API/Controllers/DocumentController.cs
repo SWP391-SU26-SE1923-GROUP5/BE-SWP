@@ -2,7 +2,6 @@ using AIStudyHub.API.DTOs;
 using AIStudyHub.Business.AI.VectorStore;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Rag;
-using AIStudyHub.Business.Interfaces.AI.Orchestration;
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
@@ -32,7 +31,6 @@ public sealed class DocumentController : ControllerBase
     private readonly DocumentStorageOptions _storageOptions;
     private readonly ILogger<DocumentController> _logger;
     private readonly IDocumentProcessingQueue _processingQueue;
-    private readonly IKernelMemoryService _kernelMemoryService;
 
     public DocumentController(
         IDocumentService service,
@@ -44,8 +42,7 @@ public sealed class DocumentController : ControllerBase
         IOptions<RagOptions> ragOptions,
         IOptions<DocumentStorageOptions> storageOptions,
         ILogger<DocumentController> logger,
-        IDocumentProcessingQueue processingQueue,
-        IKernelMemoryService kernelMemoryService)
+        IDocumentProcessingQueue processingQueue)
     {
         _service = service;
         _unitOfWork = unitOfWork;
@@ -57,7 +54,6 @@ public sealed class DocumentController : ControllerBase
         _storageOptions = storageOptions.Value;
         _logger = logger;
         _processingQueue = processingQueue;
-        _kernelMemoryService = kernelMemoryService;
     }
 
     [HttpGet]
@@ -123,7 +119,6 @@ public sealed class DocumentController : ControllerBase
 
         try
         {
-            await _kernelMemoryService.DeleteDocumentAsync(id, cancellationToken);
             await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
 
             _unitOfWork.Documents.Remove(document);
@@ -426,7 +421,6 @@ public sealed class DocumentController : ControllerBase
         if (!System.IO.File.Exists(fullPath))
             return BadRequest("Source file is missing on disk; cannot re-process");
 
-        await _kernelMemoryService.DeleteDocumentAsync(id, cancellationToken);
         await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
 
         document.Status = DocumentStatus.Processing;

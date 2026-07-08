@@ -2,6 +2,7 @@ using AIStudyHub.Business.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.LLM;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
+using AIStudyHub.Business.DTOs.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OpenAI.Chat;
@@ -51,6 +52,40 @@ namespace AIStudyHub.Business.AI.LLM
                 return string.Empty;
             }
         }
+
+        public Task<TokenUsageResult> SendMessageWithUsageAsync(string message)
+            => SendMessageWithUsageAsync(message, 0.2f);
+
+        public async Task<TokenUsageResult> SendMessageWithUsageAsync(string message, float temperature)
+        {
+            try
+            {
+                var options = new ChatCompletionOptions();
+                
+                if (!_options.OpenAIChatModel.Contains("o1") && !_options.OpenAIChatModel.Contains("gpt-5"))
+                {
+                    options.Temperature = temperature;
+                }
+
+                var result = await _chatClient.CompleteChatAsync(
+                    new[] { new UserChatMessage(message) },
+                    options);
+
+                var completion = result.Value;
+                var usage = completion.Usage;
+                var inputTokens = (int)(usage?.InputTokenCount ?? 0);
+                var outputTokens = (int)(usage?.OutputTokenCount ?? 0);
+                var text = completion.Content[0].Text;
+
+                return new TokenUsageResult(text, inputTokens, outputTokens);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "OpenAIService.SendMessageWithUsageAsync failed (OpenAI)");
+                return new TokenUsageResult(string.Empty, 0, 0);
+            }
+        }
+
         public async Task<ReadOnlyMemory<float>> CreateEmbeddingFromText(string message)
         {
             var result = await _embeddingClient.GenerateEmbeddingAsync(message);

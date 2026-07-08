@@ -2,8 +2,10 @@ using AIStudyHub.Business.AI.LLM;
 using AIStudyHub.Business.AI.Chat;
 using AIStudyHub.Business.Interfaces.AI.Chat;
 using AIStudyHub.Business.Interfaces.AI.LLM;
+using AIStudyHub.Business.Interfaces.AI.Tracking;
 using AIStudyHub.Business.DTOs.AIChat;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Exceptions;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
@@ -19,17 +21,22 @@ public sealed class AIChatService : IAIChatService
     private readonly IMapper _mapper;
     private readonly IOpenAIService _openAIService;
     private readonly ISemanticKernelOrchestrator _orchestrator;
+    private readonly ITokenTrackerService _tokenTracker;
     
+    private const int EstimatedChatTokens = 1500;
+
     public AIChatService(
         IUnitOfWork unitOfWork,
         IMapper mapper,
         IOpenAIService openAiService,
-        ISemanticKernelOrchestrator orchestrator)
+        ISemanticKernelOrchestrator orchestrator,
+        ITokenTrackerService tokenTracker)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _openAIService = openAiService;
         _orchestrator = orchestrator;
+        _tokenTracker = tokenTracker;
     }
 
     public async Task<IReadOnlyList<ChatSessionResponseDto>> GetSessionsAsync()
@@ -85,6 +92,13 @@ public sealed class AIChatService : IAIChatService
 
     public async Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request, Guid userId, CancellationToken ct = default)
     {
+        // Check AI token quota before processing
+        if (!await _tokenTracker.HasQuotaAsync(userId, EstimatedChatTokens, ct))
+        {
+            var (current, limit) = await _tokenTracker.GetUsageInfoAsync(userId, ct);
+            throw new QuotaExceededException(current, limit, EstimatedChatTokens);
+        }
+
         ChatSession? session;
         if (!request.SessionId.HasValue)
         {
@@ -133,17 +147,30 @@ public sealed class AIChatService : IAIChatService
 
         var activeDocumentId = request.DocumentId ?? session.DocumentId;
         string aiResponse;
+        int inputTokens = 0;
+        int outputTokens = 0;
 
         if (activeDocumentId.HasValue)
         {
-            var ragResponse = await _orchestrator.AskAsync(userId, activeDocumentId.Value, request.Message, history, ct);
+            var ragResponse = await _orchestrator.AskWithTrackingAsync(userId, activeDocumentId.Value, request.Message, history, ct);
             aiResponse = ragResponse.Answer;
+            inputTokens = ragResponse.InputTokens;
+            outputTokens = ragResponse.OutputTokens;
         }
         else
         {
             var historyText = string.Join("\n", history.Select(m => $"{m.Sender}: {m.Content}"));
             var prompt = $"CHAT HISTORY:\n{historyText}\n\nUSER: {request.Message}\nASSISTANT:";
-            aiResponse = await _openAIService.SendMessageAsync(prompt) ?? "Xin lỗi, tôi không thể trả lời lúc này.";
+            var usageResult = await _openAIService.SendMessageWithUsageAsync(prompt);
+            aiResponse = usageResult.Text ?? "Xin lỗi, tôi không thể trả lời lúc này.";
+            inputTokens = usageResult.InputTokens;
+            outputTokens = usageResult.OutputTokens;
+        }
+
+        // Record token usage
+        if (inputTokens > 0 || outputTokens > 0)
+        {
+            await _tokenTracker.RecordUsageAsync(userId, inputTokens, outputTokens, "chat", ct);
         }
 
         var assistantMessage = new ChatMessage
@@ -154,7 +181,7 @@ public sealed class AIChatService : IAIChatService
         };
 
         await _unitOfWork.ChatMessages.AddAsync(assistantMessage);
-        await _unitOfWork.SaveChangesAsync();
+        await _unitOfWork.SaveChangesAsync(ct);
 
         var created = await _unitOfWork.ChatMessages
             .Query()

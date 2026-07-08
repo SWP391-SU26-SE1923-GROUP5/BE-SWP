@@ -7,6 +7,7 @@ using AIStudyHub.Business.AI.VectorStore;
 using AIStudyHub.Business.AI.Guardrails;
 using AIStudyHub.Business.AI.LLM;
 using AIStudyHub.Business.AI.Chat;
+using AIStudyHub.Business.AI.Tracking;
 using AIStudyHub.Business.Interfaces.AI.Guardrails;
 using AIStudyHub.Business.Interfaces.AI.Search;
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
@@ -14,13 +15,12 @@ using AIStudyHub.Business.Interfaces.AI.Orchestration;
 using AIStudyHub.Business.Interfaces.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.Chat;
 using AIStudyHub.Business.Interfaces.AI.Generators;
+using AIStudyHub.Business.Interfaces.AI.Tracking;
 using AIStudyHub.Business.AI.Generators;
 using AIStudyHub.Business.Workers;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.KernelMemory;
-
 
 namespace AIStudyHub.Business.Services;
 
@@ -65,6 +65,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<IOpenAIService, OpenAIService>();
         services.AddScoped<IFlashcardAiService, FlashcardAiService>();
         services.AddScoped<IQuizAiService, QuizAiService>();
+        services.AddScoped<ITokenTrackerService, TokenTrackerService>();
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
 
         // Channel-based queue for background document processing
@@ -75,39 +76,6 @@ public static class BusinessServiceExtensions
 
         // Plan C4 — daily scan for upcoming tier expirations (Plan B.3.2)
         services.AddHostedService<TierExpiryWorker>();
-
-        // Kernel Memory
-        services.Configure<KernelMemorySettings>(configuration.GetSection("KernelMemory"));
-        
-        services.AddSingleton<IKernelMemory>(sp =>
-        {
-            var settings = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<KernelMemorySettings>>().Value;
-            var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger("KernelMemory");
-            
-
-            
-            var openAiConfig = new OpenAIConfig
-            {
-                APIKey = settings.OpenAI.ApiKey,
-                EmbeddingModel = settings.OpenAI.EmbeddingModel,
-                TextModel = settings.OpenAI.TextModel
-            };
-            
-            return new KernelMemoryBuilder()
-                .WithOpenAITextEmbeddingGeneration(openAiConfig)
-                .WithOpenAITextGeneration(openAiConfig)
-                .WithQdrantMemoryDb(settings.Qdrant.Host, settings.Qdrant.VectorSize.ToString())
-                .WithCustomTextPartitioningOptions(new Microsoft.KernelMemory.Configuration.TextPartitioningOptions
-                {
-                    MaxTokensPerParagraph = settings.Chunking.MaxTokensPerChunk,
-                    OverlappingTokens = settings.Chunking.OverlapTokens
-                })
-                .Build<MemoryServerless>(new KernelMemoryBuilderBuildOptions
-                {
-                    AllowMixingVolatileAndPersistentData = true
-                });
-        });
-        services.AddScoped<IKernelMemoryService, KernelMemoryService>();
 
         // L3: Search Services
         services.Configure<RetrievalOptions>(configuration.GetSection("Retrieval"));
