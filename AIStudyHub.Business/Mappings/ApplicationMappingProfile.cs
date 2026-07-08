@@ -110,7 +110,15 @@ public sealed class ApplicationMappingProfile : Profile
 
         CreateMap<ChatSession, ChatSessionResponseDto>();
         CreateMap<CreateChatSessionRequestDto, ChatSession>();
-        CreateMap<ChatMessage, ChatMessageResponseDto>();
+        CreateMap<ChatMessage, ChatMessageResponseDto>()
+            .ConstructUsing(src => new ChatMessageResponseDto(
+                src.Id,
+                src.ChatSessionId,
+                src.Sender,
+                src.Content,
+                src.CreatedAt,
+                src.UpdatedAt,
+                false)); // IsRelevant is only meaningful for assistant messages; set in service
         CreateMap<CreateChatMessageRequestDto, ChatMessage>()
             .ForMember(dest => dest.ChatSessionId, opt => opt.MapFrom(src => src.SessionId))
             .ForMember(dest => dest.Content, opt => opt.MapFrom(src => src.Message))

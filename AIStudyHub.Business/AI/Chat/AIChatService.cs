@@ -149,6 +149,7 @@ public sealed class AIChatService : IAIChatService
         string aiResponse;
         int inputTokens = 0;
         int outputTokens = 0;
+        bool isRelevant = false;
 
         if (activeDocumentId.HasValue)
         {
@@ -156,6 +157,7 @@ public sealed class AIChatService : IAIChatService
             aiResponse = ragResponse.Answer;
             inputTokens = ragResponse.InputTokens;
             outputTokens = ragResponse.OutputTokens;
+            isRelevant = ragResponse.IsRelevant;
         }
         else
         {
@@ -188,6 +190,13 @@ public sealed class AIChatService : IAIChatService
             .AsNoTracking()
             .FirstAsync(chatMessage => chatMessage.Id == assistantMessage.Id, ct);
 
-        return _mapper.Map<ChatMessageResponseDto>(created);
+        return new ChatMessageResponseDto(
+            created.Id,
+            created.ChatSessionId,
+            created.Sender,
+            created.Content,
+            created.CreatedAt,
+            created.UpdatedAt,
+            isRelevant);
     }
 }
