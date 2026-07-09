@@ -53,7 +53,7 @@ public class HybridSearchService : IHybridSearchService
         }
         _logger.LogInformation("HybridSearch: Calling Qdrant with filter={Filter}", string.Join(",", filter.Select(kv => $"{kv.Key}={kv.Value}")));
 
-        var qdrantResults = await _vectorStore.HybridSearchAsync(denseEmbedding, sparseVector, topK * 2, filter);
+        var qdrantResults = await _vectorStore.HybridSearchAsync(denseEmbedding, sparseVector, topK, filter);
         _logger.LogInformation("HybridSearch: Qdrant returned {Count} results", qdrantResults.Count);
 
         // Map to SearchResult

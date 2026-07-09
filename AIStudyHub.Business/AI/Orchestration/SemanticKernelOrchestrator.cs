@@ -47,100 +47,101 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _logger = logger;
     }
 
-    public async Task<RagResponse> AskAsync(Guid userId, Guid? documentId, string question, IReadOnlyList<ChatMessage> history, CancellationToken ct = default)
-    {
-        _logger.LogInformation("Processing RAG query for user {UserId}", userId);
+    //public async Task<RagResponse> AskAsync(Guid userId, Guid? documentId, string question, IReadOnlyList<ChatMessage> history, CancellationToken ct = default)
+    //{
+    //    _logger.LogInformation("Processing RAG query for user {UserId}", userId);
 
-        // L3: Retrieval with hybrid search and reranking
-        var searchResults = await _searchService.SearchAsync(question, userId, documentId, 40, ct);
-        var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 40, ct);
-        _logger.LogInformation("After 1st rerank ({Count}): {Chunks}",
-            rerankedResults.Count(),
-            string.Join("\n===\n", rerankedResults.Take(5).Select(r => r.Content.Length > 250 ? r.Content[..250] + "..." : r.Content)));
+    //    // L3: Retrieval with hybrid search and reranking
+    //    var searchResults = await _searchService.SearchAsync(question, userId, documentId, 40, ct);
+    //    var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 40, ct);
+    //    _logger.LogInformation("After 1st rerank ({Count}): {Chunks}",
+    //        rerankedResults.Count(),
+    //        string.Join("\n===\n", rerankedResults.Take(5).Select(r => r.Content.Length > 250 ? r.Content[..250] + "..." : r.Content)));
         
-        var resultList = rerankedResults.ToList();
-        _logger.LogInformation("Ask query: '{Question}' | Retrieved chunks: {Chunks}",
-            question, string.Join("\n---\n", resultList.Select(r => r.Content.Length > 200 ? r.Content[..200] + "..." : r.Content)));
-        if (!resultList.Any())
-        {
-            return new RagResponse("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", new(), 0.0, IsRelevant: false);
-        }
+    //    var resultList = rerankedResults.ToList();
+    //    _logger.LogInformation("Ask query: '{Question}' | Retrieved chunks: {Chunks}",
+    //        question, string.Join("\n---\n", resultList.Select(r => r.Content.Length > 200 ? r.Content[..200] + "..." : r.Content)));
+    //    if (!resultList.Any())
+    //    {
+    //        return new RagResponse("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", new(), 0.0, IsRelevant: false);
+    //    }
 
-        // Programmatic relevance check — skip LLM if chunks don't match question
-        var relevance = await ComputeChunkRelevanceAsync(question, resultList, ct);
-        const double RelevanceThreshold = 0.15;
-        if (relevance < RelevanceThreshold)
-        {
-            _logger.LogWarning(
-                "Chunk relevance {Relevance:P2} below threshold {Threshold}, returning fallback",
-                relevance, RelevanceThreshold);
-            return new RagResponse("Tài liệu của bạn không chứa thông tin này.", new(), 0.0, IsRelevant: false);
-        }
+    //    // Programmatic relevance check — skip LLM if chunks don't match question
+    //    var relevance = await ComputeChunkRelevanceAsync(question, resultList, ct);
+    //    const double RelevanceThreshold = 0.15;
+    //    if (relevance < RelevanceThreshold)
+    //    {
+    //        _logger.LogWarning(
+    //            "Chunk relevance {Relevance:P2} below threshold {Threshold}, returning fallback",
+    //            relevance, RelevanceThreshold);
+    //        return new RagResponse("Tài liệu của bạn không chứa thông tin này.", new(), 0.0, IsRelevant: false);
+    //    }
 
-        // L4: Generate answer using Custom LLM Prompt (Avoids duplicate KernelMemory search)
-        var contextBuilder = new StringBuilder();
-        foreach (var r in resultList)
-        {
-            contextBuilder.AppendLine($"--- Source: {r.Source} ---");
-            contextBuilder.AppendLine(r.Content);
-            contextBuilder.AppendLine();
-        }
+    //    // L4: Generate answer using Custom LLM Prompt (Avoids duplicate KernelMemory search)
+    //    var contextBuilder = new StringBuilder();
+    //    foreach (var r in resultList)
+    //    {
+    //        contextBuilder.AppendLine($"--- Source: {r.Source} ---");
+    //        contextBuilder.AppendLine(r.Content);
+    //        contextBuilder.AppendLine();
+    //    }
 
-        _logger.LogInformation("RAG Context being fed to AI:\n{Context}", contextBuilder.ToString());
+    //    _logger.LogInformation("RAG Context being fed to AI:\n{Context}", contextBuilder.ToString());
 
-        var systemPrompt = """
-            You are 'AIStudyHub Assistant', a helpful and friendly AI tutor for AIStudyHub.
+    //    var systemPrompt = """
+    //        You are 'AIStudyHub Assistant', a helpful and friendly AI tutor for AIStudyHub.
 
-            ABOUT AI STUDY HUB (System Features):
-            - AIStudyHub allows users to upload documents (PDF, Word) and chat with them to extract knowledge.
-            - Users can automatically generate "Flashcards" from their documents to study.
-            - Users can automatically generate "Quizzes" (Multiple-Choice) to test their knowledge.
-            - Users can request a "Summary" of any uploaded document.
+    //        ABOUT AI STUDY HUB (System Features):
+    //        - AIStudyHub allows users to upload documents (PDF, Word) and chat with them to extract knowledge.
+    //        - Users can automatically generate "Flashcards" from their documents to study.
+    //        - Users can automatically generate "Quizzes" (Multiple-Choice) to test their knowledge.
+    //        - Users can request a "Summary" of any uploaded document.
 
-            ANSWERING RULES:
-            1. If the user asks about the content of their uploaded document, base your answer on the provided SOURCES. If the SOURCES do not contain the answer, say so honestly.
-            2. If the user asks about the AIStudyHub system features or how to use it, use the 'ABOUT AI STUDY HUB' info above to guide them naturally.
-            3. If the SOURCES above do not contain enough information, answer general questions (e.g., software architecture, programming concepts, technology) using your own knowledge.
-            4. Do NOT insert numeric citations like [1], [2] into your text.
-            5. Answer in Vietnamese by default unless the user asks in English.
-            """;
+    //        ANSWERING RULES:
+    //        1. If the user asks about the content of their uploaded document, base your answer on the provided SOURCES. If the SOURCES do not contain the answer, say so honestly.
+    //        2. If the user asks about the AIStudyHub system features or how to use it, use the 'ABOUT AI STUDY HUB' info above to guide them naturally.
+    //        3. If the SOURCES above do not contain enough information, answer general questions (e.g., software architecture, programming concepts, technology) using your own knowledge.
+    //        4. Do NOT insert numeric citations like [1], [2] into your text.
+    //        5. Answer in Vietnamese by default unless the user asks in English.
+    //        """;
 
-        var userPrompt = $"""
-            SOURCES:
-            {contextBuilder}
+    //    var userPrompt = $"""
+    //        SOURCES:
+    //        {contextBuilder}
 
-            CHAT HISTORY:
-            {string.Join("\n", history.Select(m => $"{m.Sender}: {m.Content}"))}
+    //        CHAT HISTORY:
+    //        {string.Join("\n", history.Select(m => $"{m.Sender}: {m.Content}"))}
 
-            QUESTION: {question}
+    //        QUESTION: {question}
 
-            ANSWER:
-            """;
+    //        ANSWER:
+    //        """;
 
-        var answer = await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}") ?? "Xin lỗi, tôi không thể trả lời lúc này.";
+    //    var answer = await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}") ?? "Xin lỗi, tôi không thể trả lời lúc này.";
 
-        // L5: Guardrails
-        var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
-        var groundingResult = await _groundingVerifier.VerifyAsync(answer, resultList);
-        var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
+    //    // L5: Guardrails
+    //    var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
+    //    var groundingResult = await _groundingVerifier.VerifyAsync(answer, resultList);
+    //    var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
 
-        // Build citations
-        var citations = resultList.Select((r, i) => new CitationInfo(
-            Source: r.Source,
-            Content: r.Content,
-            Relevance: r.Score
-        )).ToList();
+    //    // Build citations
+    //    var citations = resultList.Select((r, i) => new CitationInfo(
+    //        Source: r.Source,
+    //        Content: r.Content,
+    //        Relevance: r.Score
+    //    )).ToList();
 
-        return new RagResponse(answer, citations, confidence, IsRelevant: true);
-    }
+    //    return new RagResponse(answer, citations, confidence, IsRelevant: true);
+    //}
 
+    
     public async Task<RagResponseWithUsage> AskWithTrackingAsync(Guid userId, Guid? documentId, string question, IReadOnlyList<ChatMessage> history, CancellationToken ct = default)
     {
         _logger.LogInformation("Processing RAG query with tracking for user {UserId}", userId);
 
         // L3: Retrieval with hybrid search and reranking
-        var searchResults = await _searchService.SearchAsync(question, userId, documentId, 40, ct);
-        var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 40, ct);
+        var searchResults = await _searchService.SearchAsync(question, userId, documentId, 20, ct);
+        var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 10, ct);
         
         var resultList = rerankedResults.ToList();
         if (!resultList.Any())

@@ -7,5 +7,6 @@ public enum DocumentStatus
     Archived = 3,
     Banned = 4,
     Processing = 5,
-    Failed = 6
+    Failed = 6,
+    Trashed = 7
 }
