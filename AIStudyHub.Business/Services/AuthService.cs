@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using AIStudyHub.Business.DTOs.Authentication;
 using AIStudyHub.Business.DTOs.Users;
+using AIStudyHub.Business.Exceptions;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
 using AIStudyHub.Data;
@@ -205,17 +206,17 @@ public sealed class AuthService : IAuthService
 
         if (otpRecord is null)
         {
-            throw new InvalidOperationException("Invalid or expired OTP.");
+            throw new OtpInvalidException();
         }
 
         if (otpRecord.IsLocked)
         {
-            throw new InvalidOperationException($"Too many failed attempts. Please wait {OtpRecord.LockoutMinutes} minutes before trying again.");
+            throw new OtpLockedException(OtpRecord.LockoutMinutes);
         }
 
         if (otpRecord.IsExpired)
         {
-            throw new InvalidOperationException("OTP has expired. Please request a new one.");
+            throw new OtpExpiredException();
         }
 
         if (!VerifyOtp(request.Otp, otpRecord.OtpHash))
@@ -226,7 +227,7 @@ public sealed class AuthService : IAuthService
                 otpRecord.LockedUntil = DateTime.UtcNow.AddMinutes(OtpRecord.LockoutMinutes);
             }
             await _dbContext.SaveChangesAsync(cancellationToken);
-            throw new InvalidOperationException("Invalid or expired OTP.");
+            throw new OtpInvalidException("Invalid OTP. Please try again.");
         }
 
         otpRecord.UsedAt = DateTime.UtcNow;
@@ -283,7 +284,7 @@ public sealed class AuthService : IAuthService
         var user = await _userManager.FindByEmailAsync(normalizedEmail);
         if (user is null)
         {
-            throw new InvalidOperationException("Invalid or expired OTP.");
+            throw new OtpInvalidException("Invalid or expired OTP.");
         }
 
         var otpRecord = await _dbContext.OtpRecords
@@ -293,17 +294,17 @@ public sealed class AuthService : IAuthService
 
         if (otpRecord is null)
         {
-            throw new InvalidOperationException("Invalid or expired OTP.");
+            throw new OtpInvalidException();
         }
 
         if (otpRecord.IsLocked)
         {
-            throw new InvalidOperationException($"Too many failed attempts. Please wait {OtpRecord.LockoutMinutes} minutes before trying again.");
+            throw new OtpLockedException(OtpRecord.LockoutMinutes);
         }
 
         if (otpRecord.IsExpired)
         {
-            throw new InvalidOperationException("OTP has expired. Please request a new one.");
+            throw new OtpExpiredException();
         }
 
         if (!VerifyOtp(request.Otp, otpRecord.OtpHash))
@@ -314,7 +315,7 @@ public sealed class AuthService : IAuthService
                 otpRecord.LockedUntil = DateTime.UtcNow.AddMinutes(OtpRecord.LockoutMinutes);
             }
             await _dbContext.SaveChangesAsync(cancellationToken);
-            throw new InvalidOperationException("Invalid or expired OTP.");
+            throw new OtpInvalidException("Invalid OTP. Please try again.");
         }
 
         otpRecord.UsedAt = DateTime.UtcNow;

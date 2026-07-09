@@ -34,6 +34,18 @@ public sealed class GlobalExceptionMiddleware
         {
             await WriteErrorResponseAsync(context, HttpStatusCode.NotFound, exception.Message);
         }
+        catch (OtpInvalidException exception)
+        {
+            await WriteErrorResponseAsync(context, HttpStatusCode.BadRequest, exception.Message);
+        }
+        catch (OtpExpiredException exception)
+        {
+            await WriteErrorResponseAsync(context, (HttpStatusCode)410, exception.Message);
+        }
+        catch (OtpLockedException exception)
+        {
+            await WriteLockedResponseAsync(context, exception);
+        }
         catch (InvalidOperationException exception)
         {
             await WriteErrorResponseAsync(context, HttpStatusCode.Conflict, exception.Message);
@@ -64,6 +76,22 @@ public sealed class GlobalExceptionMiddleware
         {
             statusCode = context.Response.StatusCode,
             message
+        };
+
+        await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
+    }
+
+    private static async Task WriteLockedResponseAsync(HttpContext context, OtpLockedException exception)
+    {
+        context.Response.ContentType = "application/json";
+        context.Response.StatusCode = (int)HttpStatusCode.Locked;
+
+        var payload = new
+        {
+            statusCode = context.Response.StatusCode,
+            message = exception.Message,
+            error = "OtpLocked",
+            lockoutMinutes = exception.LockoutMinutes
         };
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
