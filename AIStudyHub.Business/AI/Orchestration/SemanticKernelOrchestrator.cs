@@ -141,7 +141,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         // L3: Retrieval with hybrid search and reranking
         var searchResults = await _searchService.SearchAsync(question, userId, documentId, 20, ct);
-        var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 10, ct);
+        var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 5, ct);
         
         var resultList = rerankedResults.ToList();
         if (!resultList.Any())
