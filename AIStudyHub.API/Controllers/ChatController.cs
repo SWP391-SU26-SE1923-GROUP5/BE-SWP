@@ -49,6 +49,63 @@ public sealed class ChatController : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet("sessions/{sessionId:guid}/documents")]
+    public async Task<ActionResult<IReadOnlyList<ChatSessionDocumentResponseDto>>> GetDocuments(Guid sessionId)
+    {
+        var userId = GetCurrentUserId();
+        try
+        {
+            var result = await _chatService.GetDocumentsAsync(sessionId, userId);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+    }
+
+    [HttpPost("sessions/{sessionId:guid}/documents")]
+    public async Task<ActionResult<ChatSessionDocumentResponseDto>> AddDocument(Guid sessionId, [FromBody] AddDocumentToSessionRequestDto request)
+    {
+        var userId = GetCurrentUserId();
+        try
+        {
+            var result = await _chatService.AddDocumentAsync(sessionId, request.DocumentId, userId);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+    }
+
+    [HttpDelete("sessions/{sessionId:guid}/documents/{documentId:guid}")]
+    public async Task<IActionResult> RemoveDocument(Guid sessionId, Guid documentId)
+    {
+        var userId = GetCurrentUserId();
+        try
+        {
+            await _chatService.RemoveDocumentAsync(sessionId, documentId, userId);
+            return NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+    }
+
     private Guid GetCurrentUserId()
     {
         var claim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)

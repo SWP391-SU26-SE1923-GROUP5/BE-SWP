@@ -123,5 +123,12 @@ public sealed class ApplicationMappingProfile : Profile
             .ForMember(dest => dest.ChatSessionId, opt => opt.MapFrom(src => src.SessionId))
             .ForMember(dest => dest.Content, opt => opt.MapFrom(src => src.Message))
             .ForMember(dest => dest.Sender, opt => opt.MapFrom(_ => "user"));
+        CreateMap<ChatSessionDocument, ChatSessionDocumentResponseDto>()
+            .ConstructUsing(src => new ChatSessionDocumentResponseDto(
+                src.ChatSessionId,
+                src.DocumentId,
+                src.Document.Title,
+                src.Document.FileName,
+                src.CreatedAt));
     }
 }

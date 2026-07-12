@@ -26,6 +26,7 @@ public sealed class UnitOfWork : IUnitOfWork
         Payments = new GenericRepository<Payment>(_dbContext);
         ChatSessions = new GenericRepository<ChatSession>(_dbContext);
         ChatMessages = new GenericRepository<ChatMessage>(_dbContext);
+        ChatSessionDocuments = new GenericRepository<ChatSessionDocument>(_dbContext);
         UserStats = new GenericRepository<UserStats>(_dbContext);
         StudyLogs = new GenericRepository<StudyLog>(_dbContext);
         Badges = new GenericRepository<Badge>(_dbContext);
@@ -48,6 +49,7 @@ public sealed class UnitOfWork : IUnitOfWork
     public IRepository<Payment> Payments { get; }
     public IRepository<ChatSession> ChatSessions { get; }
     public IRepository<ChatMessage> ChatMessages { get; }
+    public IRepository<ChatSessionDocument> ChatSessionDocuments { get; }
     public IRepository<UserStats> UserStats { get; }
     public IRepository<StudyLog> StudyLogs { get; }
     public IRepository<Badge> Badges { get; }

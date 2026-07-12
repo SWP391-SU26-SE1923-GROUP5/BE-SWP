@@ -28,5 +28,5 @@ public sealed class Document : BaseEntity
     public ICollection<Report> Reports { get; set; } = new List<Report>();
     public ICollection<Flashcard> Flashcards { get; set; } = new List<Flashcard>();
     public ICollection<Quiz> Quizzes { get; set; } = new List<Quiz>();
-    public ICollection<ChatSession> ChatSessions { get; set; } = new List<ChatSession>();
+    public ICollection<ChatSessionDocument> ChatSessionDocuments { get; set; } = new List<ChatSessionDocument>();
 }

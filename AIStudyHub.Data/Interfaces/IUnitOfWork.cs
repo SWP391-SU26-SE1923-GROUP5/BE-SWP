@@ -20,6 +20,7 @@ public interface IUnitOfWork : IDisposable
     IRepository<Payment> Payments { get; }
     IRepository<ChatSession> ChatSessions { get; }
     IRepository<ChatMessage> ChatMessages { get; }
+    IRepository<ChatSessionDocument> ChatSessionDocuments { get; }
     IRepository<UserStats> UserStats { get; }
     IRepository<StudyLog> StudyLogs { get; }
     IRepository<Badge> Badges { get; }

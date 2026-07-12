@@ -1,4 +1,4 @@
-﻿namespace AIStudyHub.Data.Entities;
+namespace AIStudyHub.Data.Entities;
 
 public sealed class Flashcard : BaseEntity
 {

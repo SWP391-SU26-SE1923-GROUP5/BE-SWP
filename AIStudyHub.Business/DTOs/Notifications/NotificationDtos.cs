@@ -1,4 +1,4 @@
-﻿namespace AIStudyHub.Business.DTOs.Notifications;
+namespace AIStudyHub.Business.DTOs.Notifications;
 
 public sealed record NotificationResponseDto(Guid Id, Guid UserId, string Message, bool IsRead, string Type, DateTime CreatedAt, DateTime? UpdatedAt);
 

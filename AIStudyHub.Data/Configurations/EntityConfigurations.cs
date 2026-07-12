@@ -392,6 +392,29 @@ internal sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
     }
 }
 
+internal sealed class ChatSessionDocumentConfiguration : IEntityTypeConfiguration<ChatSessionDocument>
+{
+    public void Configure(EntityTypeBuilder<ChatSessionDocument> builder)
+    {
+        builder.ToTable("ChatSessionDocument");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("id");
+        builder.Property(x => x.ChatSessionId).HasColumnName("session_id").IsRequired();
+        builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+        builder.HasOne(x => x.ChatSession)
+            .WithMany(x => x.ChatSessionDocuments)
+            .HasForeignKey(x => x.ChatSessionId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne(x => x.Document)
+            .WithMany(x => x.ChatSessionDocuments)
+            .HasForeignKey(x => x.DocumentId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.HasIndex(x => new { x.ChatSessionId, x.DocumentId }).IsUnique();
+    }
+}
+
 internal sealed class ChatSessionConfiguration : IEntityTypeConfiguration<ChatSession>
 {
     public void Configure(EntityTypeBuilder<ChatSession> builder)
@@ -400,12 +423,11 @@ internal sealed class ChatSessionConfiguration : IEntityTypeConfiguration<ChatSe
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).HasColumnName("session_id");
         builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
-        builder.Property(x => x.DocumentId).HasColumnName("doc_id");
         builder.Property(x => x.SessionTitle).HasColumnName("session_title").HasMaxLength(64).IsRequired();
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.User).WithMany(x => x.ChatSessions).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
-        builder.HasOne(x => x.Document).WithMany(x => x.ChatSessions).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.SetNull);
+        builder.Navigation(x => x.ChatSessionDocuments).UsePropertyAccessMode(PropertyAccessMode.Field);
     }
 }
 
