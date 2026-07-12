@@ -172,12 +172,8 @@ public sealed class AIChatService : IAIChatService
         }
         else
         {
-            var historyText = string.Join("\n", history.Select(m => $"{m.Sender}: {m.Content}"));
-            var prompt = $"CHAT HISTORY:\n{historyText}\n\nUSER: {request.Message}\nASSISTANT:";
-            var usageResult = await _openAIService.SendMessageWithUsageAsync(prompt);
-            aiResponse = usageResult.Text ?? "Xin loi, toi khong the tra loi luc nay.";
-            inputTokens = usageResult.InputTokens;
-            outputTokens = usageResult.OutputTokens;
+            aiResponse = "Vui lòng đính kèm một tài liệu để tôi có thể trả lời câu hỏi của bạn dựa trên nội dung tài liệu.";
+            isRelevant = false;
         }
 
         // Record token usage

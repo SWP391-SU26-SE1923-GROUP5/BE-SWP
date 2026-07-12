@@ -68,7 +68,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         // Programmatic relevance check — skip LLM if chunks don't match question
         var relevance = await ComputeChunkRelevanceAsync(question, resultList, ct);
-        const double RelevanceThreshold = 0.15;
+        const double RelevanceThreshold = 0.05;
         if (relevance < RelevanceThreshold)
         {
             _logger.LogWarning(
@@ -98,11 +98,12 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             - Users can request a "Summary" of any uploaded document.
 
             ANSWERING RULES:
-            1. If the user asks about the content of their uploaded document, base your answer on the provided SOURCES. If the SOURCES do not contain the answer, say so honestly.
+            1. Base your answer ONLY on the provided SOURCES. Your answer must be strictly limited to what the SOURCES contain.
             2. If the user asks about the AIStudyHub system features or how to use it, use the 'ABOUT AI STUDY HUB' info above to guide them naturally.
-            3. If the SOURCES above do not contain enough information, answer general questions (e.g., software architecture, programming concepts, technology) using your own knowledge.
-            4. Do NOT insert numeric citations like [1], [2] into your text.
-            5. Answer in Vietnamese by default unless the user asks in English.
+            3. If the SOURCES mention the topic but do not provide a full answer, say what the document DOES mention about the topic — do NOT make up additional information.
+            4. If the SOURCES contain zero information about the topic at all, say: "Tài liệu không đề cập đến chủ đề này."
+            5. Do NOT insert numeric citations like [1], [2] into your text.
+            6. Answer in Vietnamese by default unless the user asks in English.
             """;
 
         var userPrompt = $"""
@@ -151,7 +152,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         // Programmatic relevance check — skip LLM if chunks don't match question
         var relevance = await ComputeChunkRelevanceAsync(question, resultList, ct);
-        const double RelevanceThreshold = 0.15;
+        const double RelevanceThreshold = 0.05;
         if (relevance < RelevanceThreshold)
         {
             _logger.LogWarning(
@@ -181,11 +182,12 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             - Users can request a "Summary" of any uploaded document.
 
             ANSWERING RULES:
-            1. If the user asks about the content of their uploaded document, base your answer on the provided SOURCES. If the SOURCES do not contain the answer, say so honestly.
+            1. Base your answer ONLY on the provided SOURCES. Your answer must be strictly limited to what the SOURCES contain.
             2. If the user asks about the AIStudyHub system features or how to use it, use the 'ABOUT AI STUDY HUB' info above to guide them naturally.
-            3. If the SOURCES above do not contain enough information, answer general questions (e.g., software architecture, programming concepts, technology) using your own knowledge.
-            4. Do NOT insert numeric citations like [1], [2] into your text.
-            5. Answer in Vietnamese by default unless the user asks in English.
+            3. If the SOURCES mention the topic but do not provide a full answer, say what the document DOES mention about the topic — do NOT make up additional information.
+            4. If the SOURCES contain zero information about the topic at all, say: "Tài liệu không đề cập đến chủ đề này."
+            5. Do NOT insert numeric citations like [1], [2] into your text.
+            6. Answer in Vietnamese by default unless the user asks in English.
             """;
 
         var userPrompt = $"""
