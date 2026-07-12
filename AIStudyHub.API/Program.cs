@@ -78,6 +78,8 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.O
 builder.Services.AddHostedService<UnverifiedAccountCleanupService>();
 builder.Services.AddHostedService<TierExpirationCleanupService>();
 builder.Services.AddHostedService<DailyStreakResetWorker>();
+builder.Services.AddHostedService<StreakWarningWorker>();
+builder.Services.AddHostedService<QuotaWarningWorker>();
 
 builder.Services.AddHttpClient("EmbeddingClient");
 builder.Services.AddHttpClient("VectorStoreClient");

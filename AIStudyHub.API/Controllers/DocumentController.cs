@@ -117,36 +117,67 @@ public sealed class DocumentController : ControllerBase
         var userId = GetCurrentUserId();
         if (document.UserId != userId) return Forbid();
 
-        try
-        {
-            await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
+        // Soft-delete: move to trash instead of hard-delete.
+        // Owner can still see it in /api/Document/trash and restore it.
+        document.LifecycleStatus = DocumentLifecycleStatus.Trashed;
+        document.TrashedAt = DateTime.UtcNow;
+        document.TrashedBy = userId;
+        _unitOfWork.Documents.Update(document);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-            _unitOfWork.Documents.Remove(document);
+        _logger.LogInformation("Document {DocumentId} trashed by user {UserId}", id, userId);
+        return NoContent();
+    }
 
-            if (!string.IsNullOrEmpty(document.FileLink))
-            {
-                var relativePath = document.FileLink.Replace("/uploads/", "");
-                await _fileStorage.DeleteFileAsync(relativePath, cancellationToken);
-            }
+    /// <summary>Returns the calling user's trashed documents.</summary>
+    [HttpGet("trash")]
+    public async Task<ActionResult<IReadOnlyList<DocumentResponseDto>>> GetTrash(CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+        var result = await _service.GetTrashAsync(userId, cancellationToken);
+        return Ok(result);
+    }
 
-            var user = await _unitOfWork.Users.GetByIdAsync(userId, cancellationToken);
-            if (user != null)
-            {
-                var fileSizeMb = document.FileSizeBytes / (1024.0 * 1024.0);
-                user.CurrentStorageCapacity = Math.Max(0, user.CurrentStorageCapacity - (int)fileSizeMb);
-                _unitOfWork.Users.Update(user);
-            }
+    /// <summary>Restores a trashed document back to active state.</summary>
+    [HttpPost("{id:guid}/restore")]
+    public async Task<IActionResult> Restore(Guid id, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+        await _service.RestoreAsync(id, userId, cancellationToken);
+        return Ok();
+    }
 
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
+    /// <summary>Permanently purges a trashed document. Idempotent — returns 204 even if already purged.</summary>
+    [HttpDelete("{id:guid}/purge")]
+    public async Task<IActionResult> Purge(Guid id, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+        await _service.PurgeAsync(id, userId, cancellationToken);
+        _logger.LogInformation("Document {DocumentId} permanently purged by user {UserId}", id, userId);
+        return NoContent();
+    }
 
-            _logger.LogInformation("Document {DocumentId} deleted by user {UserId}", id, userId);
-            return NoContent();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to delete document {DocumentId}", id);
-            return StatusCode(500, "An error occurred while deleting the document");
-        }
+    /// <summary>Lists all per-user share entries for a document. Owner only.</summary>
+    [HttpGet("{id:guid}/shares")]
+    public async Task<ActionResult<DocumentShareListDto>> GetShares(Guid id, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+        var result = await _service.GetSharesAsync(id, userId, cancellationToken);
+        return Ok(result);
+    }
+
+    /// <summary>Revokes a specific user's access to a shared document. Owner only.</summary>
+    [HttpDelete("{documentId:guid}/shares/{targetUserId:guid}")]
+    public async Task<IActionResult> RevokeShare(Guid documentId, Guid targetUserId, CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+        await _service.RevokeShareAsync(documentId, targetUserId, userId, cancellationToken);
+        return NoContent();
     }
 
     [HttpGet("{id:guid}/download")]

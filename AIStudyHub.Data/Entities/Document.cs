@@ -18,6 +18,11 @@ public sealed class Document : BaseEntity
     public bool IsNonFlaggable { get; set; } = false;
     public bool? IsOcrApplied { get; set; }
 
+    /// <summary>Soft-delete state machine: Active -> Trashed -> Purged.</summary>
+    public DocumentLifecycleStatus LifecycleStatus { get; set; } = DocumentLifecycleStatus.Active;
+    public DateTime? TrashedAt { get; set; }
+    public Guid? TrashedBy { get; set; }
+
     /// <summary>When Status == Failed, captures the exception message from the processing
     /// pipeline (PDF extraction, OCR, AI extraction). Null otherwise. Added 2026-06-29 per Master Spec.</summary>
     public string? ErrorMessage { get; set; }
@@ -29,4 +34,5 @@ public sealed class Document : BaseEntity
     public ICollection<Flashcard> Flashcards { get; set; } = new List<Flashcard>();
     public ICollection<Quiz> Quizzes { get; set; } = new List<Quiz>();
     public ICollection<ChatSessionDocument> ChatSessionDocuments { get; set; } = new List<ChatSessionDocument>();
+    public ICollection<DocumentShare> DocumentShares { get; set; } = new List<DocumentShare>();
 }

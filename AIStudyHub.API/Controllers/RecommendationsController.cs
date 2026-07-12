@@ -50,6 +50,30 @@ public sealed class RecommendationsController : ControllerBase
         return Ok(result.Data);
     }
 
+    /// <summary>Returns the user's active (non-dismissed) recommendations with an ETag for cache invalidation.</summary>
+    [HttpGet]
+    public async Task<ActionResult<IReadOnlyList<RecommendationResponseDto>>> GetMyActive(CancellationToken ct)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+        var result = await _service.GetMyActiveRecommendationsAsync(userId, ct);
+
+        // ETag based on count: changes only when recommendations are added/dismissed
+        var etag = $"\"{result.Count}:{result.GetHashCode()}\"";
+        Response.Headers["ETag"] = etag;
+        return Ok(result);
+    }
+
+    /// <summary>Dismisses a recommendation (sets status to Dismissed).</summary>
+    [HttpDelete("{id:guid}")]
+    public async Task<ActionResult> Dismiss(Guid id, CancellationToken ct)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+        await _service.DismissAsync(id, userId, ct);
+        return NoContent();
+    }
+
     private Guid GetCurrentUserId()
     {
         var claim = User.FindFirst(ClaimTypes.NameIdentifier)

@@ -43,6 +43,12 @@ public sealed class NotificationController : ControllerBase
             return Unauthorized();
 
         var result = await _service.GetUserNotificationsAsync(userId, cancellationToken);
+
+        // ETag: hash of unread count for cache invalidation
+        var unreadCount = result.Count(n => !n.IsRead);
+        var etag = $"\"{unreadCount}:{result.Count}\"";
+        Response.Headers["ETag"] = etag;
+
         return Ok(result);
     }
 

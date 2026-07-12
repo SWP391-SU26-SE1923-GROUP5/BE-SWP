@@ -1,10 +1,1 @@
-using AIStudyHub.Business.DTOs.Common;
-using AIStudyHub.Business.DTOs.Recommendations;
-
-namespace AIStudyHub.Business.Interfaces.Services;
-
-public interface IRecommendationService
-{
-    Task<ServiceResult<IReadOnlyList<SubjectMasteryDto>>> GetSubjectMasteryAsync(Guid userId, CancellationToken cancellationToken = default);
-    Task<ServiceResult<RecommendationResultDto>> GetRecommendationsAsync(Guid userId, CancellationToken cancellationToken = default);
-}
+using AIStudyHub.Business.DTOs.Common;using AIStudyHub.Business.DTOs.Recommendations;namespace AIStudyHub.Business.Interfaces.Services;public interface IRecommendationService{    Task<ServiceResult<IReadOnlyList<SubjectMasteryDto>>> GetSubjectMasteryAsync(Guid userId, CancellationToken cancellationToken = default);    Task<ServiceResult<RecommendationResultDto>> GetRecommendationsAsync(Guid userId, CancellationToken cancellationToken = default);    Task<IReadOnlyList<RecommendationResponseDto>> GetMyActiveRecommendationsAsync(Guid userId, CancellationToken ct = default);    Task DismissAsync(Guid recommendationId, Guid userId, CancellationToken ct = default);    Task CreateWeakSubjectRecommendationAsync(Guid userId, Guid subjectId, string subjectName, string subjectCode, double masteryPct, CancellationToken ct = default);    Task CreateLeechCardRecommendationAsync(Guid userId, Guid flashcardId, CancellationToken ct = default);}

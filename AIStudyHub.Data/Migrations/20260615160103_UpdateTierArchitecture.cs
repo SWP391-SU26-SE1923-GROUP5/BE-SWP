@@ -26,8 +26,8 @@ namespace AIStudyHub.Data.Migrations
                 columns: new[] { "tier_id", "ai_tokens", "create_at", "storage_limit_mb", "tier_name", "update_at" },
                 values: new object[,]
                 {
-                    { new Guid("11111111-1111-1111-1111-111111111111"), 10000, new DateTime(2026, 6, 15, 16, 1, 0, 117, DateTimeKind.Utc).AddTicks(3402), 1024, "Free", null },
-                    { new Guid("55555555-5555-5555-5555-555555555555"), 30000, new DateTime(2026, 6, 15, 16, 1, 0, 117, DateTimeKind.Utc).AddTicks(3406), 3072, "Premium", null }
+                    { new Guid("11111111-1111-1111-1111-111111111111"), 1000000, new DateTime(2026, 6, 15, 16, 1, 0, 117, DateTimeKind.Utc).AddTicks(3402), 1024, "Free", null },
+                    { new Guid("55555555-5555-5555-5555-555555555555"), 3000000, new DateTime(2026, 6, 15, 16, 1, 0, 117, DateTimeKind.Utc).AddTicks(3406), 3072, "Premium", null }
                 });
 
             migrationBuilder.AddColumn<Guid>(

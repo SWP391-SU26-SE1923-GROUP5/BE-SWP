@@ -34,6 +34,9 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
     public DbSet<StudyLog> StudyLogs => Set<StudyLog>();
     public DbSet<Badge> Badges => Set<Badge>();
     public DbSet<UserBadge> UserBadges => Set<UserBadge>();
+    public DbSet<DocumentShare> DocumentShares => Set<DocumentShare>();
+    public DbSet<TokenLedger> TokenLedgers => Set<TokenLedger>();
+    public DbSet<Recommendation> Recommendations => Set<Recommendation>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -117,7 +120,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
                 TierName = "Free",
                 Price = 0m,
                 StorageLimitMb = 1024,
-                AiTokens = 10000,
+                AiTokens = 1000000,
                 CreatedAt = seedTimestamp
             },
             new TierMembership
@@ -126,7 +129,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
                 TierName = "Pro",
                 Price = 499000m,
                 StorageLimitMb = 5120,
-                AiTokens = 50000,
+                AiTokens = 5000000,
                 CreatedAt = seedTimestamp
             },
             new TierMembership
@@ -135,7 +138,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
                 TierName = "Premium",
                 Price = 199000m,
                 StorageLimitMb = 3072,
-                AiTokens = 30000,
+                AiTokens = 3000000,
                 CreatedAt = seedTimestamp
             });
     }

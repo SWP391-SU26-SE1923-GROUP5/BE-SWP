@@ -4,6 +4,7 @@ using AIStudyHub.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace AIStudyHub.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260712171456_FixDocumentShareUserTableName")]
+    partial class FixDocumentShareUserTableName
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1854,7 +1857,7 @@ namespace AIStudyHub.Data.Migrations
                         .IsRequired();
 
                     b.HasOne("AIStudyHub.Data.Entities.User", "User")
-                        .WithMany("DocumentShares")
+                        .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
@@ -2217,8 +2220,6 @@ namespace AIStudyHub.Data.Migrations
             modelBuilder.Entity("AIStudyHub.Data.Entities.User", b =>
                 {
                     b.Navigation("ChatSessions");
-
-                    b.Navigation("DocumentShares");
 
                     b.Navigation("Documents");
 

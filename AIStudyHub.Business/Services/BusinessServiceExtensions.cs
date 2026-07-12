@@ -66,6 +66,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<IFlashcardAiService, FlashcardAiService>();
         services.AddScoped<IQuizAiService, QuizAiService>();
         services.AddScoped<ITokenTrackerService, TokenTrackerService>();
+        services.AddScoped<ITokenWalletService, TokenWalletService>();
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
 
         // Channel-based queue for background document processing
@@ -76,6 +77,12 @@ public static class BusinessServiceExtensions
 
         // Plan C4 — daily scan for upcoming tier expirations (Plan B.3.2)
         services.AddHostedService<TierExpiryWorker>();
+
+        // Phase 3a: notify users with active streaks that they're about to break (12:00 UTC)
+        services.AddHostedService<StreakWarningWorker>();
+
+        // Phase 3a: warn users approaching AI token quota (09:00 UTC)
+        services.AddHostedService<QuotaWarningWorker>();
 
         // L3: Search Services
         services.Configure<RetrievalOptions>(configuration.GetSection("Retrieval"));

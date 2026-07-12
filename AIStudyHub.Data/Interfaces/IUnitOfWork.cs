@@ -25,6 +25,9 @@ public interface IUnitOfWork : IDisposable
     IRepository<StudyLog> StudyLogs { get; }
     IRepository<Badge> Badges { get; }
     IRepository<UserBadge> UserBadges { get; }
+    IRepository<DocumentShare> DocumentShares { get; }
+    IRepository<TokenLedger> TokenLedgers { get; }
+    IRepository<Recommendation> Recommendations { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

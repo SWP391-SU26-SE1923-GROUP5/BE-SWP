@@ -31,6 +31,9 @@ public sealed class UnitOfWork : IUnitOfWork
         StudyLogs = new GenericRepository<StudyLog>(_dbContext);
         Badges = new GenericRepository<Badge>(_dbContext);
         UserBadges = new GenericRepository<UserBadge>(_dbContext);
+        DocumentShares = new GenericRepository<DocumentShare>(_dbContext);
+        TokenLedgers = new GenericRepository<TokenLedger>(_dbContext);
+        Recommendations = new GenericRepository<Recommendation>(_dbContext);
     }
 
     public IRepository<User> Users { get; }
@@ -54,6 +57,9 @@ public sealed class UnitOfWork : IUnitOfWork
     public IRepository<StudyLog> StudyLogs { get; }
     public IRepository<Badge> Badges { get; }
     public IRepository<UserBadge> UserBadges { get; }
+    public IRepository<DocumentShare> DocumentShares { get; }
+    public IRepository<TokenLedger> TokenLedgers { get; }
+    public IRepository<Recommendation> Recommendations { get; }
 
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

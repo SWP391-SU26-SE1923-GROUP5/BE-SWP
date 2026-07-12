@@ -7,9 +7,11 @@ using AIStudyHub.Business.DTOs.Payments;
 using AIStudyHub.Business.DTOs.Questions;
 using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.DTOs.QuizSubmissions;
+using AIStudyHub.Business.DTOs.Recommendations;
 using AIStudyHub.Business.DTOs.Reports;
 using AIStudyHub.Business.DTOs.Subjects;
 using AIStudyHub.Business.DTOs.TierMemberships;
+using AIStudyHub.Business.DTOs.TokenWallet;
 using AIStudyHub.Business.DTOs.Users;
 using AIStudyHub.Business.DTOs.Votes;
 using AIStudyHub.Data.Entities;
@@ -60,6 +62,8 @@ public sealed class ApplicationMappingProfile : Profile
                 src.Status,
                 src.ErrorMessage,
                 src.Votes != null ? src.Votes.Count : 0,
+                src.LifecycleStatus,
+                src.TrashedAt,
                 src.CreatedAt,
                 src.UpdatedAt
             ));
@@ -90,10 +94,15 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<Answer, AnswerResponseDto>();
 
         CreateMap<QuizSubmission, QuizSubmissionResponseDto>()
-            .ForMember(dest => dest.Score, opt => opt.MapFrom(src => src.Score))
-            .ForMember(dest => dest.MaxScore, opt => opt.MapFrom(src => src.MaxScore))
-            .ForMember(dest => dest.TotalCorrect, opt => opt.MapFrom(src => src.TotalCorrect))
-            .ForMember(dest => dest.GradedAt, opt => opt.MapFrom(src => src.GradedAt));
+            .ConstructUsing(src => new QuizSubmissionResponseDto(
+                src.Id, src.UserId, src.QuizId,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                src.Score, src.MaxScore, src.TotalCorrect,
+                null,
+                src.MaxScore > 0 ? Math.Round((double)src.Score / src.MaxScore * 100, 1) : 0,
+                src.GradedAt, src.SubmittedAt, src.CreatedAt, src.UpdatedAt));
         CreateMap<CreateQuizSubmissionRequestDto, QuizSubmission>();
 
         CreateMap<Notification, NotificationResponseDto>();
@@ -130,5 +139,11 @@ public sealed class ApplicationMappingProfile : Profile
                 src.Document.Title,
                 src.Document.FileName,
                 src.CreatedAt));
+
+        CreateMap<TokenLedger, TokenWalletHistoryDto>()
+            .ConstructUsing(src => new TokenWalletHistoryDto(
+                src.Id, src.OperationType, src.Status.ToString(), src.EstimatedTokens,
+                src.ActualTokens, src.FailureReason, src.CreatedAt));
+        CreateMap<Recommendation, RecommendationResponseDto>();
     }
 }

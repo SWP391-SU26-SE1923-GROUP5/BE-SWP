@@ -24,17 +24,20 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
     private readonly ILogger<FlashcardReviewService> _logger;
     private readonly IGamificationService? _gamificationService;
     private readonly IBadgeService? _badgeService;
+    private readonly IRecommendationService? _recommendationService;
 
     public FlashcardReviewService(
         IUnitOfWork unitOfWork,
         ILogger<FlashcardReviewService> logger,
         IGamificationService? gamificationService = null,
-        IBadgeService? badgeService = null)
+        IBadgeService? badgeService = null,
+        IRecommendationService? recommendationService = null)
     {
         _unitOfWork = unitOfWork;
         _logger = logger;
         _gamificationService = gamificationService;
         _badgeService = badgeService;
+        _recommendationService = recommendationService;
     }
 
     public async Task<ServiceResult<ReviewFlashcardResultDto>> ProcessReviewAsync(
@@ -74,6 +77,26 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
         }
 
         ApplySm2(existing, quality);
+
+        // Track lapses on the flashcard (for leech detection)
+        if ((int)quality < 3)
+        {
+            flashcard.Lapses += 1;
+            _unitOfWork.Flashcards.Update(flashcard);
+
+            // Phase 4b: auto-create LeechCard recommendation when lapses threshold (4) is first crossed
+            if (_recommendationService != null && flashcard.Lapses == 4)
+            {
+                try
+                {
+                    await _recommendationService.CreateLeechCardRecommendationAsync(userId, flashcardId, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to create leech recommendation for user {UserId}, card {FlashcardId}", userId, flashcardId);
+                }
+            }
+        }
 
         if (existing.Id != Guid.Empty && _unitOfWork.FlashcardReviews.Query().Any(r => r.Id == existing.Id))
         {
@@ -224,34 +247,54 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
     }
 
     /// <summary>
-    /// Pure SM-2 update. Correct (Easy) increments repetitions and scales interval by ease factor;
-    /// incorrect (Again/Hard) resets repetitions to 0 and pins interval to 1 day.
-    /// Ease factor is always recalculated from quality, with a 1.3 floor.
+    /// Pure SM-2 update with Fuzzing ±5% (Plan C3 / B.2.3).
+    ///
+    /// Quality mapping (per message.txt section 3.5):
+    ///   Easy = correct without hesitation, Good = correct with effort, Hard = wrong but remembered, Again = wrong
+    ///   Only Easy/Good (>= 3 in classic SM-2) increment the streak; Hard/Again reset repetitions.
+    ///
+    /// SM-2 formula per Master Spec:
+    ///   q &lt; 3 → reset Repetitions=0, Interval=1
+    ///   q &gt;= 3 → Repetitions++, interval 1/6/Ceil(prev*EF)
+    ///   EF = Max(1.3, EF + (0.1 - (5-q)*(0.08 + (5-q)*0.02)))
+    ///
+    /// Fuzzing: for intervals >= 10 days, apply a ±5% random multiplier.
     /// </summary>
     internal static void ApplySm2(FlashcardReview review, ReviewQuality quality)
     {
-        var isCorrect = quality == ReviewQuality.Easy;
-        var q = (int)quality; // 0..3, higher is better
+        var q = (int)quality; // 0=Again, 1=Hard, 2=Good, 3=Easy
 
-        if (isCorrect)
+        if (q < 3)
         {
+            // Incorrect — reset, increment lapses
+            review.Repetitions = 0;
+            review.Interval = 1;
+            // Lapses is incremented by the caller (ProcessReviewAsync) via the flashcard entity.
+        }
+        else
+        {
+            // Correct
             review.Repetitions += 1;
             review.Interval = review.Repetitions switch
             {
                 1 => 1,
                 2 => 6,
-                _ => (int)Math.Round(review.Interval * review.EaseFactor)
+                _ => (int)Math.Ceiling(review.Interval * review.EaseFactor)
             };
         }
-        else
-        {
-            review.Repetitions = 0;
-            review.Interval = 1;
-        }
 
-        // Classic SM-2 ease update, anchored to q in [0..3] (we use q directly; for q == 3 the delta is +0.10).
-        var delta = 0.1f - (3 - q) * (0.08f + (3 - q) * 0.02f);
-        review.EaseFactor = Math.Max(1.3f, review.EaseFactor + delta);
+        // Classic SM-2 ease factor update (using Master Spec formula):
+        // EF = Max(1.3, EF + (0.1 - (5-q)*(0.08 + (5-q)*0.02)))
+        var efDelta = 0.1f - (5 - q) * (0.08f + (5 - q) * 0.02f);
+        review.EaseFactor = Math.Max(1.3f, review.EaseFactor + efDelta);
+
+        // Fuzzing ±5%: apply to intervals >= 10 days
+        if (review.Interval >= 10)
+        {
+            var rng = Random.Shared;
+            var factor = (float)(0.95 + rng.NextDouble() * 0.10); // [0.95, 1.05)
+            review.Interval = Math.Max(review.Interval, (int)Math.Round(review.Interval * factor));
+        }
 
         review.NextReviewDate = DateTime.UtcNow.AddDays(review.Interval);
     }
