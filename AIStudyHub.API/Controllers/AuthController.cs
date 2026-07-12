@@ -76,10 +76,17 @@ public sealed class AuthController : ControllerBase
     }
 
     [HttpPost("reset-password")]
-    public async Task<IActionResult> ResetPassword(ResetPasswordRequestDto request, CancellationToken cancellationToken)
+    public async Task<IActionResult> ResetPassword(ConfirmResetPasswordRequestDto request, CancellationToken cancellationToken)
     {
-        await _mediator.Send(new ResetPasswordCommand(request), cancellationToken);
+        await _mediator.Send(new ConfirmResetPasswordCommand(request), cancellationToken);
         return Ok(new { message = "Password reset successfully." });
+    }
+
+    [HttpPost("verify-password-reset-otp")]
+    public async Task<IActionResult> VerifyPasswordResetOtp(VerifyPasswordResetOtpRequestDto request, CancellationToken cancellationToken)
+    {
+        await _mediator.Send(new VerifyPasswordResetOtpCommand(request), cancellationToken);
+        return Ok(new { message = "OTP verified successfully." });
     }
 
     [Authorize]

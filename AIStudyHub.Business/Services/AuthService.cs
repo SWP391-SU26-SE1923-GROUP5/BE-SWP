@@ -278,7 +278,7 @@ public sealed class AuthService : IAuthService
             cancellationToken);
     }
 
-    public async Task ResetPasswordAsync(ResetPasswordRequestDto request, CancellationToken cancellationToken = default)
+    public async Task VerifyPasswordResetOtpAsync(VerifyPasswordResetOtpRequestDto request, CancellationToken cancellationToken = default)
     {
         var normalizedEmail = NormalizeEmail(request.Email);
         var user = await _userManager.FindByEmailAsync(normalizedEmail);
@@ -320,10 +320,39 @@ public sealed class AuthService : IAuthService
 
         otpRecord.UsedAt = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task ConfirmResetPasswordAsync(ConfirmResetPasswordRequestDto request, CancellationToken cancellationToken = default)
+    {
+        var normalizedEmail = NormalizeEmail(request.Email);
+        var user = await _userManager.FindByEmailAsync(normalizedEmail);
+        if (user is null)
+        {
+            throw new OtpInvalidException("Invalid or expired OTP.");
+        }
+
+        var otpRecord = await _dbContext.OtpRecords
+            .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.PasswordReset && o.UsedAt != null)
+            .OrderByDescending(o => o.UsedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (otpRecord is null)
+        {
+            throw new OtpInvalidException("No verified OTP found. Please verify your email first.");
+        }
+
+        if (otpRecord.IsExpired)
+        {
+            throw new OtpInvalidException("OTP has expired. Please request a new one.");
+        }
 
         var token = await _userManager.GeneratePasswordResetTokenAsync(user);
         var result = await _userManager.ResetPasswordAsync(user, token, request.NewPassword);
         EnsureIdentitySucceeded(result);
+
+        await _dbContext.OtpRecords
+            .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.PasswordReset)
+            .ExecuteDeleteAsync(cancellationToken);
     }
 
     public async Task ChangePasswordAsync(ClaimsPrincipal userPrincipal, ChangePasswordRequestDto request, CancellationToken cancellationToken = default)

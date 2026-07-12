@@ -12,7 +12,8 @@ public interface IAuthService
     Task VerifyRegistrationOtpAsync(VerifyRegistrationOtpRequestDto request, CancellationToken cancellationToken = default);
     Task ResendRegistrationOtpAsync(ResendOtpRequestDto request, CancellationToken cancellationToken = default);
     Task ForgotPasswordAsync(ForgotPasswordRequestDto request, CancellationToken cancellationToken = default);
-    Task ResetPasswordAsync(ResetPasswordRequestDto request, CancellationToken cancellationToken = default);
+    Task VerifyPasswordResetOtpAsync(VerifyPasswordResetOtpRequestDto request, CancellationToken cancellationToken = default);
+    Task ConfirmResetPasswordAsync(ConfirmResetPasswordRequestDto request, CancellationToken cancellationToken = default);
     Task ChangePasswordAsync(ClaimsPrincipal userPrincipal, ChangePasswordRequestDto request, CancellationToken cancellationToken = default);
     Task LogoutAsync(LogoutRequestDto request, CancellationToken cancellationToken = default);
 }
