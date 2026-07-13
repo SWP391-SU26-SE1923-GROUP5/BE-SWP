@@ -201,13 +201,30 @@ public sealed class DocumentService : IDocumentService
         var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken)
             ?? throw new KeyNotFoundException($"Document with ID {documentId} not found.");
 
-        if (document.UserId != callerId)
-            throw new UnauthorizedAccessException("Only the document owner can change its sharing settings.");
+        var isOwner = document.UserId == callerId;
+        if (!isOwner)
+        {
+            var callerShare = await _unitOfWork.DocumentShares
+                .Query()
+                .Where(s => s.DocumentId == documentId && s.UserId == callerId)
+                .AnyAsync(cancellationToken);
+            if (!callerShare)
+                throw new UnauthorizedAccessException("Only the document owner or a collaborator can change sharing settings.");
+        }
 
-        var targetIds = request.SharedUserIds?
-            .Where(id => id != Guid.Empty && id != callerId)
-            .Distinct()
-            .ToList() ?? new List<Guid>();
+        var allRequested = request.SharedUserIds?.Where(id => id != Guid.Empty).Distinct().ToList() ?? new List<Guid>();
+
+        var callerInRequest = allRequested.Contains(callerId);
+        var ownerInRequest = allRequested.Contains(document.UserId);
+
+        if (callerInRequest && ownerInRequest)
+            throw new InvalidOperationException("Cannot share with yourself or the document owner.");
+        if (callerInRequest)
+            throw new InvalidOperationException("Cannot share with yourself.");
+        if (ownerInRequest)
+            throw new InvalidOperationException("Cannot modify the owner's access level.");
+
+        var targetIds = allRequested.Where(id => id != callerId && id != document.UserId).ToList();
 
         if (targetIds.Count > 0)
         {
@@ -216,58 +233,70 @@ public sealed class DocumentService : IDocumentService
                 .Where(u => targetIds.Contains(u.Id) && u.IsActive && u.Status == "active")
                 .Select(u => u.Id)
                 .ToListAsync(cancellationToken);
+
+            var notFoundIds = targetIds.Except(existingIds).ToList();
+            if (notFoundIds.Count > 0)
+                throw new KeyNotFoundException(
+                    $"User(s) not found or not active: {string.Join(", ", notFoundIds)}.");
+
             targetIds = existingIds;
         }
 
-        // Load existing share user IDs so we can make this additive.
+        // Load existing shares for this document.
         var existingShares = await _unitOfWork.DocumentShares
             .Query()
             .Where(s => s.DocumentId == documentId)
             .ToListAsync(cancellationToken);
-        var existingUserIds = existingShares.Select(s => s.UserId).ToHashSet();
-
-        // Only add users who are not already shared.
-        var newTargetIds = targetIds.Where(id => !existingUserIds.Contains(id)).ToList();
+        var existingByUserId = existingShares.ToDictionary(s => s.UserId);
 
         var levels = request.Levels ?? Enumerable.Repeat((int)ShareLevel.Read, targetIds.Count).ToList();
         var resultLevels = new List<int>();
 
-        // Existing shares: return their current level from the DB.
-        foreach (var s in existingShares)
-            resultLevels.Add((int)s.Level);
-
-        // New shares: insert and include their level in the response.
-        for (int i = 0; i < newTargetIds.Count; i++)
+        // Upsert: update existing shares or insert new ones, in the order of targetIds.
+        for (int i = 0; i < targetIds.Count; i++)
         {
-            var originalIndex = targetIds.IndexOf(newTargetIds[i]);
-            var level = originalIndex < levels.Count ? (ShareLevel)levels[originalIndex] : ShareLevel.Read;
-            if (level != ShareLevel.Read && level != ShareLevel.Edit)
-                level = ShareLevel.Read;
+            var targetId = targetIds[i];
+            var requestedLevel = i < levels.Count ? (ShareLevel)levels[i] : ShareLevel.Read;
 
-            await _unitOfWork.DocumentShares.AddAsync(new DocumentShare
+            // Validate requested level enum.
+            if (requestedLevel != ShareLevel.Read && requestedLevel != ShareLevel.Edit)
+                requestedLevel = ShareLevel.Read;
+
+            if (existingByUserId.TryGetValue(targetId, out var existingShare))
             {
-                Id = Guid.NewGuid(),
-                DocumentId = documentId,
-                UserId = newTargetIds[i],
-                Level = level,
-                SharedBy = callerId,
-                SharedAt = DateTime.UtcNow,
-                CreatedAt = DateTime.UtcNow
-            }, cancellationToken);
-            resultLevels.Add((int)level);
+                existingShare.Level = requestedLevel;
+                existingShare.SharedBy = callerId;
+                existingShare.SharedAt = DateTime.UtcNow;
+                _unitOfWork.DocumentShares.Update(existingShare);
+                resultLevels.Add((int)existingShare.Level);
+            }
+            else
+            {
+                await _unitOfWork.DocumentShares.AddAsync(new DocumentShare
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentId = documentId,
+                    UserId = targetId,
+                    Level = requestedLevel,
+                    SharedBy = callerId,
+                    SharedAt = DateTime.UtcNow,
+                    CreatedAt = DateTime.UtcNow
+                }, cancellationToken);
+                resultLevels.Add((int)requestedLevel);
+            }
         }
 
-        // Response: all current share user IDs (existing + newly added), ordered as in DB + new inserts.
-        var allSharedUserIds = existingShares.Select(s => s.UserId)
-            .Concat(newTargetIds)
-            .ToList();
+        var remainingShares = await _unitOfWork.DocumentShares
+            .Query()
+            .Where(s => s.DocumentId == documentId)
+            .CountAsync(cancellationToken);
 
-        document.ShareStatus = (existingShares.Count + newTargetIds.Count) > 0 ? "shared" : "private";
+        document.ShareStatus = remainingShares > 0 ? "shared" : "private";
 
         _unitOfWork.Documents.Update(document);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return new ShareDocumentResponseDto(document.Id, allSharedUserIds, resultLevels);
+        return new ShareDocumentResponseDto(document.Id, targetIds, resultLevels);
     }
 
     public async Task<IReadOnlyList<DocumentResponseDto>> GetTrashAsync(Guid userId, CancellationToken cancellationToken = default)

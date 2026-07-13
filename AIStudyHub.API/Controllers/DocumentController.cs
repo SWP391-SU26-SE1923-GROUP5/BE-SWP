@@ -111,8 +111,25 @@ public sealed class DocumentController : ControllerBase
         if (userId == Guid.Empty)
             return Unauthorized();
 
-        var result = await _service.ShareDocumentAsync(id, userId, request, cancellationToken);
-        return Ok(result);
+        try
+        {
+            var result = await _service.ShareDocumentAsync(id, userId, request, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            if (ex.Message.Contains("User"))
+                return BadRequest(new { message = ex.Message });
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpDelete("{id:guid}")]
