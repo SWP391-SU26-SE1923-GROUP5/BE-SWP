@@ -48,12 +48,12 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _logger = logger;
     }
 
-    public async Task<RagResponse> AskAsync(Guid userId, Guid? documentId, string question, IReadOnlyList<ChatMessage> history, CancellationToken ct = default)
+    public async Task<RagResponse> AskAsync(Guid userId, IReadOnlyList<Guid>? documentIds, string question, IReadOnlyList<ChatMessage> history, CancellationToken ct = default)
     {
         _logger.LogInformation("Processing RAG query for user {UserId}", userId);
 
         // L3: Retrieval with hybrid search and reranking
-        var searchResults = await _searchService.SearchAsync(question, userId, documentId, 20, ct);
+        var searchResults = await _searchService.SearchAsync(question, userId, documentIds, 20, ct);
         var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 5, ct);
         _logger.LogInformation("After 1st rerank ({Count}): {Chunks}",
             rerankedResults.Count(),
@@ -142,12 +142,12 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
     }
 
 
-    public async Task<RagResponseWithUsage> AskWithTrackingAsync(Guid userId, Guid? documentId, string question, IReadOnlyList<ChatMessage> history, CancellationToken ct = default)
+    public async Task<RagResponseWithUsage> AskWithTrackingAsync(Guid userId, IReadOnlyList<Guid>? documentIds, string question, IReadOnlyList<ChatMessage> history, CancellationToken ct = default)
     {
         _logger.LogInformation("Processing RAG query with tracking for user {UserId}", userId);
 
         // L3: Retrieval with hybrid search and reranking
-        var searchResults = await _searchService.SearchAsync(question, userId, documentId, 20, ct);
+        var searchResults = await _searchService.SearchAsync(question, userId, documentIds, 20, ct);
         var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 5, ct);
         
         var resultList = rerankedResults.ToList();

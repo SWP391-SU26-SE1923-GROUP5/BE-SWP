@@ -35,25 +35,21 @@ public class HybridSearchService : IHybridSearchService
     public async Task<IEnumerable<SearchResult>> SearchAsync(
         string query,
         Guid userId,
-        Guid? documentId,
+        IReadOnlyList<Guid>? documentIds,
         int topK = 10,
         CancellationToken ct = default)
     {
-        _logger.LogInformation("HybridSearch START: query='{Query}', userId={UserId}, documentId={DocumentId}", query, userId, documentId);
+        _logger.LogInformation("HybridSearch START: query='{Query}', userId={UserId}, documentIds={DocumentIds}", query, userId, documentIds?.Count);
 
         // 1. Generate query representations
         var denseEmbedding = await _embeddingService.GenerateEmbeddingAsync(query);
         var sparseVector = _sparseGenerator.GenerateSparseVector(query);
 
-        // 2. Search in Qdrant using RRF
+        // 2. Build filter: userId always required; documentIds becomes a MatchAny over documentId field
         var filter = new Dictionary<string, string> { { "userId", userId.ToString() } };
-        if (documentId.HasValue)
-        {
-            filter.Add("documentId", documentId.Value.ToString());
-        }
-        _logger.LogInformation("HybridSearch: Calling Qdrant with filter={Filter}", string.Join(",", filter.Select(kv => $"{kv.Key}={kv.Value}")));
+        _logger.LogInformation("HybridSearch: Calling Qdrant with filter={Filter} and documentIds={DocIds}", string.Join(",", filter.Select(kv => $"{kv.Key}={kv.Value}")), documentIds?.Count ?? 0);
 
-        var qdrantResults = await _vectorStore.HybridSearchAsync(denseEmbedding, sparseVector, topK, filter);
+        var qdrantResults = await _vectorStore.HybridSearchAsync(denseEmbedding, sparseVector, topK, filter, documentIds);
         _logger.LogInformation("HybridSearch: Qdrant returned {Count} results", qdrantResults.Count);
 
         // Map to SearchResult
