@@ -26,6 +26,7 @@ internal sealed class UserConfiguration : IEntityTypeConfiguration<User>
         builder.Property(x => x.TierExpireAt).HasColumnName("tier_expire_at").HasColumnType("datetime");
         builder.HasIndex(x => x.Email).IsUnique();
         builder.HasOne(x => x.TierMembership).WithMany(x => x.Users).HasForeignKey(x => x.TierId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasMany(x => x.DocumentShares).WithOne(x => x.User).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -185,6 +186,7 @@ internal sealed class FlashcardConfiguration : IEntityTypeConfiguration<Flashcar
         builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
         builder.Property(x => x.Front).HasColumnName("front").IsRequired();
         builder.Property(x => x.Back).HasColumnName("back").IsRequired();
+        builder.Property(x => x.Lapses).HasColumnName("lapses").IsRequired().HasDefaultValue(0);
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.Document).WithMany(x => x.Flashcards).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
@@ -363,11 +365,17 @@ internal sealed class NotificationConfiguration : IEntityTypeConfiguration<Notif
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).HasColumnName("noti_id");
         builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(200);
         builder.Property(x => x.Message).HasColumnName("message").IsRequired();
+        builder.Property(x => x.PayloadJson).HasColumnName("payload_json").HasColumnType("nvarchar(max)");
+        builder.Property(x => x.ActionUrl).HasColumnName("action_url").HasMaxLength(500);
         builder.Property(x => x.IsRead).HasColumnName("is_read").HasDefaultValue(false);
+        builder.Property(x => x.Type).HasColumnName("type").HasConversion<int>().IsRequired();
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.User).WithMany(x => x.Notifications).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasIndex(x => new { x.UserId, x.IsRead });
+        builder.HasIndex(x => new { x.UserId, x.CreatedAt });
     }
 }
 
@@ -392,6 +400,29 @@ internal sealed class PaymentConfiguration : IEntityTypeConfiguration<Payment>
     }
 }
 
+internal sealed class ChatSessionDocumentConfiguration : IEntityTypeConfiguration<ChatSessionDocument>
+{
+    public void Configure(EntityTypeBuilder<ChatSessionDocument> builder)
+    {
+        builder.ToTable("ChatSessionDocument");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("id");
+        builder.Property(x => x.ChatSessionId).HasColumnName("session_id").IsRequired();
+        builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+        builder.HasOne(x => x.ChatSession)
+            .WithMany(x => x.ChatSessionDocuments)
+            .HasForeignKey(x => x.ChatSessionId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne(x => x.Document)
+            .WithMany(x => x.ChatSessionDocuments)
+            .HasForeignKey(x => x.DocumentId)
+            .OnDelete(DeleteBehavior.Cascade);
+        builder.HasIndex(x => new { x.ChatSessionId, x.DocumentId }).IsUnique();
+    }
+}
+
 internal sealed class ChatSessionConfiguration : IEntityTypeConfiguration<ChatSession>
 {
     public void Configure(EntityTypeBuilder<ChatSession> builder)
@@ -400,12 +431,11 @@ internal sealed class ChatSessionConfiguration : IEntityTypeConfiguration<ChatSe
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).HasColumnName("session_id");
         builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
-        builder.Property(x => x.DocumentId).HasColumnName("doc_id");
         builder.Property(x => x.SessionTitle).HasColumnName("session_title").HasMaxLength(64).IsRequired();
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.User).WithMany(x => x.ChatSessions).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
-        builder.HasOne(x => x.Document).WithMany(x => x.ChatSessions).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.SetNull);
+        builder.Navigation(x => x.ChatSessionDocuments).UsePropertyAccessMode(PropertyAccessMode.Field);
     }
 }
 
@@ -470,5 +500,81 @@ internal sealed class UserBadgeConfiguration : IEntityTypeConfiguration<UserBadg
             .WithMany(x => x.UserBadges)
             .HasForeignKey(x => x.BadgeId)
             .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+internal sealed class TokenLedgerConfiguration : IEntityTypeConfiguration<TokenLedger>
+{
+    public void Configure(EntityTypeBuilder<TokenLedger> builder)
+    {
+        builder.ToTable("TokenLedger");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("ledger_id");
+        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.RelatedEntityId).HasColumnName("related_entity_id");
+        builder.Property(x => x.OperationType).HasColumnName("operation_type").HasMaxLength(50).IsRequired();
+        builder.Property(x => x.Status).HasColumnName("status").HasConversion<int>().IsRequired();
+        builder.Property(x => x.EstimatedTokens).HasColumnName("estimated_tokens").IsRequired();
+        builder.Property(x => x.ActualTokens).HasColumnName("actual_tokens");
+        builder.Property(x => x.FailureReason).HasColumnName("failure_reason").HasMaxLength(500);
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+
+        builder.HasIndex(x => x.UserId);
+        builder.HasIndex(x => new { x.UserId, x.CreatedAt });
+
+        builder.HasOne(x => x.User)
+            .WithMany()
+            .HasForeignKey(x => x.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+internal sealed class RecommendationConfiguration : IEntityTypeConfiguration<Recommendation>
+{
+    public void Configure(EntityTypeBuilder<Recommendation> builder)
+    {
+        builder.ToTable("Recommendations");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("recommendation_id");
+        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.Type).HasColumnName("type").HasConversion<int>().IsRequired();
+        builder.Property(x => x.ReferenceId).HasColumnName("reference_id");
+        builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(255).IsRequired();
+        builder.Property(x => x.Description).HasColumnName("description").IsRequired();
+        builder.Property(x => x.ActionUrl).HasColumnName("action_url").HasMaxLength(500);
+        builder.Property(x => x.Status).HasColumnName("status").HasMaxLength(20).HasDefaultValue("Active");
+        builder.Property(x => x.DismissedAt).HasColumnName("dismissed_at").HasColumnType("datetime");
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+
+        builder.HasIndex(x => new { x.UserId, x.Status });
+
+        builder.HasOne(x => x.User)
+            .WithMany()
+            .HasForeignKey(x => x.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+internal sealed class DocumentShareConfiguration : IEntityTypeConfiguration<DocumentShare>
+{
+    public void Configure(EntityTypeBuilder<DocumentShare> builder)
+    {
+        builder.ToTable("DocumentShare");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("share_id");
+        builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
+        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.Level).HasColumnName("level").HasConversion<string>().HasMaxLength(10).IsRequired();
+        builder.Property(x => x.SharedBy).HasColumnName("shared_by").IsRequired();
+        builder.Property(x => x.SharedAt).HasColumnName("shared_at").HasColumnType("datetime");
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+
+        builder.HasIndex(x => new { x.DocumentId, x.UserId }).IsUnique();
+        builder.HasIndex(x => x.UserId);
+
+        builder.HasOne(x => x.Document).WithMany(x => x.DocumentShares).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
     }
 }

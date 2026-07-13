@@ -2,7 +2,48 @@ using AIStudyHub.Business.DTOs.Gamification;
 
 namespace AIStudyHub.Business.DTOs.QuizSubmissions;
 
-public sealed record QuizSubmissionResponseDto(Guid Id, Guid UserId, Guid QuizId, string Answers, int Score, int MaxScore, int TotalCorrect, DateTime? GradedAt, DateTime SubmittedAt, DateTime CreatedAt, DateTime? UpdatedAt);
+public sealed record QuizSubmissionResponseDto(
+    Guid Id,
+    Guid UserId,
+    Guid QuizId,
+    string QuizTitle,
+    string DocumentTitle,
+    string SubjectCode,
+    int Score,
+    int MaxScore,
+    int TotalCorrect,
+    int? DurationSeconds,
+    double PercentageScore,
+    DateTime? GradedAt,
+    DateTime SubmittedAt,
+    DateTime CreatedAt,
+    DateTime? UpdatedAt);
+
+/// <summary>
+/// Enriched history item with quiz/document metadata. Returned by GetMyHistoryAsync.
+/// </summary>
+public sealed record QuizSubmissionHistoryDto(
+    Guid Id,
+    Guid UserId,
+    Guid QuizId,
+    string QuizTitle,
+    string DocumentTitle,
+    string SubjectCode,
+    int Score,
+    int MaxScore,
+    int TotalCorrect,
+    int? DurationSeconds,
+    double PercentageScore,
+    DateTime? GradedAt,
+    DateTime SubmittedAt,
+    DateTime CreatedAt,
+    DateTime? UpdatedAt)
+{
+    public static QuizSubmissionHistoryDto FromResponse(QuizSubmissionResponseDto r) =>
+        new(r.Id, r.UserId, r.QuizId, r.QuizTitle, r.DocumentTitle, r.SubjectCode,
+            r.Score, r.MaxScore, r.TotalCorrect, r.DurationSeconds, r.PercentageScore,
+            r.GradedAt, r.SubmittedAt, r.CreatedAt, r.UpdatedAt);
+}
 
 /// <summary>
 /// Plan C3 / B.2.2: return value of <c>QuizSubmissionService.SubmitAsync</c>.

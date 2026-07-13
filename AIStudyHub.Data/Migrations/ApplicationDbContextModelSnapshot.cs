@@ -229,10 +229,6 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("datetime")
                         .HasColumnName("create_at");
 
-                    b.Property<Guid?>("DocumentId")
-                        .HasColumnType("uniqueidentifier")
-                        .HasColumnName("doc_id");
-
                     b.Property<string>("SessionTitle")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -249,11 +245,42 @@ namespace AIStudyHub.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DocumentId");
-
                     b.HasIndex("UserId");
 
                     b.ToTable("ChatSession", (string)null);
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.ChatSessionDocument", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("ChatSessionId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("session_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("create_at");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("doc_id");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("update_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DocumentId");
+
+                    b.HasIndex("ChatSessionId", "DocumentId")
+                        .IsUnique();
+
+                    b.ToTable("ChatSessionDocument", (string)null);
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.Document", b =>
@@ -299,6 +326,12 @@ namespace AIStudyHub.Data.Migrations
                         .HasDefaultValue(false)
                         .HasColumnName("is_non_flaggable");
 
+                    b.Property<bool?>("IsOcrApplied")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("LifecycleStatus")
+                        .HasColumnType("int");
+
                     b.Property<string>("ShareStatus")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -326,6 +359,12 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("nvarchar(255)")
                         .HasColumnName("title");
 
+                    b.Property<DateTime?>("TrashedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid?>("TrashedBy")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime")
                         .HasColumnName("update_at");
@@ -341,6 +380,53 @@ namespace AIStudyHub.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("Document", (string)null);
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.DocumentShare", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("share_id");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("create_at");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("doc_id");
+
+                    b.Property<string>("Level")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("nvarchar(10)")
+                        .HasColumnName("level");
+
+                    b.Property<DateTime>("SharedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("shared_at");
+
+                    b.Property<Guid>("SharedBy")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("shared_by");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("update_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("u_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("DocumentId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("DocumentShare", (string)null);
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.Flashcard", b =>
@@ -367,6 +453,12 @@ namespace AIStudyHub.Data.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)")
                         .HasColumnName("front");
+
+                    b.Property<int>("Lapses")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("lapses");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime")
@@ -437,6 +529,11 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("noti_id");
 
+                    b.Property<string>("ActionUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("action_url");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime")
                         .HasColumnName("create_at");
@@ -452,8 +549,19 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("nvarchar(max)")
                         .HasColumnName("message");
 
+                    b.Property<string>("PayloadJson")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("payload_json");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .HasColumnName("title");
+
                     b.Property<int>("Type")
-                        .HasColumnType("int");
+                        .HasColumnType("int")
+                        .HasColumnName("type");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime")
@@ -465,7 +573,9 @@ namespace AIStudyHub.Data.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId");
+                    b.HasIndex("UserId", "CreatedAt");
+
+                    b.HasIndex("UserId", "IsRead");
 
                     b.ToTable("Notification", (string)null);
                 });
@@ -693,6 +803,68 @@ namespace AIStudyHub.Data.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("QuizSubmission", (string)null);
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.Recommendation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("recommendation_id");
+
+                    b.Property<string>("ActionUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("action_url");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("create_at");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("description");
+
+                    b.Property<DateTime?>("DismissedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("dismissed_at");
+
+                    b.Property<Guid?>("ReferenceId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("reference_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)")
+                        .HasDefaultValue("Active")
+                        .HasColumnName("status");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)")
+                        .HasColumnName("title");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("int")
+                        .HasColumnName("type");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("update_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("u_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "Status");
+
+                    b.ToTable("Recommendations", (string)null);
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.RefreshToken", b =>
@@ -1125,6 +1297,61 @@ namespace AIStudyHub.Data.Migrations
                             StorageLimitMb = 3072,
                             TierName = "Premium"
                         });
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.TokenLedger", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("ledger_id");
+
+                    b.Property<int?>("ActualTokens")
+                        .HasColumnType("int")
+                        .HasColumnName("actual_tokens");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("create_at");
+
+                    b.Property<int>("EstimatedTokens")
+                        .HasColumnType("int")
+                        .HasColumnName("estimated_tokens");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("failure_reason");
+
+                    b.Property<string>("OperationType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("operation_type");
+
+                    b.Property<Guid?>("RelatedEntityId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("related_entity_id");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("int")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("update_at");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("u_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("UserId", "CreatedAt");
+
+                    b.ToTable("TokenLedger", (string)null);
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.User", b =>
@@ -1571,20 +1798,32 @@ namespace AIStudyHub.Data.Migrations
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.ChatSession", b =>
                 {
-                    b.HasOne("AIStudyHub.Data.Entities.Document", "Document")
-                        .WithMany("ChatSessions")
-                        .HasForeignKey("DocumentId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.HasOne("AIStudyHub.Data.Entities.User", "User")
                         .WithMany("ChatSessions")
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("Document");
-
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.ChatSessionDocument", b =>
+                {
+                    b.HasOne("AIStudyHub.Data.Entities.ChatSession", "ChatSession")
+                        .WithMany("ChatSessionDocuments")
+                        .HasForeignKey("ChatSessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("AIStudyHub.Data.Entities.Document", "Document")
+                        .WithMany("ChatSessionDocuments")
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ChatSession");
+
+                    b.Navigation("Document");
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.Document", b =>
@@ -1602,6 +1841,25 @@ namespace AIStudyHub.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Subject");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.DocumentShare", b =>
+                {
+                    b.HasOne("AIStudyHub.Data.Entities.Document", "Document")
+                        .WithMany("DocumentShares")
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("AIStudyHub.Data.Entities.User", "User")
+                        .WithMany("DocumentShares")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Document");
 
                     b.Navigation("User");
                 });
@@ -1717,6 +1975,17 @@ namespace AIStudyHub.Data.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("AIStudyHub.Data.Entities.Recommendation", b =>
+                {
+                    b.HasOne("AIStudyHub.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("AIStudyHub.Data.Entities.RefreshToken", b =>
                 {
                     b.HasOne("AIStudyHub.Data.Entities.User", "User")
@@ -1768,6 +2037,17 @@ namespace AIStudyHub.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Document");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.TokenLedger", b =>
+                {
+                    b.HasOne("AIStudyHub.Data.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("User");
                 });
@@ -1891,11 +2171,15 @@ namespace AIStudyHub.Data.Migrations
             modelBuilder.Entity("AIStudyHub.Data.Entities.ChatSession", b =>
                 {
                     b.Navigation("ChatMessages");
+
+                    b.Navigation("ChatSessionDocuments");
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.Document", b =>
                 {
-                    b.Navigation("ChatSessions");
+                    b.Navigation("ChatSessionDocuments");
+
+                    b.Navigation("DocumentShares");
 
                     b.Navigation("Flashcards");
 
@@ -1933,6 +2217,8 @@ namespace AIStudyHub.Data.Migrations
             modelBuilder.Entity("AIStudyHub.Data.Entities.User", b =>
                 {
                     b.Navigation("ChatSessions");
+
+                    b.Navigation("DocumentShares");
 
                     b.Navigation("Documents");
 

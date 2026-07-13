@@ -3,9 +3,12 @@ using AIStudyHub.Business.AI.Generators;
 using AIStudyHub.Business.AI.Generators.Common;
 using AIStudyHub.Business.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.LLM;
+using AIStudyHub.Business.Interfaces.AI.Tracking;
 using AIStudyHub.Business.Common;
 using AIStudyHub.Business.DTOs.Flashcards;
+using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Exceptions;
 using AIStudyHub.Business.Options;
 using AIStudyHub.Data.Interfaces;
 using Microsoft.EntityFrameworkCore;
@@ -20,26 +23,29 @@ public sealed class FlashcardAiService : IFlashcardAiService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IOpenAIService _openAIService;
-    private readonly Microsoft.KernelMemory.IKernelMemory _memory;
+    private readonly IVectorStoreService _vectorStoreService;
     private readonly RagOptions _options;
     private readonly ILogger<FlashcardAiService> _logger;
+    private readonly ITokenTrackerService _tokenTracker;
 
-    // Hard caps so a single misbehaving model can't burn the request budget.
     private const int MaxAttemptsPerCard = 3;
     private const int MaxTotalAttempts = 80;
+    private const int EstimatedTokensPerBatch = 1300; // was 1500
 
     public FlashcardAiService(
         IUnitOfWork unitOfWork,
         IOpenAIService openAIService,
-        Microsoft.KernelMemory.IKernelMemory memory,
+        IVectorStoreService vectorStoreService,
         IOptions<RagOptions> options,
-        ILogger<FlashcardAiService> logger)
+        ILogger<FlashcardAiService> logger,
+        ITokenTrackerService tokenTracker)
     {
         _unitOfWork = unitOfWork;
         _openAIService = openAIService;
-        _memory = memory;
+        _vectorStoreService = vectorStoreService;
         _options = options.Value;
         _logger = logger;
+        _tokenTracker = tokenTracker;
     }
 
     public async Task<IReadOnlyList<FlashcardResponseDto>> GenerateFlashcardsAsync(
@@ -58,15 +64,19 @@ public sealed class FlashcardAiService : IFlashcardAiService
         if (document.UserId != userId)
             throw new UnauthorizedAccessException("You do not have permission to access this document.");
 
+        // Check AI token quota before processing
+        var estimatedBatches = (int)Math.Ceiling((double)request.NumberOfFlashcards / 20);
+        var estimatedTokens = estimatedBatches * EstimatedTokensPerBatch;
+        if (!await _tokenTracker.HasQuotaAsync(userId, estimatedTokens, cancellationToken))
+        {
+            var (current, limit) = await _tokenTracker.GetUsageInfoAsync(userId, cancellationToken);
+            throw new QuotaExceededException(current, limit, estimatedTokens);
+        }
+
         _logger.LogInformation("Generating {Num} flashcards for document {DocId} using OpenAI", request.NumberOfFlashcards, documentId);
 
-        var searchResult = await _memory.SearchAsync(
-            "",
-            filter: Microsoft.KernelMemory.MemoryFilters.ByDocument(documentId.ToString()),
-            limit: 1000,
-            cancellationToken: cancellationToken);
-
-        var context = BuildContext(searchResult.Results);
+        var payloads = await _vectorStoreService.GetPayloadsByDocumentIdAsync(documentId);
+        var context = BuildContextFromPayloads(payloads);
         var flashcards = new List<FlashcardResponseAiDto>(request.NumberOfFlashcards);
         var seenFronts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -76,21 +86,27 @@ public sealed class FlashcardAiService : IFlashcardAiService
         var consecutiveZeroAdded = 0;
         const int batchSize = 20;
 
+        // Track total tokens used
+        int totalInputTokens = 0;
+        int totalOutputTokens = 0;
+
         while (remaining > 0 && batchNumber < maxBatches)
         {
             cancellationToken.ThrowIfCancellationRequested();
             batchNumber++;
-            var wantThisBatch = Math.Min(batchSize, remaining + 2); // Ask for a bit more
+            var wantThisBatch = Math.Min(batchSize, remaining + 2);
 
-            var batchCards = await RunBatchWithRetryAsync(
+            var (batchCards, inputTokens, outputTokens) = await RunBatchWithRetryWithTrackingAsync(
                 context, flashcards, wantThisBatch, batchNumber, cancellationToken);
+
+            totalInputTokens += inputTokens;
+            totalOutputTokens += outputTokens;
 
             var added = 0;
             foreach (var card in batchCards)
             {
                 if (flashcards.Count >= request.NumberOfFlashcards) break;
                 
-                // Aggressively normalize front to catch slight variations
                 var normalizedFront = new string(card.Front.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
                 if (normalizedFront.Length < 5) continue;
 
@@ -128,6 +144,12 @@ public sealed class FlashcardAiService : IFlashcardAiService
             "Finished flashcard generation: {Got}/{Requested} after {Attempts} batches",
             flashcards.Count, request.NumberOfFlashcards, batchNumber);
 
+        // Record token usage
+        if (totalInputTokens > 0 || totalOutputTokens > 0)
+        {
+            await _tokenTracker.RecordUsageAsync(userId, totalInputTokens, totalOutputTokens, "flashcard", cancellationToken);
+        }
+
         // Persist to database
         var entities = flashcards.Select(f => new AIStudyHub.Data.Entities.Flashcard
         {
@@ -154,7 +176,7 @@ public sealed class FlashcardAiService : IFlashcardAiService
         return result;
     }
 
-    private async Task<List<FlashcardResponseAiDto>> RunBatchWithRetryAsync(
+    private async Task<(List<FlashcardResponseAiDto> cards, int inputTokens, int outputTokens)> RunBatchWithRetryWithTrackingAsync(
         string context,
         IReadOnlyList<FlashcardResponseAiDto> existing,
         int wantThisBatch,
@@ -191,15 +213,24 @@ RULES:
 
         const int maxAttempts = 2;
         var best = new List<FlashcardResponseAiDto>();
+        var bestInputTokens = 0;
+        var bestOutputTokens = 0;
+        var lastAttemptInputTokens = 0;
+        var lastAttemptOutputTokens = 0;
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             string aiText;
+            int inputTokens = 0;
+            int outputTokens = 0;
             try
             {
-                aiText = await _openAIService.SendMessageAsync(prompt, 0.2f);
+                var usageResult = await _openAIService.SendMessageWithUsageAsync(prompt, 0.2f);
+                aiText = usageResult.Text;
+                inputTokens = usageResult.InputTokens;
+                outputTokens = usageResult.OutputTokens;
             }
             catch (Exception ex)
             {
@@ -207,18 +238,24 @@ RULES:
                 continue;
             }
 
+            lastAttemptInputTokens = inputTokens;
+            lastAttemptOutputTokens = outputTokens;
             var parsed = ParseFlashcardArray(aiText);
             
             if (parsed.Count > best.Count)
+            {
                 best = parsed;
+                bestInputTokens = inputTokens;
+                bestOutputTokens = outputTokens;
+            }
 
             if (parsed.Count >= Math.Max(1, wantThisBatch / 2))
-                return parsed;
+                return (parsed, inputTokens, outputTokens);
 
             _logger.LogWarning("Flashcard batch {Batch} attempt {Attempt}: only {Got}/{Want} cards, retrying", batchNumber, attempt, parsed.Count, wantThisBatch);
         }
 
-        return best;
+        return (best, lastAttemptInputTokens, lastAttemptOutputTokens);
     }
 
     private static List<FlashcardResponseAiDto> ParseFlashcardArray(string aiText)
@@ -320,18 +357,17 @@ RULES:
             : null;
     }
 
-    private static string BuildContext(IEnumerable<Microsoft.KernelMemory.Citation> citations)
+    private static string BuildContextFromPayloads(List<Dictionary<string, string>> payloads)
     {
         var sb = new System.Text.StringBuilder();
-        foreach (var citation in citations)
+        foreach (var payload in payloads)
         {
-            foreach (var partition in citation.Partitions)
+            if (payload.TryGetValue("text", out var text) && !string.IsNullOrWhiteSpace(text))
             {
-                if (string.IsNullOrWhiteSpace(partition.Text)) continue;
-                sb.AppendLine(partition.Text);
+                sb.AppendLine(text);
                 sb.AppendLine();
-                if (sb.Length > 20_000) return sb.ToString();
             }
+            if (sb.Length > 20_000) return sb.ToString();
         }
         return sb.ToString();
     }

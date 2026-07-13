@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Http;
+using System;
+using System.Linq;
 using AIStudyHub.Business.DTOs.Answers;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Flashcards;
@@ -11,8 +13,11 @@ using AIStudyHub.Business.DTOs.QuizSubmissions;
 using AIStudyHub.Business.DTOs.Reports;
 using AIStudyHub.Business.DTOs.Subjects;
 using AIStudyHub.Business.DTOs.TierMemberships;
+using AIStudyHub.Business.DTOs.Common;
 using AIStudyHub.Business.DTOs.Votes;
+using AIStudyHub.Business.Exceptions;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
@@ -33,54 +38,53 @@ public sealed class DocumentService : IDocumentService
         _mapper = mapper;
     }
 
-    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<DocumentResponseDto>> GetAllPagedAsync(Guid userId, AIStudyHub.Business.DTOs.Common.PaginationParams @params, Guid? subjectId = null, CancellationToken cancellationToken = default)
+    private static DocumentResponseDto MapToDto(Document d) => new(
+        d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
+        d.FileType, d.FileSizeBytes, d.SharedUsers, d.ShareStatus, d.Status, d.ErrorMessage,
+        d.Votes.Sum(v => v.Type == AIStudyHub.Data.Enums.VoteType.Upvote ? 1 : -1),
+        d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
+
+    private static DocumentResponseDto MapToDtoNoVotes(Document d) => new(
+        d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
+        d.FileType, d.FileSizeBytes, d.SharedUsers, d.ShareStatus, d.Status, d.ErrorMessage,
+        d.Votes.Count, d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
+
+    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<DocumentResponseDto>> GetAllPagedAsync(
+        Guid userId,
+        AIStudyHub.Business.DTOs.Common.PaginationParams @params,
+        Guid? subjectId = null,
+        CancellationToken cancellationToken = default)
     {
-        var query = _unitOfWork.Documents.Query().Include(d => d.Subject).Include(d => d.User).Include(d => d.Votes).Where(d => d.UserId == userId || d.ShareStatus == "public").AsNoTracking();
-        
+        var query = _unitOfWork.Documents.Query()
+            .Include(d => d.Subject)
+            .Include(d => d.User)
+            .Include(d => d.Votes)
+            .Where(d => d.LifecycleStatus == DocumentLifecycleStatus.Active
+                        && (d.UserId == userId || d.ShareStatus == "public"
+                            || _unitOfWork.DocumentShares.Query().Any(s => s.DocumentId == d.Id && s.UserId == userId)))
+            .AsNoTracking();
+
         if (subjectId.HasValue)
-        {
             query = query.Where(d => d.SubjectId == subjectId.Value);
-        }
 
         if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
         {
             var search = @params.SearchTerm.ToLower();
-            query = query.Where(d => d.Title.ToLower().Contains(search) || (d.Subject != null && d.Subject.SubjectName.ToLower().Contains(search)));
+            query = query.Where(d => d.Title.ToLower().Contains(search)
+                                    || (d.Subject != null && d.Subject.SubjectName.ToLower().Contains(search)));
         }
 
         var totalCount = await query.CountAsync(cancellationToken);
 
         if (!string.IsNullOrWhiteSpace(@params.SortBy))
-        {
-            query = @params.IsDescending 
+            query = @params.IsDescending
                 ? query.OrderByDescending(d => EF.Property<object>(d, @params.SortBy))
                 : query.OrderBy(d => EF.Property<object>(d, @params.SortBy));
-        }
         else
-        {
             query = query.OrderByDescending(d => d.CreatedAt);
-        }
 
         var items = await query.Skip(@params.Offset).Take(@params.Limit).ToListAsync(cancellationToken);
-
-        var dtos = items.Select(d => new DocumentResponseDto(
-            d.Id,
-            d.UserId,
-            d.SubjectId,
-            d.Title,
-            d.FileLink,
-            d.FileName,
-            d.FileExtension,
-            d.FileType,
-            d.FileSizeBytes,
-            d.SharedUsers,
-            d.ShareStatus,
-            d.Status,
-            d.ErrorMessage,
-            d.Votes.Sum(v => v.Type == AIStudyHub.Data.Enums.VoteType.Upvote ? 1 : -1),
-            d.CreatedAt,
-            d.UpdatedAt
-        )).ToList();
+        var dtos = items.Select(MapToDto).ToList();
 
         return new AIStudyHub.Business.DTOs.Common.PagedResultDto<DocumentResponseDto>(dtos, totalCount, @params.Offset, @params.Limit);
     }
@@ -92,69 +96,37 @@ public sealed class DocumentService : IDocumentService
             .Include(d => d.Subject)
             .Include(d => d.User)
             .Include(d => d.Votes)
+            .Where(d => d.LifecycleStatus == DocumentLifecycleStatus.Active)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
-        return documents.Select(d => new DocumentResponseDto(
-            d.Id,
-            d.UserId,
-            d.SubjectId,
-            d.Title,
-            d.FileLink,
-            d.FileName,
-            d.FileExtension,
-            d.FileType,
-            d.FileSizeBytes,
-            d.SharedUsers,
-            d.ShareStatus,
-            d.Status,
-            d.ErrorMessage,
-            d.Votes.Count,
-            d.CreatedAt,
-            d.UpdatedAt)).ToList();
+        return documents.Select(MapToDtoNoVotes).ToList();
     }
 
-    public async Task<IReadOnlyList<DocumentResponseDto>> GetAllByUserIdAsync(Guid userId, string? keyword = null, Guid? subjectId = null, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<DocumentResponseDto>> GetAllByUserIdAsync(
+        Guid userId, string? keyword = null, Guid? subjectId = null,
+        CancellationToken cancellationToken = default)
     {
-        var query = _unitOfWork.Documents
-            .Query()
-            .Where(d => d.UserId == userId || d.ShareStatus == "public");
-
-        if (subjectId.HasValue)
-        {
-            query = query.Where(d => d.SubjectId == subjectId.Value);
-        }
-
-        if (!string.IsNullOrWhiteSpace(keyword))
-        {
-            var lowerKeyword = keyword.ToLower();
-            query = query.Where(d => d.Title.ToLower().Contains(lowerKeyword) || (d.FileName != null && d.FileName.ToLower().Contains(lowerKeyword)));
-        }
-
-        var documents = await query
+        var query = _unitOfWork.Documents.Query()
             .Include(d => d.Subject)
             .Include(d => d.User)
             .Include(d => d.Votes)
-            .AsNoTracking()
-            .ToListAsync(cancellationToken);
+            .Where(d => d.LifecycleStatus == DocumentLifecycleStatus.Active
+                        && (d.UserId == userId || d.ShareStatus == "public"
+                            || _unitOfWork.DocumentShares.Query().Any(s => s.DocumentId == d.Id && s.UserId == userId)));
 
-        return documents.Select(d => new DocumentResponseDto(
-            d.Id,
-            d.UserId,
-            d.SubjectId,
-            d.Title,
-            d.FileLink,
-            d.FileName,
-            d.FileExtension,
-            d.FileType,
-            d.FileSizeBytes,
-            d.SharedUsers,
-            d.ShareStatus,
-            d.Status,
-            d.ErrorMessage,
-            d.Votes.Count,
-            d.CreatedAt,
-            d.UpdatedAt)).ToList();
+        if (subjectId.HasValue)
+            query = query.Where(d => d.SubjectId == subjectId.Value);
+
+        if (!string.IsNullOrWhiteSpace(keyword))
+        {
+            var lower = keyword.ToLower();
+            query = query.Where(d => d.Title.ToLower().Contains(lower)
+                                     || (d.FileName != null && d.FileName.ToLower().Contains(lower)));
+        }
+
+        var documents = await query.AsNoTracking().ToListAsync(cancellationToken);
+        return documents.Select(MapToDtoNoVotes).ToList();
     }
 
     public async Task<DocumentResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
@@ -164,39 +136,21 @@ public sealed class DocumentService : IDocumentService
             .Include(d => d.Subject)
             .Include(d => d.User)
             .Include(d => d.Votes)
+            .Where(d => d.LifecycleStatus == DocumentLifecycleStatus.Active)
             .AsNoTracking()
             .FirstOrDefaultAsync(d => d.Id == id, cancellationToken);
 
-        if (document is null) return null;
-
-        return new DocumentResponseDto(
-            document.Id,
-            document.UserId,
-            document.SubjectId,
-            document.Title,
-            document.FileLink,
-            document.FileName,
-            document.FileExtension,
-            document.FileType,
-            document.FileSizeBytes,
-            document.SharedUsers,
-            document.ShareStatus,
-            document.Status,
-            document.ErrorMessage,
-            document.Votes.Count,
-            document.CreatedAt,
-            document.UpdatedAt);
+        return document is null ? null : MapToDtoNoVotes(document);
     }
 
     public async Task<DocumentResponseDto> CreateAsync(CreateDocumentRequestDto request, CancellationToken cancellationToken = default)
     {
         var subjectExists = await _unitOfWork.Subjects.GetByIdAsync(request.SubjectId, cancellationToken) is not null;
         if (!subjectExists)
-        {
             throw new InvalidOperationException($"Subject with ID {request.SubjectId} not found.");
-        }
 
         var document = _mapper.Map<Data.Entities.Document>(request);
+        document.LifecycleStatus = DocumentLifecycleStatus.Active;
         await _unitOfWork.Documents.AddAsync(document, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -212,11 +166,8 @@ public sealed class DocumentService : IDocumentService
 
     public async Task<DocumentResponseDto> UpdateAsync(Guid id, UpdateDocumentRequestDto request, CancellationToken cancellationToken = default)
     {
-        var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
-        if (document is null)
-        {
-            throw new KeyNotFoundException($"Document with ID {id} not found.");
-        }
+        var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken)
+            ?? throw new KeyNotFoundException($"Document with ID {id} not found.");
 
         _mapper.Map(request, document);
         _unitOfWork.Documents.Update(document);
@@ -234,11 +185,8 @@ public sealed class DocumentService : IDocumentService
 
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
-        var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
-        if (document is null)
-        {
-            throw new KeyNotFoundException($"Document with ID {id} not found.");
-        }
+        var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken)
+            ?? throw new KeyNotFoundException($"Document with ID {id} not found.");
 
         _unitOfWork.Documents.Remove(document);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
@@ -254,41 +202,184 @@ public sealed class DocumentService : IDocumentService
             ?? throw new KeyNotFoundException($"Document with ID {documentId} not found.");
 
         if (document.UserId != callerId)
-        {
             throw new UnauthorizedAccessException("Only the document owner can change its sharing settings.");
-        }
 
-        // De-duplicate and drop the caller (a user cannot share a document with themselves).
-        var sharedUserIds = request.SharedUserIds?
+        var targetIds = request.SharedUserIds?
             .Where(id => id != Guid.Empty && id != callerId)
             .Distinct()
             .ToList() ?? new List<Guid>();
 
-        // Validate that every id actually maps to an existing active user.
-        if (sharedUserIds.Count > 0)
+        if (targetIds.Count > 0)
         {
             var existingIds = await _unitOfWork.Users
                 .Query()
-                .Where(u => sharedUserIds.Contains(u.Id) && u.IsActive && u.Status == "active")
+                .Where(u => targetIds.Contains(u.Id) && u.IsActive && u.Status == "active")
                 .Select(u => u.Id)
                 .ToListAsync(cancellationToken);
-
-            sharedUserIds = existingIds;
+            targetIds = existingIds;
         }
 
-        // Persist as a JSON array string to keep the column format consistent with other usages.
-        document.SharedUsers = sharedUserIds.Count == 0
-            ? null
-            : System.Text.Json.JsonSerializer.Serialize(sharedUserIds);
+        // Replace all DocumentShare entries for this document.
+        var existingShares = await _unitOfWork.DocumentShares
+            .Query()
+            .Where(s => s.DocumentId == documentId)
+            .ToListAsync(cancellationToken);
+        foreach (var s in existingShares)
+            _unitOfWork.DocumentShares.Remove(s);
 
-        // Derive the share status from the resulting list. This endpoint does NOT
-        // accept an explicit status from the caller — status is owned by PUT /api/Document/{id}.
-        document.ShareStatus = sharedUserIds.Count > 0 ? "shared" : "private";
+        var levels = request.Levels ?? Enumerable.Repeat((int)ShareLevel.Read, targetIds.Count).ToList();
+        var resultLevels = new List<int>();
+        for (int i = 0; i < targetIds.Count; i++)
+        {
+            var level = i < levels.Count ? (ShareLevel)levels[i] : ShareLevel.Read;
+            if (level != ShareLevel.Read && level != ShareLevel.Edit)
+                level = ShareLevel.Read;
+
+            var share = new DocumentShare
+            {
+                Id = Guid.NewGuid(),
+                DocumentId = documentId,
+                UserId = targetIds[i],
+                Level = level,
+                SharedBy = callerId,
+                SharedAt = DateTime.UtcNow,
+                CreatedAt = DateTime.UtcNow
+            };
+            await _unitOfWork.DocumentShares.AddAsync(share, cancellationToken);
+            resultLevels.Add((int)level);
+        }
+
+        // Maintain backward-compatible JSON column.
+        document.SharedUsers = targetIds.Count == 0
+            ? null
+            : JsonSerializer.Serialize(targetIds);
+        document.ShareStatus = targetIds.Count > 0 ? "shared" : "private";
 
         _unitOfWork.Documents.Update(document);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return new ShareDocumentResponseDto(document.Id, sharedUserIds);
+        return new ShareDocumentResponseDto(document.Id, targetIds, resultLevels);
+    }
+
+    public async Task<IReadOnlyList<DocumentResponseDto>> GetTrashAsync(Guid userId, CancellationToken cancellationToken = default)
+    {
+        var docs = await _unitOfWork.Documents
+            .Query()
+            .Include(d => d.Subject)
+            .Include(d => d.User)
+            .Include(d => d.Votes)
+            .Where(d => d.UserId == userId && d.LifecycleStatus == DocumentLifecycleStatus.Trashed)
+            .OrderByDescending(d => d.TrashedAt)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return docs.Select(MapToDtoNoVotes).ToList();
+    }
+
+    public async Task TrashAsync(Guid documentId, Guid userId, CancellationToken cancellationToken = default)
+    {
+        var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Document with ID {documentId} not found.");
+
+        if (document.UserId != userId)
+            throw new UnauthorizedAccessException("Only the document owner can trash it.");
+
+        if (document.LifecycleStatus == DocumentLifecycleStatus.Trashed)
+            return; // already trashed — idempotent
+
+        document.LifecycleStatus = DocumentLifecycleStatus.Trashed;
+        document.TrashedAt = DateTime.UtcNow;
+        document.TrashedBy = userId;
+        _unitOfWork.Documents.Update(document);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task RestoreAsync(Guid documentId, Guid userId, CancellationToken cancellationToken = default)
+    {
+        var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Document with ID {documentId} not found.");
+
+        if (document.UserId != userId)
+            throw new UnauthorizedAccessException("Only the document owner can restore it.");
+
+        if (document.LifecycleStatus == DocumentLifecycleStatus.Purged)
+            throw new InvalidOperationException("A purged document cannot be restored.");
+
+        document.LifecycleStatus = DocumentLifecycleStatus.Active;
+        document.TrashedAt = null;
+        document.TrashedBy = null;
+        _unitOfWork.Documents.Update(document);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task PurgeAsync(Guid documentId, Guid userId, CancellationToken cancellationToken = default)
+    {
+        var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Document with ID {documentId} not found.");
+
+        if (document.UserId != userId)
+            throw new UnauthorizedAccessException("Only the document owner can purge it.");
+
+        if (document.LifecycleStatus != DocumentLifecycleStatus.Trashed)
+            throw new InvalidOperationException("Only trashed documents can be permanently purged.");
+
+        _unitOfWork.Documents.Remove(document);
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<DocumentShareListDto> GetSharesAsync(Guid documentId, Guid callerId, CancellationToken cancellationToken = default)
+    {
+        var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Document with ID {documentId} not found.");
+
+        if (document.UserId != callerId)
+            throw new UnauthorizedAccessException("Only the document owner can view shares.");
+
+        var shares = await _unitOfWork.DocumentShares
+            .Query()
+            .Include(s => s.User)
+            .Where(s => s.DocumentId == documentId)
+            .OrderBy(s => s.SharedAt)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        var dtos = shares.Select(s => new DocumentShareDto(
+            s.Id, s.DocumentId, s.UserId,
+            s.User?.FullName ?? string.Empty,
+            s.Level, s.SharedAt)).ToList();
+
+        return new DocumentShareListDto(documentId, dtos);
+    }
+
+    public async Task RevokeShareAsync(Guid documentId, Guid targetUserId, Guid callerId, CancellationToken cancellationToken = default)
+    {
+        var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Document with ID {documentId} not found.");
+
+        if (document.UserId != callerId)
+            throw new UnauthorizedAccessException("Only the document owner can revoke shares.");
+
+        var share = await _unitOfWork.DocumentShares
+            .Query()
+            .FirstOrDefaultAsync(s => s.DocumentId == documentId && s.UserId == targetUserId, cancellationToken);
+
+        if (share is null) return; // idempotent
+
+        _unitOfWork.DocumentShares.Remove(share);
+
+        var remaining = await _unitOfWork.DocumentShares
+            .Query()
+            .Where(s => s.DocumentId == documentId)
+            .CountAsync(cancellationToken);
+
+        if (remaining == 0)
+        {
+            document.ShareStatus = "private";
+            document.SharedUsers = null;
+            _unitOfWork.Documents.Update(document);
+        }
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 }
 
@@ -296,11 +387,17 @@ public sealed class VoteService : IVoteService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
+    private readonly IRealTimeNotificationService? _realTimeNotifier;
+    private readonly ILogger<VoteService>? _logger;
 
-    public VoteService(IUnitOfWork unitOfWork, IMapper mapper)
+    public VoteService(IUnitOfWork unitOfWork, IMapper mapper,
+        IRealTimeNotificationService? realTimeNotifier = null,
+        ILogger<VoteService>? logger = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _realTimeNotifier = realTimeNotifier;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<VoteResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -375,6 +472,26 @@ public sealed class VoteService : IVoteService
             .AsNoTracking()
             .FirstOrDefaultAsync(v => v.Id == vote.Id, cancellationToken);
 
+        // Real-time vote-received push to the document owner (skip self-votes).
+        if (_realTimeNotifier is not null && created is not null && created.Document is not null
+            && created.Document.UserId != userId)
+        {
+            try
+            {
+                await _realTimeNotifier.NotifyVoteReceivedAsync(
+                    created.Document.UserId,
+                    userId,
+                    documentId,
+                    created.Document.Title ?? "Document",
+                    type,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Vote-received real-time notify failed for document {DocumentId}", documentId);
+            }
+        }
+
         return _mapper.Map<VoteResponseDto>(created);
     }
 
@@ -395,11 +512,17 @@ public sealed class ReportService : IReportService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
+    private readonly IRealTimeNotificationService? _realTimeNotifier;
+    private readonly ILogger<ReportService>? _logger;
 
-    public ReportService(IUnitOfWork unitOfWork, IMapper mapper)
+    public ReportService(IUnitOfWork unitOfWork, IMapper mapper,
+        IRealTimeNotificationService? realTimeNotifier = null,
+        ILogger<ReportService>? logger = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _realTimeNotifier = realTimeNotifier;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<ReportResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -441,6 +564,17 @@ public sealed class ReportService : IReportService
             throw new InvalidOperationException("This document is marked as non-flaggable.");
         }
 
+        // 24h cooldown: prevent same user from reporting the same document more than once per day
+        var cooldownCutoff = DateTime.UtcNow.AddHours(-24);
+        var hasRecentReport = await _unitOfWork.Reports.Query()
+            .AnyAsync(r => r.UserId == userId
+                        && r.DocumentId == request.DocumentId
+                        && r.CreatedAt >= cooldownCutoff, cancellationToken);
+        if (hasRecentReport)
+        {
+            throw new QuotaExceededException("You have already reported this document within the last 24 hours. Please wait before submitting another report.");
+        }
+
         var existingPending = await _unitOfWork.Reports.Query()
             .AnyAsync(r => r.UserId == userId && r.DocumentId == request.DocumentId && r.Status == AIStudyHub.Data.Enums.ReportStatus.Pending, cancellationToken);
         if (existingPending)
@@ -459,6 +593,39 @@ public sealed class ReportService : IReportService
 
         await _unitOfWork.Reports.AddAsync(report, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Circuit Breaker: count distinct users who reported this document (excl. rejected)
+        var uniqueVoters = await _unitOfWork.Reports.Query()
+            .Where(r => r.DocumentId == request.DocumentId && r.Status != AIStudyHub.Data.Enums.ReportStatus.Rejected)
+            .Select(r => r.UserId)
+            .Distinct()
+            .CountAsync(cancellationToken);
+
+        if (uniqueVoters >= 5 && document.Status != AIStudyHub.Data.Enums.DocumentStatus.Banned)
+        {
+            document.Status = AIStudyHub.Data.Enums.DocumentStatus.Banned;
+            _unitOfWork.Documents.Update(document);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            _logger?.LogInformation("Document {DocumentId} auto-banned after {Count} unique reports.", request.DocumentId, uniqueVoters);
+
+            // Notify owner via real-time
+            if (_realTimeNotifier != null)
+            {
+                try
+                {
+                    await _realTimeNotifier.SendNotificationAsync(new AIStudyHub.Business.DTOs.Notifications.RealTimeNotification(
+                        document.UserId,
+                        "Document auto-banned",
+                        $"Your document \"{document.Title}\" has been automatically banned due to 5+ reports from distinct users.",
+                        AIStudyHub.Data.Enums.NotificationType.Document,
+                        DateTime.UtcNow,
+                        new AIStudyHub.Business.DTOs.Notifications.ReportUpdatedPayload(report.Id, document.Id, AIStudyHub.Data.Enums.ReportStatus.Pending)
+                    ), cancellationToken);
+                }
+                catch { /* best-effort */ }
+            }
+        }
 
         var created = await _unitOfWork.Reports.Query()
             .Include(r => r.User)
@@ -536,7 +703,9 @@ public sealed class ReportService : IReportService
 
     public async Task<ReportResponseDto> UpdateStatusAsync(Guid id, ReportStatusDto status, Guid adminUserId, CancellationToken cancellationToken = default)
     {
-        var report = await _unitOfWork.Reports.GetByIdAsync(id, cancellationToken);
+        var report = await _unitOfWork.Reports.Query()
+            .Include(r => r.Document)
+            .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
         if (report is null)
         {
             throw new KeyNotFoundException($"Report with ID {id} not found.");
@@ -567,17 +736,29 @@ public sealed class ReportService : IReportService
         report.ResolvedAt = DateTime.UtcNow;
 
         _unitOfWork.Reports.Update(report);
-        
-        // Add Notification
-        var message = $"Your report for Document has been updated to {newStatus}.";
-        await _unitOfWork.Notifications.AddAsync(new Data.Entities.Notification
-        {
-            UserId = report.UserId,
-            Message = message,
-            IsRead = false
-        }, cancellationToken);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Real-time push to the report's reporter (no DB row per pure-SignalR design).
+        if (_realTimeNotifier is not null)
+        {
+            try
+            {
+                var documentTitle = report.Document?.Title ?? "Document";
+                await _realTimeNotifier.SendNotificationAsync(new RealTimeNotification(
+                    report.UserId,
+                    "Report updated",
+                    $"Your report for \"{documentTitle}\" has been updated to {newStatus}.",
+                    NotificationType.System,
+                    DateTime.UtcNow,
+                    new ReportUpdatedPayload(report.Id, report.DocumentId, newStatus)),
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Report-updated real-time notify failed for report {ReportId}", report.Id);
+            }
+        }
 
         var updated = await _unitOfWork.Reports.Query()
             .Include(r => r.User)
@@ -628,6 +809,32 @@ public sealed class ReportService : IReportService
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Real-time push to each affected reporter.
+        if (_realTimeNotifier is not null)
+        {
+            var documentTitle = document.Title ?? "Document";
+            foreach (var userId in userIdsToNotify)
+            {
+                try
+                {
+                    await _realTimeNotifier.SendNotificationAsync(new RealTimeNotification(
+                        userId,
+                        "Report rejected",
+                        $"Your report for \"{documentTitle}\" was rejected. The document was verified as legitimate.",
+                        NotificationType.System,
+                        DateTime.UtcNow,
+                        new ReportRejectedPayload(
+                            pendingReports.Where(r => r.UserId == userId).Select(r => r.Id).ToList(),
+                            documentId)),
+                        cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Report-rejected real-time notify failed for user {UserId}", userId);
+                }
+            }
+        }
 
         return pendingReports.Count;
     }
@@ -680,6 +887,30 @@ public sealed class ReportService : IReportService
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Real-time push to all affected reporters.
+        if (_realTimeNotifier is not null)
+        {
+            foreach (var userId in userIdsToNotify)
+            {
+                try
+                {
+                    await _realTimeNotifier.SendNotificationAsync(new RealTimeNotification(
+                        userId,
+                        "Bulk report update",
+                        $"One or more of your reports have been updated to {newStatus}.",
+                        NotificationType.System,
+                        DateTime.UtcNow,
+                        null),
+                        cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Bulk-report-updated real-time notify failed for user {UserId}", userId);
+                }
+            }
+        }
+
         return new BulkReportStatusResultDto(updated, failed);
     }
 
@@ -687,6 +918,7 @@ public sealed class ReportService : IReportService
     {
         int totalDocuments = 0;
         int totalReportsRejected = 0;
+        var affectedUsers = new HashSet<Guid>();
 
         foreach (var docId in documentIds)
         {
@@ -709,6 +941,7 @@ public sealed class ReportService : IReportService
                     report.ResolvedAt = DateTime.UtcNow;
                     _unitOfWork.Reports.Update(report);
                     distinctUsers.Add(report.UserId);
+                    affectedUsers.Add(report.UserId);
                     totalReportsRejected++;
                 }
 
@@ -725,6 +958,30 @@ public sealed class ReportService : IReportService
         }
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // Real-time push to affected reporters.
+        if (_realTimeNotifier is not null)
+        {
+            foreach (var userId in affectedUsers)
+            {
+                try
+                {
+                    await _realTimeNotifier.SendNotificationAsync(new RealTimeNotification(
+                        userId,
+                        "Reports rejected",
+                        "One or more of your reports were rejected. Documents were verified as legitimate.",
+                        NotificationType.System,
+                        DateTime.UtcNow,
+                        null),
+                        cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Bulk-report-rejected real-time notify failed for user {UserId}", userId);
+                }
+            }
+        }
+
         return new BulkMarkNonFlaggableResultDto(totalDocuments, totalReportsRejected);
     }
 
@@ -1204,17 +1461,23 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
     private readonly IMapper _mapper;
     private readonly AIStudyHub.Business.Interfaces.Services.IGamificationService? _gamificationService;
     private readonly AIStudyHub.Business.Interfaces.Services.IBadgeService? _badgeService;
+    private readonly AIStudyHub.Business.Interfaces.Services.IRecommendationService? _recommendationService;
+    private readonly IRealTimeNotificationService? _realTimeNotifier;
     private readonly ILogger<QuizSubmissionService>? _logger;
 
     public QuizSubmissionService(IUnitOfWork unitOfWork, IMapper mapper,
         AIStudyHub.Business.Interfaces.Services.IGamificationService? gamificationService = null,
         AIStudyHub.Business.Interfaces.Services.IBadgeService? badgeService = null,
+        AIStudyHub.Business.Interfaces.Services.IRecommendationService? recommendationService = null,
+        IRealTimeNotificationService? realTimeNotifier = null,
         ILogger<QuizSubmissionService>? logger = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _gamificationService = gamificationService;
         _badgeService = badgeService;
+        _recommendationService = recommendationService;
+        _realTimeNotifier = realTimeNotifier;
         _logger = logger;
     }
 
@@ -1254,6 +1517,51 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             .ToListAsync(cancellationToken);
 
         return submissions.Select(_mapper.Map<QuizSubmissionResponseDto>).ToList();
+    }
+
+    public async Task<PagedResultDto<QuizSubmissionHistoryDto>> GetMyHistoryAsync(
+        Guid userId,
+        Guid? quizId,
+        DateTime? fromDate,
+        DateTime? toDate,
+        PaginationParams @params,
+        CancellationToken ct = default)
+    {
+        var query = _unitOfWork.QuizSubmissions
+            .Query()
+            .Include(qs => qs.Quiz)
+                .ThenInclude(q => q.Document)
+                    .ThenInclude(d => d.Subject)
+            .Where(qs => qs.UserId == userId);
+
+        if (quizId.HasValue)
+            query = query.Where(qs => qs.QuizId == quizId.Value);
+
+        if (fromDate.HasValue)
+            query = query.Where(qs => qs.SubmittedAt >= fromDate.Value);
+
+        if (toDate.HasValue)
+            query = query.Where(qs => qs.SubmittedAt <= toDate.Value);
+
+        var totalCount = await query.CountAsync(ct);
+        var items = await query
+            .OrderByDescending(qs => qs.SubmittedAt)
+            .Skip(@params.Offset)
+            .Take(@params.Limit)
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        var dtos = items.Select(qs => new QuizSubmissionHistoryDto(
+            qs.Id, qs.UserId, qs.QuizId,
+            qs.Quiz?.Title ?? string.Empty,
+            qs.Quiz?.Document?.Title ?? string.Empty,
+            qs.Quiz?.Document?.Subject?.SubjectCode ?? string.Empty,
+            qs.Score, qs.MaxScore, qs.TotalCorrect,
+            null, // DurationSeconds - not tracked in entity
+            qs.MaxScore > 0 ? Math.Round((double)qs.Score / qs.MaxScore * 100, 1) : 0,
+            qs.GradedAt, qs.SubmittedAt, qs.CreatedAt, qs.UpdatedAt)).ToList();
+
+        return new PagedResultDto<QuizSubmissionHistoryDto>(dtos, totalCount, @params.Offset, @params.Limit);
     }
 
     public async Task<QuizSubmissionResponseDto> CreateAsync(CreateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
@@ -1307,6 +1615,37 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             submission.MaxScore = maxScore;
             submission.TotalCorrect = totalCorrect;
             submission.GradedAt = DateTime.UtcNow;
+
+            // Phase 4b: create WeakSubject recommendation if mastery drops below 60% for this subject
+            if (_recommendationService != null && quiz.Document != null)
+            {
+                try
+                {
+                    var subjectCode = quiz.Document.Subject?.SubjectCode ?? string.Empty;
+                    var subjectName = quiz.Document.Subject?.SubjectName ?? string.Empty;
+                    var subjectId = quiz.Document.SubjectId;
+
+                    var subjectTotal = await _unitOfWork.StudyLogs
+                        .Query()
+                        .CountAsync(l => l.UserId == request.UserId && l.SubjectCode == subjectCode, cancellationToken);
+                    var subjectCorrect = await _unitOfWork.StudyLogs
+                        .Query()
+                        .CountAsync(l => l.UserId == request.UserId && l.SubjectCode == subjectCode && l.IsCorrect, cancellationToken);
+                    var overallTotal = subjectTotal + maxScore;
+                    var overallCorrect = subjectCorrect + totalCorrect;
+                    var mastery = overallTotal > 0 ? Math.Round((double)overallCorrect / overallTotal * 100, 1) : 0.0;
+
+                    if (mastery < 60)
+                    {
+                        await _recommendationService.CreateWeakSubjectRecommendationAsync(
+                            request.UserId, subjectId, subjectName, subjectCode, mastery, cancellationToken);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Failed to create weak-subject recommendation for user {UserId}", request.UserId);
+                }
+            }
         }
 
         await _unitOfWork.QuizSubmissions.AddAsync(submission, cancellationToken);
@@ -1393,6 +1732,31 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             }
         }
 
+        // Real-time quiz-graded push (in addition to the synchronous HTTP response).
+        if (_realTimeNotifier is not null && submission.MaxScore > 0)
+        {
+            try
+            {
+                var quiz = await _unitOfWork.Quizzes
+                    .Query()
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(q => q.Id == submission.QuizId, cancellationToken);
+                var quizTitle = quiz?.Title ?? "Quiz";
+
+                await _realTimeNotifier.NotifyQuizGradedAsync(
+                    submission.UserId,
+                    submission.QuizId,
+                    quizTitle,
+                    submission.Score,
+                    submission.MaxScore,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Quiz-graded real-time notify failed for submission {SubmissionId}", submission.Id);
+            }
+        }
+
         return new SubmitQuizResultDto(submission, xpEarned, unlocked);
     }
 
@@ -1464,7 +1828,7 @@ public sealed class NotificationService : INotificationService
             .ToListAsync(cancellationToken);
 
         return notifications.Select(n => new NotificationResponseDto(
-            n.Id, n.UserId, n.Message, n.IsRead, n.Type.ToString(), n.CreatedAt, n.UpdatedAt)).ToList();
+            n.Id, n.UserId, n.Title, n.Message, n.PayloadJson, n.ActionUrl, n.IsRead, n.Type.ToString(), n.CreatedAt, n.UpdatedAt)).ToList();
     }
 
     public async Task MarkAsReadAsync(Guid notificationId, CancellationToken cancellationToken = default)
@@ -1503,6 +1867,12 @@ public sealed class NotificationService : INotificationService
             .Where(n => n.UserId == userId && !n.IsRead)
             .CountAsync(cancellationToken);
     }
+
+    public async Task<int> GetUnreadSummaryAsync(Guid userId, CancellationToken ct = default)
+    {
+        return await _unitOfWork.Notifications.Query()
+            .CountAsync(n => n.UserId == userId && !n.IsRead, ct);
+    }
 }
 
 public sealed class PaymentService : IPaymentService
@@ -1511,13 +1881,20 @@ public sealed class PaymentService : IPaymentService
     private readonly IMapper _mapper;
     private readonly IVnPayService _vnPayService;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IRealTimeNotificationService? _realTimeNotifier;
+    private readonly ILogger<PaymentService>? _logger;
 
-    public PaymentService(IUnitOfWork unitOfWork, IMapper mapper, IVnPayService vnPayService, IHttpContextAccessor httpContextAccessor)
+    public PaymentService(IUnitOfWork unitOfWork, IMapper mapper, IVnPayService vnPayService,
+        IHttpContextAccessor httpContextAccessor,
+        IRealTimeNotificationService? realTimeNotifier = null,
+        ILogger<PaymentService>? logger = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _vnPayService = vnPayService;
         _httpContextAccessor = httpContextAccessor;
+        _realTimeNotifier = realTimeNotifier;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<PaymentResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -1659,6 +2036,8 @@ public sealed class PaymentService : IPaymentService
             _unitOfWork.Payments.Update(payment);
 
             var user = await _unitOfWork.Users.GetByIdAsync(payment.UserId, cancellationToken);
+            string? tierName = null;
+            DateTime? expiresAt = null;
             if (user is not null && payment.TierId.HasValue)
             {
                 var tier = await _unitOfWork.TierMemberships.GetByIdAsync(payment.TierId.Value, cancellationToken);
@@ -1667,9 +2046,28 @@ public sealed class PaymentService : IPaymentService
                     ? DateTime.UtcNow.AddDays(30)
                     : null;
                 _unitOfWork.Users.Update(user);
+
+                tierName = tier?.TierName;
+                expiresAt = user.TierExpireAt;
             }
 
             await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            // Real-time payment-succeeded push.
+            if (_realTimeNotifier is not null && user is not null && tierName is not null)
+            {
+                try
+                {
+                    var activatedAt = DateTime.UtcNow;
+                    var effectiveExpiry = expiresAt ?? activatedAt.AddDays(30);
+                    await _realTimeNotifier.NotifyPaymentSucceededAsync(
+                        user.Id, tierName, activatedAt, effectiveExpiry, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Payment-succeeded real-time notify failed for user {UserId}", payment.UserId);
+                }
+            }
 
             return new VnpayReturnResult
             {

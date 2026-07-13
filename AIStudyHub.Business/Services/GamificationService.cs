@@ -38,15 +38,18 @@ public sealed class GamificationService : IGamificationService
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<GamificationService> _logger;
     private readonly IBadgeService? _badgeService;
+    private readonly IRealTimeNotificationService? _realTimeNotifier;
 
     public GamificationService(
         IUnitOfWork unitOfWork,
         ILogger<GamificationService> logger,
-        IBadgeService? badgeService = null)
+        IBadgeService? badgeService = null,
+        IRealTimeNotificationService? realTimeNotifier = null)
     {
         _unitOfWork = unitOfWork;
         _logger = logger;
         _badgeService = badgeService;
+        _realTimeNotifier = realTimeNotifier;
     }
 
     public async Task EnsureUserStatsAsync(Guid userId, CancellationToken cancellationToken = default)
@@ -197,6 +200,20 @@ public sealed class GamificationService : IGamificationService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Streak badge evaluation failed for user {UserId}", request.UserId);
+            }
+        }
+
+        // Real-time level-up push. Best-effort; failures do not void the XP award.
+        if (_realTimeNotifier is not null && stats.CurrentLevel > previousLevel)
+        {
+            try
+            {
+                await _realTimeNotifier.NotifyLevelUpAsync(
+                    request.UserId, stats.CurrentLevel, stats.TotalXp, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Level-up real-time notify failed for user {UserId}", request.UserId);
             }
         }
 

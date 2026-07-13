@@ -138,9 +138,9 @@ public sealed class ChangePasswordRequestDtoValidator : AbstractValidator<Change
     }
 }
 
-public sealed class ResetPasswordRequestDtoValidator : AbstractValidator<ResetPasswordRequestDto>
+public sealed class VerifyPasswordResetOtpRequestDtoValidator : AbstractValidator<VerifyPasswordResetOtpRequestDto>
 {
-    public ResetPasswordRequestDtoValidator()
+    public VerifyPasswordResetOtpRequestDtoValidator()
     {
         RuleFor(x => x.Email)
             .NotEmpty()
@@ -153,6 +153,29 @@ public sealed class ResetPasswordRequestDtoValidator : AbstractValidator<ResetPa
             .Length(6)
             .Matches("^[0-9]+$")
             .WithMessage("OTP must be a 6-digit number.");
+    }
+
+    private static bool BeValidEmailAddress(string email)
+    {
+        if (string.IsNullOrWhiteSpace(email)) return false;
+        try
+        {
+            var address = new MailAddress(email.Trim());
+            return string.Equals(address.Address, email.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
+    }
+}
+
+public sealed class ConfirmResetPasswordRequestDtoValidator : AbstractValidator<ConfirmResetPasswordRequestDto>
+{
+    public ConfirmResetPasswordRequestDtoValidator()
+    {
+        RuleFor(x => x.Email)
+            .NotEmpty()
+            .MaximumLength(255)
+            .Must(BeValidEmailAddress)
+            .WithMessage("Email must be a valid email address.");
 
         RuleFor(x => x.NewPassword)
             .NotEmpty()

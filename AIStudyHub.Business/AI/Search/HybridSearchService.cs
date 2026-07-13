@@ -53,7 +53,7 @@ public class HybridSearchService : IHybridSearchService
         }
         _logger.LogInformation("HybridSearch: Calling Qdrant with filter={Filter}", string.Join(",", filter.Select(kv => $"{kv.Key}={kv.Value}")));
 
-        var qdrantResults = await _vectorStore.HybridSearchAsync(denseEmbedding, sparseVector, topK * 2, filter);
+        var qdrantResults = await _vectorStore.HybridSearchAsync(denseEmbedding, sparseVector, topK, filter);
         _logger.LogInformation("HybridSearch: Qdrant returned {Count} results", qdrantResults.Count);
 
         // Map to SearchResult
@@ -64,9 +64,13 @@ public class HybridSearchService : IHybridSearchService
             Metadata: r.Metadata
         )).ToList();
 
+        _logger.LogInformation("Search query: '{Query}' | Results: {Sources}",
+            query, string.Join(" | ", results.Select(r => r.Source)));
+
         // 3. Rerank the fused results
         var rerankedResults = await _rerankingService.RerankAsync(query, results, topK, ct);
-        _logger.LogInformation("HybridSearch: After rerank: {Count} results", rerankedResults.Count());
+        _logger.LogInformation("HybridSearch: After rerank: {Count} results | Sources: {Sources}",
+            rerankedResults.Count(), string.Join(" | ", rerankedResults.Select(r => r.Source)));
 
         return rerankedResults;
     }

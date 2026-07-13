@@ -1,4 +1,4 @@
-﻿namespace AIStudyHub.Data.Enums;
+namespace AIStudyHub.Data.Enums;
 
 public enum NotificationType
 {

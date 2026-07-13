@@ -2,6 +2,7 @@ using AIStudyHub.Business.DTOs.Flashcards;
 using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.Interfaces.AI.Generators;
 using AIStudyHub.Business.Interfaces.AI.Orchestration;
+using AIStudyHub.Business.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -16,17 +17,23 @@ public sealed class AIController : ControllerBase
     private readonly IFlashcardAiService _flashcardAiService;
     private readonly IQuizAiService _quizAiService;
     private readonly ILogger<AIController> _logger;
+    private readonly IRealTimeNotificationService _realTimeNotifier;
+    private readonly AIStudyHub.Data.Interfaces.IUnitOfWork _unitOfWork;
 
     public AIController(
         ISemanticKernelOrchestrator orchestrator,
         IFlashcardAiService flashcardAiService,
         IQuizAiService quizAiService,
-        ILogger<AIController> logger)
+        ILogger<AIController> logger,
+        IRealTimeNotificationService realTimeNotifier,
+        AIStudyHub.Data.Interfaces.IUnitOfWork unitOfWork)
     {
         _orchestrator = orchestrator;
         _flashcardAiService = flashcardAiService;
         _quizAiService = quizAiService;
         _logger = logger;
+        _realTimeNotifier = realTimeNotifier;
+        _unitOfWork = unitOfWork;
     }
 
     private Guid GetCurrentUserId()
@@ -106,6 +113,20 @@ public sealed class AIController : ControllerBase
         {
             _logger.LogInformation("Flashcard generation for document {DocumentId} by user {UserId}", docId, userId);
             var result = await _flashcardAiService.GenerateFlashcardsAsync(docId, request, userId, cancellationToken);
+
+            try
+            {
+                var document = await _unitOfWork.Documents.GetByIdAsync(docId, cancellationToken);
+                if (document is not null)
+                {
+                    await _realTimeNotifier.NotifyNewFlashcardsReadyAsync(userId, docId, document.Title ?? "Document", result.Count, cancellationToken);
+                }
+            }
+            catch (Exception notifyEx)
+            {
+                _logger.LogWarning(notifyEx, "Real-time notify (flashcards ready) failed for document {DocumentId}", docId);
+            }
+
             return Ok(result);
         }
         catch (KeyNotFoundException ex)
@@ -137,6 +158,16 @@ public sealed class AIController : ControllerBase
         {
             _logger.LogInformation("Quiz generation for document {DocumentId} by user {UserId}", docId, userId);
             var result = await _quizAiService.GenerateAndPersistQuizAsync(docId, dto, userId, cancellationToken);
+
+            try
+            {
+                await _realTimeNotifier.NotifyQuizReadyAsync(userId, result.Id, result.Title, cancellationToken);
+            }
+            catch (Exception notifyEx)
+            {
+                _logger.LogWarning(notifyEx, "Real-time notify (quiz ready) failed for quiz {QuizId}", result.Id);
+            }
+
             return Ok(result);
         }
         catch (KeyNotFoundException ex)

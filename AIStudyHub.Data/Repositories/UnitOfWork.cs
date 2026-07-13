@@ -26,10 +26,14 @@ public sealed class UnitOfWork : IUnitOfWork
         Payments = new GenericRepository<Payment>(_dbContext);
         ChatSessions = new GenericRepository<ChatSession>(_dbContext);
         ChatMessages = new GenericRepository<ChatMessage>(_dbContext);
+        ChatSessionDocuments = new GenericRepository<ChatSessionDocument>(_dbContext);
         UserStats = new GenericRepository<UserStats>(_dbContext);
         StudyLogs = new GenericRepository<StudyLog>(_dbContext);
         Badges = new GenericRepository<Badge>(_dbContext);
         UserBadges = new GenericRepository<UserBadge>(_dbContext);
+        DocumentShares = new GenericRepository<DocumentShare>(_dbContext);
+        TokenLedgers = new GenericRepository<TokenLedger>(_dbContext);
+        Recommendations = new GenericRepository<Recommendation>(_dbContext);
     }
 
     public IRepository<User> Users { get; }
@@ -48,10 +52,14 @@ public sealed class UnitOfWork : IUnitOfWork
     public IRepository<Payment> Payments { get; }
     public IRepository<ChatSession> ChatSessions { get; }
     public IRepository<ChatMessage> ChatMessages { get; }
+    public IRepository<ChatSessionDocument> ChatSessionDocuments { get; }
     public IRepository<UserStats> UserStats { get; }
     public IRepository<StudyLog> StudyLogs { get; }
     public IRepository<Badge> Badges { get; }
     public IRepository<UserBadge> UserBadges { get; }
+    public IRepository<DocumentShare> DocumentShares { get; }
+    public IRepository<TokenLedger> TokenLedgers { get; }
+    public IRepository<Recommendation> Recommendations { get; }
 
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

@@ -34,4 +34,46 @@ public interface IRealTimeNotificationService
     /// <c>GET /api/Gamification/achievements</c>.
     /// </summary>
     Task NotifyBadgeEarnedAsync(Guid userId, AchievementDto achievement, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Broadcast quiz grading result to the user (real-time, in addition to HTTP response).
+    /// </summary>
+    Task NotifyQuizGradedAsync(
+        Guid userId,
+        Guid quizId,
+        string quizTitle,
+        int score,
+        int maxScore,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Notify a document owner that someone upvoted/downvoted their document.
+    /// </summary>
+    Task NotifyVoteReceivedAsync(
+        Guid documentOwnerId,
+        Guid voterId,
+        Guid documentId,
+        string documentTitle,
+        VoteType voteType,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Notify the buyer that their payment succeeded and tier is now active.
+    /// </summary>
+    Task NotifyPaymentSucceededAsync(
+        Guid userId,
+        string tierName,
+        DateTime activatedAt,
+        DateTime expiresAt,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Notify the user that document processing failed.
+    /// </summary>
+    Task NotifyDocumentFailedAsync(
+        Guid userId,
+        Guid documentId,
+        string title,
+        string errorMessage,
+        CancellationToken cancellationToken = default);
 }

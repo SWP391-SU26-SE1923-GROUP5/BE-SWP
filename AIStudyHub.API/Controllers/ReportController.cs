@@ -1,5 +1,6 @@
 using AIStudyHub.Business.DTOs.Common;
 using AIStudyHub.Business.DTOs.Reports;
+using AIStudyHub.Business.Exceptions;
 using AIStudyHub.Business.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -29,8 +30,15 @@ public sealed class ReportController : ControllerBase
     public async Task<ActionResult<ReportResponseDto>> Create([FromBody] CreateReportRequestDto request, CancellationToken cancellationToken)
     {
         var userId = GetUserId();
-        var result = await _service.CreateWithUserIdAsync(request, userId, cancellationToken);
-        return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
+        try
+        {
+            var result = await _service.CreateWithUserIdAsync(request, userId, cancellationToken);
+            return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
+        }
+        catch (QuotaExceededException)
+        {
+            return StatusCode(429, "You have already reported this document within the last 24 hours.");
+        }
     }
 
     [HttpGet("my-reports")]

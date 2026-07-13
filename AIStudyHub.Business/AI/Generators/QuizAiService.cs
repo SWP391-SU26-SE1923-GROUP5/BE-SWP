@@ -4,12 +4,14 @@ using AIStudyHub.Business.AI.Generators.Common;
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.LLM;
+using AIStudyHub.Business.Interfaces.AI.Tracking;
 using AIStudyHub.Business.Common;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Exceptions;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
@@ -24,17 +26,22 @@ public sealed class QuizAiService : IQuizAiService
     private readonly IOpenAIService _openAiService;
     private readonly IVectorStoreService _vectorStoreService;
     private readonly ILogger<QuizAiService> _logger;
+    private readonly ITokenTrackerService _tokenTracker;
+
+    private const int EstimatedTokensPerBatch = 1800; // was 2000
 
     public QuizAiService(
         IUnitOfWork unitOfWork,
         IOpenAIService openAiService,
         IVectorStoreService vectorStoreService,
-        ILogger<QuizAiService> logger)
+        ILogger<QuizAiService> logger,
+        ITokenTrackerService tokenTracker)
     {
         _unitOfWork = unitOfWork;
         _openAiService = openAiService;
         _vectorStoreService = vectorStoreService;
         _logger = logger;
+        _tokenTracker = tokenTracker;
     }
 
     public async Task<QuizResponseDto> GenerateAndPersistQuizAsync(
@@ -51,6 +58,15 @@ public sealed class QuizAiService : IQuizAiService
         var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken);
         if (document is null)
             throw new KeyNotFoundException("Document not found");
+
+        // Check AI token quota before processing
+        var estimatedBatches = (int)Math.Ceiling((double)request.numberOfQuestions / 15);
+        var estimatedTokens = estimatedBatches * EstimatedTokensPerBatch;
+        if (!await _tokenTracker.HasQuotaAsync(userId, estimatedTokens, cancellationToken))
+        {
+            var (current, limit) = await _tokenTracker.GetUsageInfoAsync(userId, cancellationToken);
+            throw new QuotaExceededException(current, limit, estimatedTokens);
+        }
 
         var payloads = await _vectorStoreService.GetPayloadsByDocumentIdAsync(documentId);
 
@@ -75,21 +91,24 @@ public sealed class QuizAiService : IQuizAiService
         _logger.LogInformation("Quiz context length: {Length} chars from {ChunkCount} chunks",
             context.Length, sortedChunks.Count);
 
-        // Increased batch size for faster generation using capable modern LLMs (e.g. gpt-4o-mini).
         const int batchSize = 15;
         var allQuestions = new List<AiGeneratedQuestionDto>(request.numberOfQuestions);
         var seenTitles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var remaining = request.numberOfQuestions;
         var batchNumber = 0;
-        var maxBatches = request.numberOfQuestions * 3; // Give it plenty of tries
+        var maxBatches = request.numberOfQuestions * 3;
         var consecutiveZeroAdded = 0;
         var runningTitle = string.Empty;
+
+        // Track total tokens used
+        int totalInputTokens = 0;
+        int totalOutputTokens = 0;
 
         while (remaining > 0 && batchNumber < maxBatches)
         {
             batchNumber++;
-            var wantThisBatch = Math.Min(batchSize, remaining + 2); // Ask for a bit more to absorb noise
+            var wantThisBatch = Math.Min(batchSize, remaining + 2);
 
             var prompt = BuildBatchPrompt(
                 wantThisBatch,
@@ -97,8 +116,11 @@ public sealed class QuizAiService : IQuizAiService
                 allQuestions,
                 startingPosition: allQuestions.Count + 1);
 
-            var batchQuestions = await RunBatchWithRetryAsync(
+            var (batchQuestions, inputTokens, outputTokens) = await RunBatchWithRetryWithTrackingAsync(
                 prompt, wantThisBatch, batchNumber, cancellationToken);
+
+            totalInputTokens += inputTokens;
+            totalOutputTokens += outputTokens;
 
             var added = 0;
             foreach (var q in batchQuestions)
@@ -109,7 +131,6 @@ public sealed class QuizAiService : IQuizAiService
                 var normalized = NormalizeQuestion(q, allQuestions.Count + 1);
                 if (normalized is null) continue;
 
-                // Aggressively normalize title to catch slight variations
                 var normalizedTitleText = new string(normalized.QuestionTitle.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
                 if (normalizedTitleText.Length < 5) continue;
 
@@ -161,6 +182,12 @@ public sealed class QuizAiService : IQuizAiService
         _logger.LogInformation(
             "Generated {Count}/{Requested} quiz questions for document {DocumentId}",
             allQuestions.Count, request.numberOfQuestions, documentId);
+
+        // Record token usage
+        if (totalInputTokens > 0 || totalOutputTokens > 0)
+        {
+            await _tokenTracker.RecordUsageAsync(userId, totalInputTokens, totalOutputTokens, "quiz", cancellationToken);
+        }
 
         return new QuizResponseDto(
             quiz.Id,
@@ -228,7 +255,7 @@ IMPORTANT:
 """;
     }
 
-    private async Task<List<AiGeneratedQuestionDto>> RunBatchWithRetryAsync(
+    private async Task<(List<AiGeneratedQuestionDto> questions, int inputTokens, int outputTokens)> RunBatchWithRetryWithTrackingAsync(
         string prompt,
         int wantThisBatch,
         int batchNumber,
@@ -236,15 +263,24 @@ IMPORTANT:
     {
         const int maxAttempts = 2;
         var best = new List<AiGeneratedQuestionDto>();
+        var bestInputTokens = 0;
+        var bestOutputTokens = 0;
+        var lastAttemptInputTokens = 0;
+        var lastAttemptOutputTokens = 0;
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             string aiText;
+            int inputTokens = 0;
+            int outputTokens = 0;
             try
             {
-                aiText = await _openAiService.SendMessageAsync(prompt, 0.2f);
+                var usageResult = await _openAiService.SendMessageWithUsageAsync(prompt, 0.2f);
+                aiText = usageResult.Text;
+                inputTokens = usageResult.InputTokens;
+                outputTokens = usageResult.OutputTokens;
             }
             catch (Exception ex)
             {
@@ -267,18 +303,25 @@ IMPORTANT:
                 continue;
             }
 
+            lastAttemptInputTokens = inputTokens;
+            lastAttemptOutputTokens = outputTokens;
+
             if (parsed.Count > best.Count)
+            {
                 best = parsed;
+                bestInputTokens = inputTokens;
+                bestOutputTokens = outputTokens;
+            }
 
             if (parsed.Count >= Math.Max(1, wantThisBatch / 2))
-                return parsed;
+                return (parsed, inputTokens, outputTokens);
 
             _logger.LogWarning(
                 "Quiz batch {Batch} attempt {Attempt}: only {Got}/{Want} questions, retrying",
                 batchNumber, attempt, parsed.Count, wantThisBatch);
         }
 
-        return best;
+        return (best, lastAttemptInputTokens, lastAttemptOutputTokens);
     }
 
     private static List<AiGeneratedQuestionDto> ParseQuizPayload(string aiText)
@@ -430,7 +473,10 @@ IMPORTANT:
             var correctCount = answers.Count(x => x.IsCorrect);
             if (correctCount == 0)
             {
-                answers[0] = answers[0] with { IsCorrect = true };
+                // Shuffle so the correct answer lands in a random position (A/B/C/D)
+                var rng = Random.Shared;
+                var idx = rng.Next(answers.Count);
+                answers[idx] = answers[idx] with { IsCorrect = true };
             }
             else if (correctCount > 1)
             {
@@ -440,6 +486,17 @@ IMPORTANT:
                     if (!answers[i].IsCorrect) continue;
                     if (firstKept) answers[i] = answers[i] with { IsCorrect = false };
                     else firstKept = true;
+                }
+            }
+
+            // Randomize answer order so correct answer isn't always Option A
+            if (answers.Count >= 2)
+            {
+                var rng = Random.Shared;
+                for (var i = answers.Count - 1; i > 0; i--)
+                {
+                    var j = rng.Next(i + 1);
+                    (answers[i], answers[j]) = (answers[j], answers[i]);
                 }
             }
 
@@ -496,7 +553,9 @@ IMPORTANT:
         var correctCount = answers.Count(x => x.IsCorrect);
         if (correctCount == 0)
         {
-            answers[0] = answers[0] with { IsCorrect = true };
+            var rng = Random.Shared;
+            var idx = rng.Next(answers.Count);
+            answers[idx] = answers[idx] with { IsCorrect = true };
         }
         else if (correctCount > 1)
         {
