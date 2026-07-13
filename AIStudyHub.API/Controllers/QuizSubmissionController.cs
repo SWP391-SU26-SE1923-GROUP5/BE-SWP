@@ -64,6 +64,21 @@ public sealed class QuizSubmissionController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>Lấy lịch sử nộp bài của tất cả user theo quiz.</summary>
+    [HttpGet("quiz/{quizId:guid}/history")]
+    public async Task<ActionResult<PagedResultDto<QuizSubmissionHistoryDto>>> GetQuizHistory(
+        Guid quizId,
+        [FromQuery] DateTime? fromDate,
+        [FromQuery] DateTime? toDate,
+        [FromQuery] int offset = 0,
+        [FromQuery] int limit = 20,
+        CancellationToken ct = default)
+    {
+        var @params = new PaginationParams { Offset = offset, Limit = limit };
+        var result = await _service.GetQuizHistoryAsync(quizId, fromDate, toDate, @params, ct);
+        return Ok(result);
+    }
+
     // POST   /api/QuizSubmission  - Đã xóa. Nộp bài thi qua luồng nghiệp vụ Quiz riêng (Submit + Scoring).
     // PUT    /api/QuizSubmission/{id} - Đã xóa. Kết quả không được sửa sau khi nộp.
     // DELETE /api/QuizSubmission/{id} - Đã xóa. Kết quả không được xóa bởi người dùng.
