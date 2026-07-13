@@ -1613,6 +1613,47 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
         return new PagedResultDto<QuizSubmissionHistoryDto>(dtos, totalCount, @params.Offset, @params.Limit);
     }
 
+    public async Task<PagedResultDto<QuizSubmissionHistoryDto>> GetQuizHistoryAsync(
+        Guid quizId,
+        DateTime? fromDate,
+        DateTime? toDate,
+        PaginationParams @params,
+        CancellationToken ct = default)
+    {
+        var query = _unitOfWork.QuizSubmissions
+            .Query()
+            .Include(qs => qs.Quiz)
+                .ThenInclude(q => q.Document)
+                    .ThenInclude(d => d.Subject)
+            .Where(qs => qs.QuizId == quizId);
+
+        if (fromDate.HasValue)
+            query = query.Where(qs => qs.SubmittedAt >= fromDate.Value);
+
+        if (toDate.HasValue)
+            query = query.Where(qs => qs.SubmittedAt <= toDate.Value);
+
+        var totalCount = await query.CountAsync(ct);
+        var items = await query
+            .OrderByDescending(qs => qs.SubmittedAt)
+            .Skip(@params.Offset)
+            .Take(@params.Limit)
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        var dtos = items.Select(qs => new QuizSubmissionHistoryDto(
+            qs.Id, qs.UserId, qs.QuizId,
+            qs.Quiz?.Title ?? string.Empty,
+            qs.Quiz?.Document?.Title ?? string.Empty,
+            qs.Quiz?.Document?.Subject?.SubjectCode ?? string.Empty,
+            qs.Score, qs.MaxScore, qs.TotalCorrect,
+            null,
+            qs.MaxScore > 0 ? Math.Round((double)qs.Score / qs.MaxScore * 100, 1) : 0,
+            qs.GradedAt, qs.SubmittedAt, qs.CreatedAt, qs.UpdatedAt)).ToList();
+
+        return new PagedResultDto<QuizSubmissionHistoryDto>(dtos, totalCount, @params.Offset, @params.Limit);
+    }
+
     public async Task<QuizSubmissionResponseDto> CreateAsync(CreateQuizSubmissionRequestDto request, CancellationToken cancellationToken = default)
     {
         var quiz = await _unitOfWork.Quizzes
