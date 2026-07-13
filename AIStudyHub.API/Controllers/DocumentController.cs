@@ -11,6 +11,7 @@ using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -76,7 +77,13 @@ public sealed class DocumentController : ControllerBase
         if (result == null) return NotFound();
 
         var userId = GetCurrentUserId();
-        if (result.UserId != userId && result.ShareStatus != "public") return Forbid();
+        if (userId != Guid.Empty && result.UserId != userId && result.ShareStatus != "public")
+        {
+            var isShared = await _unitOfWork.DocumentShares
+                .Query()
+                .AnyAsync<DocumentShare>(s => s.DocumentId == id && s.UserId == userId, cancellationToken);
+            if (!isShared) return Forbid();
+        }
 
         return Ok(result);
     }
@@ -187,7 +194,13 @@ public sealed class DocumentController : ControllerBase
         if (document is null) return NotFound();
 
         var userId = GetCurrentUserId();
-        if (document.UserId != userId && document.ShareStatus != "public") return Forbid();
+        if (userId != Guid.Empty && document.UserId != userId && document.ShareStatus != "public")
+        {
+            var isShared = await _unitOfWork.DocumentShares
+                .Query()
+                .AnyAsync<DocumentShare>(s => s.DocumentId == id && s.UserId == userId, cancellationToken);
+            if (!isShared) return Forbid();
+        }
 
         if (string.IsNullOrEmpty(document.FileLink))
             return NotFound("No file associated with this document");
@@ -212,7 +225,13 @@ public sealed class DocumentController : ControllerBase
         if (document is null) return NotFound();
 
         var userId = GetCurrentUserId();
-        if (document.UserId != userId && document.ShareStatus != "public") return Forbid();
+        if (userId != Guid.Empty && document.UserId != userId && document.ShareStatus != "public")
+        {
+            var isShared = await _unitOfWork.DocumentShares
+                .Query()
+                .AnyAsync<DocumentShare>(s => s.DocumentId == id && s.UserId == userId, cancellationToken);
+            if (!isShared) return Forbid();
+        }
 
         if (string.IsNullOrEmpty(document.FileLink))
             return NotFound("No file associated with this document");
