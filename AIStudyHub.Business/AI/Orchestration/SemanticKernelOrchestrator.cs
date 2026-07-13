@@ -53,8 +53,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _logger.LogInformation("Processing RAG query for user {UserId}", userId);
 
         // L3: Retrieval with hybrid search and reranking
-        var searchResults = await _searchService.SearchAsync(question, userId, documentId, 40, ct);
-        var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 40, ct);
+        var searchResults = await _searchService.SearchAsync(question, userId, documentId, 20, ct);
+        var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 5, ct);
         _logger.LogInformation("After 1st rerank ({Count}): {Chunks}",
             rerankedResults.Count(),
             string.Join("\n===\n", rerankedResults.Take(5).Select(r => r.Content.Length > 250 ? r.Content[..250] + "..." : r.Content)));
@@ -85,7 +85,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var contextBuilder = new StringBuilder();
         foreach (var r in resultList)
         {
-            contextBuilder.AppendLine($"--- Source: {r.Source} ---");
+            var pageInfo = r.Metadata.TryGetValue("pageNumber", out var pg) ? $", Trang: {pg}" : "";
+            contextBuilder.AppendLine($"--- Nguồn: {r.Source}{pageInfo} ---");
             contextBuilder.AppendLine(r.Content);
             contextBuilder.AppendLine();
         }
@@ -101,10 +102,10 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             ANSWERING RULES:
             1. Base your answer ONLY on the provided SOURCES. Your answer must be strictly limited to what the SOURCES contain.
-            2. If the user asks about the AIStudyHub system features or how to use it, use the 'ABOUT AI STUDY HUB' info above to guide them naturally.
-            3. YES/NO questions: use the SOURCES to answer. If the SOURCES answer the question indirectly (e.g. user asks "Does it use Java?" and SOURCES say "The backend uses .NET"), answer "Không" or "Có" with the supporting evidence. Never say "Tài liệu không đề cập" if the SOURCES provide enough information to infer the answer.
-            4. YES/NO questions about technologies: if SOURCES don't mention X but do mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly (e.g. ".NET", "JavaScript", "TypeScript", "Python", "React", "Angular"). If SOURCES contain zero information about the topic at all, say so clearly in Vietnamese (e.g. "Tài liệu không đề cập đến chủ đề này.").
-            5. Do NOT insert numeric citations like [1], [2] into your text.
+            2. When providing information, you SHOULD explicitly mention which document and page number the information comes from (e.g. "Theo trang 5 của tài liệu X...").
+            3. If the user asks about the AIStudyHub system features or how to use it, use the 'ABOUT AI STUDY HUB' info above to guide them naturally.
+            4. YES/NO questions: use the SOURCES to answer. If the SOURCES answer the question indirectly (e.g. user asks "Does it use Java?" and SOURCES say "The backend uses .NET"), answer "Không" or "Có" with the supporting evidence. Never say "Tài liệu không đề cập" if the SOURCES provide enough information to infer the answer.
+            5. YES/NO questions about technologies: if SOURCES don't mention X but do mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly (e.g. ".NET", "JavaScript", "TypeScript", "Python", "React", "Angular"). If SOURCES contain zero information about the topic at all, say so clearly in Vietnamese (e.g. "Tài liệu không đề cập đến chủ đề này.").
             6. Answer in Vietnamese by default unless the user asks in English.
             """;
 
@@ -132,7 +133,9 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var citations = resultList.Select((r, i) => new CitationInfo(
             Source: r.Source,
             Content: r.Content,
-            Relevance: r.Score
+            Relevance: r.Score,
+            PageNumber: r.Metadata.TryGetValue("pageNumber", out var pgStr) && int.TryParse(pgStr, out var pg) ? pg : null,
+            MatchType: r.MatchType
         )).ToList();
 
         return new RagResponse(answer, citations, confidence, IsRelevant: true);
@@ -178,7 +181,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var contextBuilder = new StringBuilder();
         foreach (var r in resultList)
         {
-            contextBuilder.AppendLine($"--- Source: {r.Source} ---");
+            var pageInfo = r.Metadata.TryGetValue("pageNumber", out var pg) ? $", Trang: {pg}" : "";
+            contextBuilder.AppendLine($"--- Nguồn: {r.Source}{pageInfo} ---");
             contextBuilder.AppendLine(r.Content);
             contextBuilder.AppendLine();
         }
@@ -192,10 +196,10 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             ANSWERING RULES:
             1. Base your answer ONLY on the provided SOURCES. Your answer must be strictly limited to what the SOURCES contain.
-            2. If the user asks about the AIStudyHub system features or how to use it, use the 'ABOUT AI STUDY HUB' info above to guide them naturally.
-            3. YES/NO questions: use the SOURCES to answer. If the SOURCES answer the question indirectly (e.g. user asks "Does it use Java?" and SOURCES say "The backend uses .NET"), answer "Không" or "Có" with the supporting evidence. Never say "Tài liệu không đề cập" if the SOURCES provide enough information to infer the answer.
-            4. YES/NO questions about technologies: if SOURCES don't mention X but do mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly (e.g. ".NET", "JavaScript", "TypeScript", "Python", "React", "Angular"). If SOURCES contain zero information about the topic at all, say so clearly in Vietnamese (e.g. "Tài liệu không đề cập đến chủ đề này.").
-            5. Do NOT insert numeric citations like [1], [2] into your text.
+            2. When providing information, you SHOULD explicitly mention which document and page number the information comes from (e.g. "Theo trang 5 của tài liệu X...").
+            3. If the user asks about the AIStudyHub system features or how to use it, use the 'ABOUT AI STUDY HUB' info above to guide them naturally.
+            4. YES/NO questions: use the SOURCES to answer. If the SOURCES answer the question indirectly (e.g. user asks "Does it use Java?" and SOURCES say "The backend uses .NET"), answer "Không" or "Có" with the supporting evidence. Never say "Tài liệu không đề cập" if the SOURCES provide enough information to infer the answer.
+            5. YES/NO questions about technologies: if SOURCES don't mention X but do mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly (e.g. ".NET", "JavaScript", "TypeScript", "Python", "React", "Angular"). If SOURCES contain zero information about the topic at all, say so clearly in Vietnamese (e.g. "Tài liệu không đề cập đến chủ đề này.").
             6. Answer in Vietnamese by default unless the user asks in English.
             """;
 
@@ -225,7 +229,9 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var citations = resultList.Select((r, i) => new CitationInfo(
             Source: r.Source,
             Content: r.Content,
-            Relevance: r.Score
+            Relevance: r.Score,
+            PageNumber: r.Metadata.TryGetValue("pageNumber", out var pgStr) && int.TryParse(pgStr, out var pg) ? pg : null,
+            MatchType: r.MatchType
         )).ToList();
 
         return new RagResponseWithUsage(answer, citations, confidence, usageResult.InputTokens, usageResult.OutputTokens, IsRelevant: true);

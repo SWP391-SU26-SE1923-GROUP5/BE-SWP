@@ -30,5 +30,7 @@ public record SummarizeResult(
 public record CitationInfo(
     string Source,
     string Content,
-    double Relevance
+    double Relevance,
+    int? PageNumber,
+    string MatchType
 );

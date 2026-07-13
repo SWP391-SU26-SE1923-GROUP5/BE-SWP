@@ -109,7 +109,7 @@ public class AdminController : ControllerBase
         var chunks = await _docProcessing.ChunkTextAsync(
             rawText, _ragOptions.Value.ChunkSize, _ragOptions.Value.ChunkOverlap, preserveTables: true);
 
-        var validChunks = chunks.Where(c => !string.IsNullOrWhiteSpace(c)).ToList();
+        var validChunks = chunks.Where(c => !string.IsNullOrWhiteSpace(c.Text)).ToList();
         if (validChunks.Count == 0)
             return BadRequest(new { message = "No valid chunks generated" });
 
@@ -117,19 +117,26 @@ public class AdminController : ControllerBase
         _logger.LogInformation("Document {DocumentId}: deleted old vectors", documentId);
 
         await _qdrant.EnsureCollectionExistsAsync();
-        var denseVectors = await _embedding.GenerateEmbeddingsAsync(validChunks);
+        
+        var chunkTexts = validChunks.Select(c => c.Text).ToList();
+        var denseVectors = await _embedding.GenerateEmbeddingsAsync(chunkTexts);
 
         for (int i = 0; i < validChunks.Count; i++)
         {
-            var sparse = _sparse.GenerateSparseVector(validChunks[i]);
+            var chunk = validChunks[i];
+            var sparse = _sparse.GenerateSparseVector(chunk.Text);
             var metadata = new Dictionary<string, string>
             {
                 { "documentId", documentId.ToString() },
                 { "userId", doc.UserId.ToString() },
-                { "text", validChunks[i] },
+                { "text", chunk.Text },
                 { "fileName", doc.FileName ?? "" },
                 { "chunkIndex", i.ToString() }
             };
+            if (chunk.PageNumber.HasValue)
+            {
+                metadata.Add("pageNumber", chunk.PageNumber.Value.ToString());
+            }
             await _qdrant.UpsertVectorAsync(Guid.NewGuid().ToString(), denseVectors[i], sparse, metadata);
         }
 

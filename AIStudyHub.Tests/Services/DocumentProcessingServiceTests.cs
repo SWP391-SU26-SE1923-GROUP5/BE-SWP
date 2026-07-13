@@ -79,7 +79,7 @@ public class DocumentProcessingServiceTests
         // Expected grouping based on size and sentences.
         Assert.NotEmpty(chunks);
         Assert.True(chunks.Count > 1);
-        Assert.Contains("This is sentence one.", chunks[0]);
+        Assert.Contains("This is sentence one.", chunks[0].Text);
     }
 
     [Fact]
@@ -95,8 +95,8 @@ public class DocumentProcessingServiceTests
         Assert.True(chunks.Count > 1);
         // Ensure overlap is included in subsequent chunks (part of previous chunk)
         // With 5 char overlap, the last 5 chars of chunk[0] should be at the start of chunk[1]
-        var chunk0 = chunks[0];
-        var chunk1 = chunks[1];
+        var chunk0 = chunks[0].Text;
+        var chunk1 = chunks[1].Text;
         
         var overlapText = chunk0.Substring(chunk0.Length - 5);
         Assert.StartsWith(overlapText, chunk1);

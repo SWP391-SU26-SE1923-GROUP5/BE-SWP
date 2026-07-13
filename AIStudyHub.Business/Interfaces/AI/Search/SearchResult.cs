@@ -4,5 +4,6 @@ public record SearchResult(
     string Content,
     double Score,
     string Source,
-    Dictionary<string, string> Metadata
+    Dictionary<string, string> Metadata,
+    string MatchType = "semantic"
 );
