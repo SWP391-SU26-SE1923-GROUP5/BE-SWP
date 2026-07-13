@@ -137,7 +137,7 @@ public sealed class DocumentController : ControllerBase
     }
 
     /// <summary>Returns the calling user's trashed documents.</summary>
-    [HttpGet("trashed")]
+    [HttpGet("trash")]
     public async Task<ActionResult<IReadOnlyList<DocumentResponseDto>>> GetTrash(CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
