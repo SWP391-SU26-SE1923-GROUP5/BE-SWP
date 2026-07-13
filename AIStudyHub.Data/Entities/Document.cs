@@ -12,7 +12,6 @@ public sealed class Document : BaseEntity
     public string? FileExtension { get; set; }
     public string? FileType { get; set; }
     public long FileSizeBytes { get; set; }
-    public string? SharedUsers { get; set; }
     public string ShareStatus { get; set; } = "private";
     public DocumentStatus? Status { get; set; }
     public bool IsNonFlaggable { get; set; } = false;

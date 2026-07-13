@@ -57,7 +57,6 @@ public sealed class ApplicationMappingProfile : Profile
                 src.FileExtension,
                 src.FileType,
                 src.FileSizeBytes,
-                src.SharedUsers,
                 src.ShareStatus,
                 src.Status,
                 src.ErrorMessage,

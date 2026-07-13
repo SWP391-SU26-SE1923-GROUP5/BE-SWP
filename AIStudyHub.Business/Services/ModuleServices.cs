@@ -40,13 +40,13 @@ public sealed class DocumentService : IDocumentService
 
     private static DocumentResponseDto MapToDto(Document d) => new(
         d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
-        d.FileType, d.FileSizeBytes, d.SharedUsers, d.ShareStatus, d.Status, d.ErrorMessage,
+        d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status, d.ErrorMessage,
         d.Votes.Sum(v => v.Type == AIStudyHub.Data.Enums.VoteType.Upvote ? 1 : -1),
         d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
 
     private static DocumentResponseDto MapToDtoNoVotes(Document d) => new(
         d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
-        d.FileType, d.FileSizeBytes, d.SharedUsers, d.ShareStatus, d.Status, d.ErrorMessage,
+        d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status, d.ErrorMessage,
         d.Votes.Count, d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
 
     public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<DocumentResponseDto>> GetAllPagedAsync(
@@ -219,46 +219,55 @@ public sealed class DocumentService : IDocumentService
             targetIds = existingIds;
         }
 
-        // Replace all DocumentShare entries for this document.
+        // Load existing share user IDs so we can make this additive.
         var existingShares = await _unitOfWork.DocumentShares
             .Query()
             .Where(s => s.DocumentId == documentId)
             .ToListAsync(cancellationToken);
-        foreach (var s in existingShares)
-            _unitOfWork.DocumentShares.Remove(s);
+        var existingUserIds = existingShares.Select(s => s.UserId).ToHashSet();
+
+        // Only add users who are not already shared.
+        var newTargetIds = targetIds.Where(id => !existingUserIds.Contains(id)).ToList();
 
         var levels = request.Levels ?? Enumerable.Repeat((int)ShareLevel.Read, targetIds.Count).ToList();
         var resultLevels = new List<int>();
-        for (int i = 0; i < targetIds.Count; i++)
+
+        // Existing shares: return their current level from the DB.
+        foreach (var s in existingShares)
+            resultLevels.Add((int)s.Level);
+
+        // New shares: insert and include their level in the response.
+        for (int i = 0; i < newTargetIds.Count; i++)
         {
-            var level = i < levels.Count ? (ShareLevel)levels[i] : ShareLevel.Read;
+            var originalIndex = targetIds.IndexOf(newTargetIds[i]);
+            var level = originalIndex < levels.Count ? (ShareLevel)levels[originalIndex] : ShareLevel.Read;
             if (level != ShareLevel.Read && level != ShareLevel.Edit)
                 level = ShareLevel.Read;
 
-            var share = new DocumentShare
+            await _unitOfWork.DocumentShares.AddAsync(new DocumentShare
             {
                 Id = Guid.NewGuid(),
                 DocumentId = documentId,
-                UserId = targetIds[i],
+                UserId = newTargetIds[i],
                 Level = level,
                 SharedBy = callerId,
                 SharedAt = DateTime.UtcNow,
                 CreatedAt = DateTime.UtcNow
-            };
-            await _unitOfWork.DocumentShares.AddAsync(share, cancellationToken);
+            }, cancellationToken);
             resultLevels.Add((int)level);
         }
 
-        // Maintain backward-compatible JSON column.
-        document.SharedUsers = targetIds.Count == 0
-            ? null
-            : JsonSerializer.Serialize(targetIds);
-        document.ShareStatus = targetIds.Count > 0 ? "shared" : "private";
+        // Response: all current share user IDs (existing + newly added), ordered as in DB + new inserts.
+        var allSharedUserIds = existingShares.Select(s => s.UserId)
+            .Concat(newTargetIds)
+            .ToList();
+
+        document.ShareStatus = (existingShares.Count + newTargetIds.Count) > 0 ? "shared" : "private";
 
         _unitOfWork.Documents.Update(document);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        return new ShareDocumentResponseDto(document.Id, targetIds, resultLevels);
+        return new ShareDocumentResponseDto(document.Id, allSharedUserIds, resultLevels);
     }
 
     public async Task<IReadOnlyList<DocumentResponseDto>> GetTrashAsync(Guid userId, CancellationToken cancellationToken = default)
@@ -332,13 +341,25 @@ public sealed class DocumentService : IDocumentService
         var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken)
             ?? throw new KeyNotFoundException($"Document with ID {documentId} not found.");
 
-        if (document.UserId != callerId)
-            throw new UnauthorizedAccessException("Only the document owner can view shares.");
+        bool isOwner = document.UserId == callerId;
 
-        var shares = await _unitOfWork.DocumentShares
+        // Non-owner callers must at least have a share entry to view shares.
+        // Owners always see the full list; non-owners only see their own entry.
+        var sharesQuery = _unitOfWork.DocumentShares
             .Query()
             .Include(s => s.User)
-            .Where(s => s.DocumentId == documentId)
+            .Where(s => s.DocumentId == documentId);
+
+        if (!isOwner)
+        {
+            sharesQuery = sharesQuery.Where(s => s.UserId == callerId);
+
+            var hasShare = await sharesQuery.AnyAsync(cancellationToken);
+            if (!hasShare)
+                throw new UnauthorizedAccessException("You do not have access to this document's shares.");
+        }
+
+        var shares = await sharesQuery
             .OrderBy(s => s.SharedAt)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
@@ -375,7 +396,6 @@ public sealed class DocumentService : IDocumentService
         if (remaining == 0)
         {
             document.ShareStatus = "private";
-            document.SharedUsers = null;
             _unitOfWork.Documents.Update(document);
         }
 
