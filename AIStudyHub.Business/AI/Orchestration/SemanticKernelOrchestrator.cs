@@ -97,8 +97,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             ABOUT AI STUDY HUB (System Features):
             - AIStudyHub allows users to upload documents (PDF, Word) and chat with them to extract knowledge.
-            - Users can automatically generate "Flashcards" from their documents to study.
-            - Users can automatically generate "Quizzes" (Multiple-Choice) to test their knowledge.
             - Users can request a "Summary" of any uploaded document.
 
             ANSWERING RULES:
@@ -190,8 +188,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             ABOUT AI STUDY HUB (System Features):
             - AIStudyHub allows users to upload documents (PDF, Word) and chat with them to extract knowledge.
-            - Users can automatically generate "Flashcards" from their documents to study.
-            - Users can automatically generate "Quizzes" (Multiple-Choice) to test their knowledge.
             - Users can request a "Summary" of any uploaded document.
 
             ANSWERING RULES:
