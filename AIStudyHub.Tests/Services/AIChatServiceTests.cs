@@ -146,11 +146,6 @@ public class AIChatServiceTests : IDisposable
         await _dbContext.ChatSessions.AddAsync(session);
         await _dbContext.Documents.AddAsync(doc1);
         await _dbContext.Documents.AddAsync(doc2);
-<<<<<<< HEAD
-        session.ChatSessionDocuments.Add(new ChatSessionDocument { Id = Guid.NewGuid(), DocumentId = doc1.Id, CreatedAt = DateTime.UtcNow });
-        session.ChatSessionDocuments.Add(new ChatSessionDocument { Id = Guid.NewGuid(), DocumentId = doc2.Id, CreatedAt = DateTime.UtcNow });
-=======
->>>>>>> 6888c8b99a58ec6f30a7ae0da1417a2f7b1587db
         await _dbContext.SaveChangesAsync();
 
         _orchestratorMock.Setup(x => x.AskWithTrackingAsync(
