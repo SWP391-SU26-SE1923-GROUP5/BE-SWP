@@ -366,7 +366,7 @@ internal sealed class NotificationConfiguration : IEntityTypeConfiguration<Notif
         builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
         builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(200);
         builder.Property(x => x.Message).HasColumnName("message").IsRequired();
-        builder.Property(x => x.PayloadJson).HasColumnName("payload_json").HasColumnType("nvarchar(max)");
+        builder.Property(x => x.PayloadJson).HasColumnName("payload_json");
         builder.Property(x => x.ActionUrl).HasColumnName("action_url").HasMaxLength(500);
         builder.Property(x => x.IsRead).HasColumnName("is_read").HasDefaultValue(false);
         builder.Property(x => x.Type).HasColumnName("type").HasConversion<int>().IsRequired();

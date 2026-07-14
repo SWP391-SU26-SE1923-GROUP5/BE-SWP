@@ -2,8 +2,10 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using AIStudyHub.Business.DTOs.Notifications;
+using AIStudyHub.Business.Hubs;
 using AIStudyHub.Business.Services;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -12,14 +14,15 @@ namespace AIStudyHub.Tests.Services;
 
 public class RealTimeNotificationServiceTests
 {
-    private readonly Mock<IHubContext<Hub>> _hubContextMock;
+    private readonly Mock<IHubContext<NotificationsHub>> _hubContextMock;
     private readonly Mock<IClientProxy> _clientProxyMock;
     private readonly Mock<ILogger<RealTimeNotificationService>> _loggerMock;
+    private readonly Mock<IServiceScopeFactory> _scopeFactoryMock;
     private readonly RealTimeNotificationService _service;
 
     public RealTimeNotificationServiceTests()
     {
-        _hubContextMock = new Mock<IHubContext<Hub>>();
+        _hubContextMock = new Mock<IHubContext<NotificationsHub>>();
         _clientProxyMock = new Mock<IClientProxy>();
         
         var clientsMock = new Mock<IHubClients>();
@@ -27,7 +30,18 @@ public class RealTimeNotificationServiceTests
         _hubContextMock.Setup(h => h.Clients).Returns(clientsMock.Object);
 
         _loggerMock = new Mock<ILogger<RealTimeNotificationService>>();
-        _service = new RealTimeNotificationService(_hubContextMock.Object, _loggerMock.Object);
+
+        // Mock IServiceScopeFactory to return a scope whose ServiceProvider throws,
+        // so SendNotificationAsync skips DB persistence (caught by the try/catch).
+        _scopeFactoryMock = new Mock<IServiceScopeFactory>();
+        var scopeMock = new Mock<IServiceScope>();
+        scopeMock.Setup(s => s.ServiceProvider).Returns(new Mock<IServiceProvider>().Object);
+        _scopeFactoryMock.Setup(f => f.CreateScope()).Returns(scopeMock.Object);
+
+        _service = new RealTimeNotificationService(
+            _hubContextMock.Object,
+            _scopeFactoryMock.Object,
+            _loggerMock.Object);
     }
 
     [Fact]
@@ -53,3 +67,4 @@ public class RealTimeNotificationServiceTests
             Times.Once);
     }
 }
+

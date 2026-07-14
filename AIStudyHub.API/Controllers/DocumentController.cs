@@ -149,7 +149,9 @@ public sealed class DocumentController : ControllerBase
         _unitOfWork.Documents.Update(document);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation("Document {DocumentId} trashed by user {UserId}", id, userId);
+        await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
+
+        _logger.LogInformation("Document {DocumentId} trashed and vectors removed by user {UserId}", id, userId);
         return NoContent();
     }
 

@@ -24,7 +24,24 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         ".txt", ".md", ".pdf", ".docx", ".jpg", ".png", ".jpeg", ".webp", ".gif"
     };
 
-    private static readonly string TessDataPath = Environment.GetEnvironmentVariable("TESSDATA_PREFIX") ?? @"C:\Program Files\Tesseract-OCR\tessdata";
+    private static readonly string TessDataPath = ResolveTessDataPath();
+
+    private static string ResolveTessDataPath()
+    {
+        var envPath = Environment.GetEnvironmentVariable("TESSDATA_PREFIX");
+        if (!string.IsNullOrEmpty(envPath) && Directory.Exists(envPath))
+            return envPath;
+
+        var localCurrentDir = Path.Combine(Directory.GetCurrentDirectory(), "tessdata");
+        if (Directory.Exists(localCurrentDir))
+            return localCurrentDir;
+
+        var localBaseDir = Path.Combine(AppContext.BaseDirectory, "tessdata");
+        if (Directory.Exists(localBaseDir))
+            return localBaseDir;
+
+        return @"C:\Program Files\Tesseract-OCR\tessdata";
+    }
 
     public async Task<string> ExtractTextAsync(byte[] fileContent, string fileExtension)
     {
@@ -86,7 +103,8 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
                     var overlapWindow = lastChunk.Length > overlap
                         ? lastChunk[^overlap..]
                         : lastChunk;
-                    var lastSentenceBoundary = overlapWindow.LastIndexOfAny(
+                    var searchWindow = overlapWindow.Length > 1 ? overlapWindow[..^1] : overlapWindow;
+                    var lastSentenceBoundary = searchWindow.LastIndexOfAny(
                         new[] { '.', '!', '?', '\n' });
                     var overlapText = lastSentenceBoundary >= 0
                         ? overlapWindow[(lastSentenceBoundary + 1)..].Trim()

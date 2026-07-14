@@ -17,6 +17,7 @@ using AIStudyHub.Business.DTOs.Common;
 using AIStudyHub.Business.DTOs.Votes;
 using AIStudyHub.Business.Exceptions;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
@@ -31,11 +32,13 @@ public sealed class DocumentService : IDocumentService
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
+    private readonly IVectorStoreService? _vectorStoreService;
 
-    public DocumentService(IUnitOfWork unitOfWork, IMapper mapper)
+    public DocumentService(IUnitOfWork unitOfWork, IMapper mapper, IVectorStoreService? vectorStoreService = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _vectorStoreService = vectorStoreService;
     }
 
     private static DocumentResponseDto MapToDto(Document d) => new(
@@ -188,6 +191,9 @@ public sealed class DocumentService : IDocumentService
         var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken)
             ?? throw new KeyNotFoundException($"Document with ID {id} not found.");
 
+        if (_vectorStoreService != null)
+            await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
+
         _unitOfWork.Documents.Remove(document);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
@@ -325,6 +331,9 @@ public sealed class DocumentService : IDocumentService
         if (document.LifecycleStatus == DocumentLifecycleStatus.Trashed)
             return; // already trashed — idempotent
 
+        if (_vectorStoreService != null)
+            await _vectorStoreService.DeleteVectorsByDocumentIdAsync(documentId);
+
         document.LifecycleStatus = DocumentLifecycleStatus.Trashed;
         document.TrashedAt = DateTime.UtcNow;
         document.TrashedBy = userId;
@@ -360,6 +369,9 @@ public sealed class DocumentService : IDocumentService
 
         if (document.LifecycleStatus != DocumentLifecycleStatus.Trashed)
             throw new InvalidOperationException("Only trashed documents can be permanently purged.");
+
+        if (_vectorStoreService != null)
+            await _vectorStoreService.DeleteVectorsByDocumentIdAsync(documentId);
 
         _unitOfWork.Documents.Remove(document);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
@@ -419,7 +431,7 @@ public sealed class DocumentService : IDocumentService
 
         var remaining = await _unitOfWork.DocumentShares
             .Query()
-            .Where(s => s.DocumentId == documentId)
+            .Where(s => s.DocumentId == documentId && s.Id != share.Id)
             .CountAsync(cancellationToken);
 
         if (remaining == 0)

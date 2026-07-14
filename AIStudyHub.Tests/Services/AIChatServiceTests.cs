@@ -62,11 +62,20 @@ public class AIChatServiceTests : IDisposable
 
     public void Dispose()
     {
+<<<<<<< HEAD
         _connection?.Dispose();
     }
 
     [Fact]
     public async Task CreateMessageAsync_NoDocumentAttached_ReturnsCorrectMessage()
+=======
+        _dbContext.Dispose();
+        _connection.Dispose();
+    }
+
+    [Fact]
+    public async Task CreateMessageAsync_SessionWithNoDocuments_ReturnsWarningMessage()
+>>>>>>> 6888c8b99a58ec6f30a7ae0da1417a2f7b1587db
     {
         // Arrange
         var session = new ChatSession { Id = Guid.NewGuid(), UserId = _userId, SessionTitle = "Test" };
@@ -92,14 +101,19 @@ public class AIChatServiceTests : IDisposable
         // Arrange
         var session = new ChatSession { Id = Guid.NewGuid(), UserId = _userId, SessionTitle = "Test" };
         var doc = new Document { Id = Guid.NewGuid(), UserId = _userId, Title = "Doc 1" };
+<<<<<<< HEAD
         await _dbContext.ChatSessions.AddAsync(session);
         await _dbContext.Documents.AddAsync(doc);
+=======
+>>>>>>> 6888c8b99a58ec6f30a7ae0da1417a2f7b1587db
         session.ChatSessionDocuments.Add(new ChatSessionDocument
         {
             Id = Guid.NewGuid(),
             DocumentId = doc.Id,
             CreatedAt = DateTime.UtcNow
         });
+        await _dbContext.ChatSessions.AddAsync(session);
+        await _dbContext.Documents.AddAsync(doc);
         await _dbContext.SaveChangesAsync();
 
         _orchestratorMock.Setup(x => x.AskWithTrackingAsync(
@@ -126,12 +140,17 @@ public class AIChatServiceTests : IDisposable
         var session = new ChatSession { Id = Guid.NewGuid(), UserId = _userId, SessionTitle = "Multi-doc Test" };
         var doc1 = new Document { Id = Guid.NewGuid(), UserId = _userId, Title = "Doc 1" };
         var doc2 = new Document { Id = Guid.NewGuid(), UserId = _userId, Title = "Doc 2" };
+        session.ChatSessionDocuments.Add(new ChatSessionDocument { Id = Guid.NewGuid(), ChatSessionId = session.Id, DocumentId = doc1.Id, CreatedAt = DateTime.UtcNow });
+        session.ChatSessionDocuments.Add(new ChatSessionDocument { Id = Guid.NewGuid(), ChatSessionId = session.Id, DocumentId = doc2.Id, CreatedAt = DateTime.UtcNow });
 
         await _dbContext.ChatSessions.AddAsync(session);
         await _dbContext.Documents.AddAsync(doc1);
         await _dbContext.Documents.AddAsync(doc2);
+<<<<<<< HEAD
         session.ChatSessionDocuments.Add(new ChatSessionDocument { Id = Guid.NewGuid(), DocumentId = doc1.Id, CreatedAt = DateTime.UtcNow });
         session.ChatSessionDocuments.Add(new ChatSessionDocument { Id = Guid.NewGuid(), DocumentId = doc2.Id, CreatedAt = DateTime.UtcNow });
+=======
+>>>>>>> 6888c8b99a58ec6f30a7ae0da1417a2f7b1587db
         await _dbContext.SaveChangesAsync();
 
         _orchestratorMock.Setup(x => x.AskWithTrackingAsync(
