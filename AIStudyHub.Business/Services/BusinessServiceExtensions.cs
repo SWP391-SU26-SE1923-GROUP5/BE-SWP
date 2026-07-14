@@ -40,6 +40,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<ISubjectService, SubjectService>();
         services.AddScoped<IVoteService, VoteService>();
         services.AddScoped<IReportService, ReportService>();
+        services.AddScoped<IAdminService, AdminService>();
         services.AddScoped<IFlashcardService, FlashcardService>();
         services.AddScoped<IFlashcardReviewService, FlashcardReviewService>();
         services.AddScoped<IGamificationService, GamificationService>();

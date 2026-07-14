@@ -1,3 +1,4 @@
+using AIStudyHub.Business.DTOs.Admin;
 using AIStudyHub.Business.Services;
 using AIStudyHub.Data.Interfaces;
 using AIStudyHub.Business.DTOs.Documents;
@@ -8,6 +9,7 @@ using AIStudyHub.Business.Options;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
+using System.Security.Claims;
 
 namespace AIStudyHub.API.Controllers;
 
@@ -17,6 +19,7 @@ namespace AIStudyHub.API.Controllers;
 public class AdminController : ControllerBase
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IAdminService _adminService;
     private readonly IDocumentProcessingQueue _queue;
     private readonly ILogger<AdminController> _logger;
     private readonly IDocumentProcessingService _docProcessing;
@@ -28,6 +31,7 @@ public class AdminController : ControllerBase
 
     public AdminController(
         IUnitOfWork unitOfWork,
+        IAdminService adminService,
         IDocumentProcessingQueue queue,
         ILogger<AdminController> logger,
         IDocumentProcessingService docProcessing,
@@ -38,6 +42,7 @@ public class AdminController : ControllerBase
         IOptions<RagOptions> ragOptions)
     {
         _unitOfWork = unitOfWork;
+        _adminService = adminService;
         _queue = queue;
         _logger = logger;
         _docProcessing = docProcessing;
@@ -46,6 +51,12 @@ public class AdminController : ControllerBase
         _qdrant = qdrant;
         _storage = storage;
         _ragOptions = ragOptions;
+    }
+
+    private Guid GetAdminUserId()
+    {
+        var claim = User.FindFirst(ClaimTypes.NameIdentifier);
+        return claim != null && Guid.TryParse(claim.Value, out var userId) ? userId : Guid.Empty;
     }
 
     [HttpPost("reindex")]
@@ -151,5 +162,85 @@ public class AdminController : ControllerBase
             chunkCount = validChunks.Count,
             charCount = rawText.Length
         });
+    }
+
+    [HttpGet("documents/reported")]
+    public async Task<ActionResult<AdminViolationListResultDto>> GetViolationList(
+        [FromQuery] AdminViolationListRequestDto filter, CancellationToken ct)
+    {
+        var result = await _adminService.GetViolationListAsync(filter, ct);
+        return Ok(result);
+    }
+
+    [HttpGet("dashboard")]
+    public async Task<ActionResult<AdminDashboardDto>> GetDashboard(CancellationToken ct)
+    {
+        var result = await _adminService.GetDashboardAsync(ct);
+        return Ok(result);
+    }
+
+    [HttpGet("revenue")]
+    public async Task<ActionResult<RevenueResultDto>> GetRevenue(
+        [FromQuery] RevenueRequestDto request, CancellationToken ct)
+    {
+        var result = await _adminService.GetRevenueAsync(request, ct);
+        return Ok(result);
+    }
+
+    [HttpGet("documents/{documentId:guid}/reports")]
+    public async Task<ActionResult<AdminDocumentReportsDto>> GetDocumentReports(
+        Guid documentId, CancellationToken ct)
+    {
+        var result = await _adminService.GetDocumentReportsAsync(documentId, ct);
+        if (result == null)
+            return NotFound(new { message = "Document not found" });
+        return Ok(result);
+    }
+
+    [HttpPatch("documents/{documentId:guid}/ban")]
+    public async Task<ActionResult<BanDocumentResultDto>> BanDocument(
+        Guid documentId, CancellationToken ct)
+    {
+        var adminId = GetAdminUserId();
+        try
+        {
+            var result = await _adminService.BanDocumentAsync(documentId, adminId, ct);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { message = "Document not found" });
+        }
+    }
+
+    [HttpPatch("documents/{documentId:guid}/unban")]
+    public async Task<ActionResult<UnbanDocumentResultDto>> UnbanDocument(
+        Guid documentId, CancellationToken ct)
+    {
+        var adminId = GetAdminUserId();
+        try
+        {
+            var result = await _adminService.UnbanDocumentAsync(documentId, adminId, ct);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { message = "Document not found" });
+        }
+    }
+
+    [HttpDelete("documents/{documentId:guid}")]
+    public async Task<IActionResult> DeleteDocument(Guid documentId, CancellationToken ct)
+    {
+        var adminId = GetAdminUserId();
+        try
+        {
+            await _adminService.DeleteDocumentAsync(documentId, adminId, ct);
+            return NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { message = "Document not found" });
+        }
     }
 }
