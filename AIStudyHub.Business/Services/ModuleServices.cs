@@ -40,13 +40,13 @@ public sealed class DocumentService : IDocumentService
 
     private static DocumentResponseDto MapToDto(Document d) => new(
         d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
-        d.FileType, d.FileSizeBytes, d.SharedUsers, d.ShareStatus, d.Status, d.ErrorMessage,
+        d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status, d.ErrorMessage,
         d.Votes.Sum(v => v.Type == AIStudyHub.Data.Enums.VoteType.Upvote ? 1 : -1),
         d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
 
     private static DocumentResponseDto MapToDtoNoVotes(Document d) => new(
         d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
-        d.FileType, d.FileSizeBytes, d.SharedUsers, d.ShareStatus, d.Status, d.ErrorMessage,
+        d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status, d.ErrorMessage,
         d.Votes.Count, d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
 
     public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<DocumentResponseDto>> GetAllPagedAsync(
@@ -201,13 +201,30 @@ public sealed class DocumentService : IDocumentService
         var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken)
             ?? throw new KeyNotFoundException($"Document with ID {documentId} not found.");
 
-        if (document.UserId != callerId)
-            throw new UnauthorizedAccessException("Only the document owner can change its sharing settings.");
+        var isOwner = document.UserId == callerId;
+        if (!isOwner)
+        {
+            var callerShare = await _unitOfWork.DocumentShares
+                .Query()
+                .Where(s => s.DocumentId == documentId && s.UserId == callerId)
+                .AnyAsync(cancellationToken);
+            if (!callerShare)
+                throw new UnauthorizedAccessException("Only the document owner or a collaborator can change sharing settings.");
+        }
 
-        var targetIds = request.SharedUserIds?
-            .Where(id => id != Guid.Empty && id != callerId)
-            .Distinct()
-            .ToList() ?? new List<Guid>();
+        var allRequested = request.SharedUserIds?.Where(id => id != Guid.Empty).Distinct().ToList() ?? new List<Guid>();
+
+        var callerInRequest = allRequested.Contains(callerId);
+        var ownerInRequest = allRequested.Contains(document.UserId);
+
+        if (callerInRequest && ownerInRequest)
+            throw new InvalidOperationException("Cannot share with yourself or the document owner.");
+        if (callerInRequest)
+            throw new InvalidOperationException("Cannot share with yourself.");
+        if (ownerInRequest)
+            throw new InvalidOperationException("Cannot modify the owner's access level.");
+
+        var targetIds = allRequested.Where(id => id != callerId && id != document.UserId).ToList();
 
         if (targetIds.Count > 0)
         {
@@ -216,44 +233,65 @@ public sealed class DocumentService : IDocumentService
                 .Where(u => targetIds.Contains(u.Id) && u.IsActive && u.Status == "active")
                 .Select(u => u.Id)
                 .ToListAsync(cancellationToken);
+
+            var notFoundIds = targetIds.Except(existingIds).ToList();
+            if (notFoundIds.Count > 0)
+                throw new KeyNotFoundException(
+                    $"User(s) not found or not active: {string.Join(", ", notFoundIds)}.");
+
             targetIds = existingIds;
         }
 
-        // Replace all DocumentShare entries for this document.
+        // Load existing shares for this document.
         var existingShares = await _unitOfWork.DocumentShares
             .Query()
             .Where(s => s.DocumentId == documentId)
             .ToListAsync(cancellationToken);
-        foreach (var s in existingShares)
-            _unitOfWork.DocumentShares.Remove(s);
+        var existingByUserId = existingShares.ToDictionary(s => s.UserId);
 
         var levels = request.Levels ?? Enumerable.Repeat((int)ShareLevel.Read, targetIds.Count).ToList();
         var resultLevels = new List<int>();
+
+        // Upsert: update existing shares or insert new ones, in the order of targetIds.
         for (int i = 0; i < targetIds.Count; i++)
         {
-            var level = i < levels.Count ? (ShareLevel)levels[i] : ShareLevel.Read;
-            if (level != ShareLevel.Read && level != ShareLevel.Edit)
-                level = ShareLevel.Read;
+            var targetId = targetIds[i];
+            var requestedLevel = i < levels.Count ? (ShareLevel)levels[i] : ShareLevel.Read;
 
-            var share = new DocumentShare
+            // Validate requested level enum.
+            if (requestedLevel != ShareLevel.Read && requestedLevel != ShareLevel.Edit)
+                requestedLevel = ShareLevel.Read;
+
+            if (existingByUserId.TryGetValue(targetId, out var existingShare))
             {
-                Id = Guid.NewGuid(),
-                DocumentId = documentId,
-                UserId = targetIds[i],
-                Level = level,
-                SharedBy = callerId,
-                SharedAt = DateTime.UtcNow,
-                CreatedAt = DateTime.UtcNow
-            };
-            await _unitOfWork.DocumentShares.AddAsync(share, cancellationToken);
-            resultLevels.Add((int)level);
+                existingShare.Level = requestedLevel;
+                existingShare.SharedBy = callerId;
+                existingShare.SharedAt = DateTime.UtcNow;
+                _unitOfWork.DocumentShares.Update(existingShare);
+                resultLevels.Add((int)existingShare.Level);
+            }
+            else
+            {
+                await _unitOfWork.DocumentShares.AddAsync(new DocumentShare
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentId = documentId,
+                    UserId = targetId,
+                    Level = requestedLevel,
+                    SharedBy = callerId,
+                    SharedAt = DateTime.UtcNow,
+                    CreatedAt = DateTime.UtcNow
+                }, cancellationToken);
+                resultLevels.Add((int)requestedLevel);
+            }
         }
 
-        // Maintain backward-compatible JSON column.
-        document.SharedUsers = targetIds.Count == 0
-            ? null
-            : JsonSerializer.Serialize(targetIds);
-        document.ShareStatus = targetIds.Count > 0 ? "shared" : "private";
+        var remainingShares = await _unitOfWork.DocumentShares
+            .Query()
+            .Where(s => s.DocumentId == documentId)
+            .CountAsync(cancellationToken);
+
+        document.ShareStatus = remainingShares > 0 ? "shared" : "private";
 
         _unitOfWork.Documents.Update(document);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
@@ -332,13 +370,25 @@ public sealed class DocumentService : IDocumentService
         var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken)
             ?? throw new KeyNotFoundException($"Document with ID {documentId} not found.");
 
-        if (document.UserId != callerId)
-            throw new UnauthorizedAccessException("Only the document owner can view shares.");
+        bool isOwner = document.UserId == callerId;
 
-        var shares = await _unitOfWork.DocumentShares
+        // Non-owner callers must at least have a share entry to view shares.
+        // Owners always see the full list; non-owners only see their own entry.
+        var sharesQuery = _unitOfWork.DocumentShares
             .Query()
             .Include(s => s.User)
-            .Where(s => s.DocumentId == documentId)
+            .Where(s => s.DocumentId == documentId);
+
+        if (!isOwner)
+        {
+            sharesQuery = sharesQuery.Where(s => s.UserId == callerId);
+
+            var hasShare = await sharesQuery.AnyAsync(cancellationToken);
+            if (!hasShare)
+                throw new UnauthorizedAccessException("You do not have access to this document's shares.");
+        }
+
+        var shares = await sharesQuery
             .OrderBy(s => s.SharedAt)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
@@ -375,7 +425,6 @@ public sealed class DocumentService : IDocumentService
         if (remaining == 0)
         {
             document.ShareStatus = "private";
-            document.SharedUsers = null;
             _unitOfWork.Documents.Update(document);
         }
 
@@ -1558,6 +1607,47 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             qs.Quiz?.Document?.Subject?.SubjectCode ?? string.Empty,
             qs.Score, qs.MaxScore, qs.TotalCorrect,
             null, // DurationSeconds - not tracked in entity
+            qs.MaxScore > 0 ? Math.Round((double)qs.Score / qs.MaxScore * 100, 1) : 0,
+            qs.GradedAt, qs.SubmittedAt, qs.CreatedAt, qs.UpdatedAt)).ToList();
+
+        return new PagedResultDto<QuizSubmissionHistoryDto>(dtos, totalCount, @params.Offset, @params.Limit);
+    }
+
+    public async Task<PagedResultDto<QuizSubmissionHistoryDto>> GetQuizHistoryAsync(
+        Guid quizId,
+        DateTime? fromDate,
+        DateTime? toDate,
+        PaginationParams @params,
+        CancellationToken ct = default)
+    {
+        var query = _unitOfWork.QuizSubmissions
+            .Query()
+            .Include(qs => qs.Quiz)
+                .ThenInclude(q => q.Document)
+                    .ThenInclude(d => d.Subject)
+            .Where(qs => qs.QuizId == quizId);
+
+        if (fromDate.HasValue)
+            query = query.Where(qs => qs.SubmittedAt >= fromDate.Value);
+
+        if (toDate.HasValue)
+            query = query.Where(qs => qs.SubmittedAt <= toDate.Value);
+
+        var totalCount = await query.CountAsync(ct);
+        var items = await query
+            .OrderByDescending(qs => qs.SubmittedAt)
+            .Skip(@params.Offset)
+            .Take(@params.Limit)
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        var dtos = items.Select(qs => new QuizSubmissionHistoryDto(
+            qs.Id, qs.UserId, qs.QuizId,
+            qs.Quiz?.Title ?? string.Empty,
+            qs.Quiz?.Document?.Title ?? string.Empty,
+            qs.Quiz?.Document?.Subject?.SubjectCode ?? string.Empty,
+            qs.Score, qs.MaxScore, qs.TotalCorrect,
+            null,
             qs.MaxScore > 0 ? Math.Round((double)qs.Score / qs.MaxScore * 100, 1) : 0,
             qs.GradedAt, qs.SubmittedAt, qs.CreatedAt, qs.UpdatedAt)).ToList();
 

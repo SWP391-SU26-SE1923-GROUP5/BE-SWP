@@ -11,6 +11,7 @@ using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -76,7 +77,13 @@ public sealed class DocumentController : ControllerBase
         if (result == null) return NotFound();
 
         var userId = GetCurrentUserId();
-        if (result.UserId != userId && result.ShareStatus != "public") return Forbid();
+        if (userId != Guid.Empty && result.UserId != userId && result.ShareStatus != "public")
+        {
+            var isShared = await _unitOfWork.DocumentShares
+                .Query()
+                .AnyAsync<DocumentShare>(s => s.DocumentId == id && s.UserId == userId, cancellationToken);
+            if (!isShared) return Forbid();
+        }
 
         return Ok(result);
     }
@@ -104,8 +111,25 @@ public sealed class DocumentController : ControllerBase
         if (userId == Guid.Empty)
             return Unauthorized();
 
-        var result = await _service.ShareDocumentAsync(id, userId, request, cancellationToken);
-        return Ok(result);
+        try
+        {
+            var result = await _service.ShareDocumentAsync(id, userId, request, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            if (ex.Message.Contains("User"))
+                return BadRequest(new { message = ex.Message });
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpDelete("{id:guid}")]
@@ -130,7 +154,7 @@ public sealed class DocumentController : ControllerBase
     }
 
     /// <summary>Returns the calling user's trashed documents.</summary>
-    [HttpGet("trash")]
+    [HttpGet("trashed")]
     public async Task<ActionResult<IReadOnlyList<DocumentResponseDto>>> GetTrash(CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
@@ -187,7 +211,13 @@ public sealed class DocumentController : ControllerBase
         if (document is null) return NotFound();
 
         var userId = GetCurrentUserId();
-        if (document.UserId != userId && document.ShareStatus != "public") return Forbid();
+        if (userId != Guid.Empty && document.UserId != userId && document.ShareStatus != "public")
+        {
+            var isShared = await _unitOfWork.DocumentShares
+                .Query()
+                .AnyAsync<DocumentShare>(s => s.DocumentId == id && s.UserId == userId, cancellationToken);
+            if (!isShared) return Forbid();
+        }
 
         if (string.IsNullOrEmpty(document.FileLink))
             return NotFound("No file associated with this document");
@@ -212,7 +242,13 @@ public sealed class DocumentController : ControllerBase
         if (document is null) return NotFound();
 
         var userId = GetCurrentUserId();
-        if (document.UserId != userId && document.ShareStatus != "public") return Forbid();
+        if (userId != Guid.Empty && document.UserId != userId && document.ShareStatus != "public")
+        {
+            var isShared = await _unitOfWork.DocumentShares
+                .Query()
+                .AnyAsync<DocumentShare>(s => s.DocumentId == id && s.UserId == userId, cancellationToken);
+            if (!isShared) return Forbid();
+        }
 
         if (string.IsNullOrEmpty(document.FileLink))
             return NotFound("No file associated with this document");

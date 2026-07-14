@@ -117,7 +117,6 @@ internal sealed class DocumentConfiguration : IEntityTypeConfiguration<Document>
         builder.Property(x => x.FileName).HasColumnName("file_name").HasMaxLength(255);
         builder.Property(x => x.FileExtension).HasColumnName("file_extension").HasMaxLength(255);
         builder.Property(x => x.FileType).HasColumnName("file_type").HasMaxLength(128);
-        builder.Property(x => x.SharedUsers).HasColumnName("shared_users");
         builder.Property(x => x.ShareStatus).HasColumnName("share_status").HasMaxLength(20).HasDefaultValue("private");
         builder.Property(x => x.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(20);
         builder.Property(x => x.IsNonFlaggable).HasColumnName("is_non_flaggable").HasDefaultValue(false);

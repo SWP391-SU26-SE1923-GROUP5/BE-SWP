@@ -108,12 +108,6 @@ public sealed class AIChatService : IAIChatService
             };
             await _unitOfWork.ChatSessions.AddAsync(session);
             await _unitOfWork.SaveChangesAsync();
-
-            // Auto-attach document if provided on new session
-            if (request.DocumentId.HasValue)
-            {
-                await AttachDocumentToSessionAsync(session.Id, request.DocumentId.Value, userId);
-            }
         }
         else
         {
@@ -121,11 +115,6 @@ public sealed class AIChatService : IAIChatService
             if (session is null || session.UserId != userId)
             {
                 throw new KeyNotFoundException($"Chat session with ID {request.SessionId} not found or access denied.");
-            }
-
-            if (request.DocumentId.HasValue)
-            {
-                await AttachDocumentToSessionAsync(session.Id, request.DocumentId.Value, userId);
             }
         }
 
@@ -146,25 +135,22 @@ public sealed class AIChatService : IAIChatService
             .ToListAsync(ct);
         history.Reverse();
 
-        // Use the document from request, or fall back to the first attached document
-        Guid? activeDocumentId = request.DocumentId;
-        if (!activeDocumentId.HasValue)
-        {
-            var firstDoc = await _unitOfWork.ChatSessionDocuments
+        // Use all documents attached to the session
+        var sessionDocs = await _unitOfWork.ChatSessionDocuments
                 .Query()
-                .AsNoTracking()
-                .FirstOrDefaultAsync(x => x.ChatSessionId == session.Id, ct);
-            activeDocumentId = firstDoc?.DocumentId;
-        }
+                .Where(x => x.ChatSessionId == session.Id)
+                .Select(x => x.DocumentId)
+                .ToListAsync(ct);
+        IReadOnlyList<Guid>? docIds = sessionDocs.Count > 0 ? sessionDocs : null;
 
         string aiResponse;
         int inputTokens = 0;
         int outputTokens = 0;
         bool isRelevant = false;
 
-        if (activeDocumentId.HasValue)
+        if (docIds != null && docIds.Count > 0)
         {
-            var ragResponse = await _orchestrator.AskWithTrackingAsync(userId, activeDocumentId.Value, request.Message, history, ct);
+            var ragResponse = await _orchestrator.AskWithTrackingAsync(userId, docIds, request.Message, history, ct);
             aiResponse = ragResponse.Answer;
             inputTokens = ragResponse.InputTokens;
             outputTokens = ragResponse.OutputTokens;
@@ -312,26 +298,5 @@ public sealed class AIChatService : IAIChatService
             x.Document.Title,
             x.Document.FileName,
             x.CreatedAt)).ToList();
-    }
-
-    private async Task AttachDocumentToSessionAsync(Guid sessionId, Guid documentId, Guid userId)
-    {
-        var existing = await _unitOfWork.ChatSessionDocuments
-            .Query()
-            .FirstOrDefaultAsync(x => x.ChatSessionId == sessionId && x.DocumentId == documentId);
-        if (existing is not null) return;
-
-        var document = await _unitOfWork.Documents.GetByIdAsync(documentId);
-        if (document is null || document.UserId != userId) return;
-
-        var link = new ChatSessionDocument
-        {
-            Id = Guid.NewGuid(),
-            ChatSessionId = sessionId,
-            DocumentId = documentId,
-            CreatedAt = DateTime.UtcNow
-        };
-        await _unitOfWork.ChatSessionDocuments.AddAsync(link);
-        await _unitOfWork.SaveChangesAsync();
     }
 }

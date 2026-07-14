@@ -6,7 +6,7 @@ public sealed record CreateChatSessionRequestDto(string SessionTitle);
 
 public sealed record ChatMessageResponseDto(Guid Id, Guid ChatSessionId, string Sender, string Content, DateTime CreatedAt, DateTime? UpdatedAt, bool IsRelevant);
 
-public sealed record CreateChatMessageRequestDto(Guid? SessionId, Guid? DocumentId, string Message);
+public sealed record CreateChatMessageRequestDto(Guid? SessionId, string Message);
 
 public sealed record AddDocumentToSessionRequestDto(Guid DocumentId);
 

@@ -25,8 +25,17 @@ public class RerankingService : IRerankingService
     {
         _logger.LogInformation("Reranking {Count} results to top {TopK}", results.Count(), topK);
 
-        var reranked = results
-            .OrderByDescending(r => r.Score)
+        var processed = results.Select(r =>
+        {
+            bool isExact = r.Content.Contains(query, StringComparison.OrdinalIgnoreCase);
+            return r with { MatchType = isExact ? "exact" : "semantic" };
+        });
+
+        var filtered = processed.Where(r => r.MatchType == "exact" || r.Score >= _options.RerankThreshold);
+
+        var reranked = filtered
+            .OrderByDescending(r => r.MatchType == "exact")
+            .ThenByDescending(r => r.Score)
             .Take(topK)
             .Select((r, index) => r with { Score = r.Score * (1.0 - (index * 0.1)) });
 

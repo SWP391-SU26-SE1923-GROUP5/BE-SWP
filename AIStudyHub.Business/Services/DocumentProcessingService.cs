@@ -12,6 +12,7 @@ using SkiaSharp;
 using PdfDocument = UglyToad.PdfPig.PdfDocument;
 using WpDrawing = DocumentFormat.OpenXml.Wordprocessing.Drawing;
 using DocProperties = DocumentFormat.OpenXml.Drawing.Wordprocessing.DocProperties;
+using AIStudyHub.Business.DTOs.Documents;
 
 
 namespace AIStudyHub.Business.Services;
@@ -42,9 +43,9 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         };
     }
 
-    public Task<List<string>> ChunkTextAsync(string text, int chunkSize, int overlap, bool preserveTables = true)
+    public Task<List<DocumentChunkDto>> ChunkTextAsync(string text, int chunkSize, int overlap, bool preserveTables = true)
     {
-        var chunks = new List<string>();
+        var chunks = new List<DocumentChunkDto>();
         var cleanText = CleanText(text);
 
         if (string.IsNullOrWhiteSpace(cleanText))
@@ -55,26 +56,33 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
             : new[] { cleanText };
 
         var sentences = units
-            .SelectMany(u => IsMarkdownTableRow(u)
+            .SelectMany(u => IsMarkdownTableRow(u) || IsPageMarker(u)
                 ? new[] { u }
                 : SplitIntoSentences(u).SelectMany(s => SplitLongSentence(s, chunkSize)))
             .ToList();
         var currentChunk = new StringBuilder();
         var currentLength = 0;
+        int? currentPageNumber = null;
 
         foreach (var sentence in sentences)
         {
+            if (IsPageMarker(sentence))
+            {
+                currentPageNumber = ParsePageMarker(sentence);
+                continue;
+            }
+
             var sentenceLength = sentence.Length;
 
             if (currentLength + sentenceLength > chunkSize && currentChunk.Length > 0)
             {
-                chunks.Add(currentChunk.ToString().Trim());
+                chunks.Add(new DocumentChunkDto { Text = currentChunk.ToString().Trim(), PageNumber = currentPageNumber });
                 currentChunk.Clear();
                 currentLength = 0;
 
                 if (overlap > 0 && chunks.Count > 0)
                 {
-                    var lastChunk = chunks.Last();
+                    var lastChunk = chunks.Last().Text;
                     var overlapWindow = lastChunk.Length > overlap
                         ? lastChunk[^overlap..]
                         : lastChunk;
@@ -93,9 +101,17 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         }
 
         if (currentChunk.Length > 0)
-            chunks.Add(currentChunk.ToString().Trim());
+            chunks.Add(new DocumentChunkDto { Text = currentChunk.ToString().Trim(), PageNumber = currentPageNumber });
 
         return Task.FromResult(chunks);
+    }
+
+    private static bool IsPageMarker(string line) => line.StartsWith("[--- Page ") && line.EndsWith(" ---]");
+    private static int? ParsePageMarker(string line)
+    {
+        var match = Regex.Match(line, @"\[--- Page (\d+) ---\]");
+        if (match.Success && int.TryParse(match.Groups[1].Value, out var p)) return p;
+        return null;
     }
 
     private static async Task<string> ExtractTextFromTxtAsync(byte[] fileContent)
@@ -291,9 +307,12 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
             using var stream = new MemoryStream(fileContent);
             using var document = PdfDocument.Open(stream);
 
+            int pageNum = 1;
             foreach (var page in document.GetPages())
             {
+                text.AppendLine($"[--- Page {pageNum} ---]");
                 text.AppendLine(page.Text);
+                pageNum++;
             }
 
             var extractedText = text.ToString().Trim();

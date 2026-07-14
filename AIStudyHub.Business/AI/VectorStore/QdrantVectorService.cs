@@ -202,7 +202,8 @@ public sealed class QdrantVectorService : IVectorStoreService
         float[] denseEmbedding,
         (List<uint> Indices, List<float> Values) sparseVector,
         int topK,
-        Dictionary<string, string>? filterMetadata = null)
+        Dictionary<string, string>? filterMetadata = null,
+        IReadOnlyList<Guid>? documentIds = null)
     {
         try
         {
@@ -215,6 +216,22 @@ public sealed class QdrantVectorService : IVectorStoreService
                 }
             }
 
+            // Build the complete filter structure
+            object? filterObject = null;
+            if (filterMust.Count > 0 || (documentIds != null && documentIds.Count > 0))
+            {
+                var mustClauses = new List<object>(filterMust);
+
+                // Add MatchAny over documentIds as a should clause (OR semantics)
+                if (documentIds != null && documentIds.Count > 0)
+                {
+                    var docIdConditions = documentIds.Select(id => (object)new { key = "documentId", match = new { value = id.ToString() } }).ToList();
+                    mustClauses.Add(new { should = docIdConditions });
+                }
+
+                filterObject = new { must = mustClauses };
+            }
+
             var payload = new
             {
                 prefetch = new object[]
@@ -223,14 +240,14 @@ public sealed class QdrantVectorService : IVectorStoreService
                     {
                         query = denseEmbedding,
                         limit = topK * 2,
-                        filter = filterMust.Count > 0 ? new { must = filterMust } : null
+                        filter = filterObject
                     },
                     new
                     {
                         query = new { indices = sparseVector.Indices, values = sparseVector.Values },
                         @using = "sparse-text",
                         limit = topK * 2,
-                        filter = filterMust.Count > 0 ? new { must = filterMust } : null
+                        filter = filterObject
                     }
                 },
                 query = new { fusion = "rrf" },

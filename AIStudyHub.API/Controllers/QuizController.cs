@@ -174,6 +174,24 @@ public sealed class QuizController : ControllerBase
         }
     }
 
+    /// <summary>Lấy lịch sử nộp bài của tất cả user theo quiz.</summary>
+    [HttpGet("{quizId:guid}/history")]
+    public async Task<ActionResult<AIStudyHub.Business.DTOs.Common.PagedResultDto<QuizSubmissionHistoryDto>>> GetHistory(
+        Guid quizId,
+        [FromQuery] DateTime? fromDate,
+        [FromQuery] DateTime? toDate,
+        [FromQuery] int offset = 0,
+        [FromQuery] int limit = 20,
+        CancellationToken ct = default)
+    {
+        var quiz = await _service.GetByIdAsync(quizId, ct);
+        if (quiz == null) return NotFound("Quiz not found");
+
+        var @params = new AIStudyHub.Business.DTOs.Common.PaginationParams { Offset = offset, Limit = limit };
+        var result = await _submissionService.GetQuizHistoryAsync(quizId, fromDate, toDate, @params, ct);
+        return Ok(result);
+    }
+
     private Guid GetCurrentUserId()
     {
         var claim = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier || c.Type == "sub" || c.Type == "userId")?.Value;

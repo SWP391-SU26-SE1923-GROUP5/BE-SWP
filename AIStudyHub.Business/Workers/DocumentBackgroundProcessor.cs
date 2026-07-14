@@ -71,15 +71,16 @@ public class DocumentBackgroundProcessor : BackgroundService
     }
 
     private async Task EmbedChunksAsync(
-        List<string> chunks,
+        List<DocumentChunkDto> chunks,
         Guid documentId,
         Guid userId,
         string fileName,
         IServiceProvider services,
         CancellationToken ct)
     {
-        var chunkTexts = chunks.Where(c => !string.IsNullOrWhiteSpace(c)).ToList();
-        if (chunkTexts.Count == 0) return;
+        var validChunks = chunks.Where(c => !string.IsNullOrWhiteSpace(c.Text)).ToList();
+        if (validChunks.Count == 0) return;
+        var chunkTexts = validChunks.Select(c => c.Text).ToList();
 
         var sparseGen = services.GetRequiredService<ISparseVectorGenerator>();
         var qdrant = services.GetRequiredService<IVectorStoreService>();
@@ -117,9 +118,10 @@ public class DocumentBackgroundProcessor : BackgroundService
         if (denseVectors == null)
             throw lastEx ?? new InvalidOperationException("Embedding failed after retries");
 
-        for (int i = 0; i < chunkTexts.Count; i++)
+        for (int i = 0; i < validChunks.Count; i++)
         {
-            var chunkText = chunkTexts[i];
+            var chunk = validChunks[i];
+            var chunkText = chunk.Text;
             var sparse = sparseGen.GenerateSparseVector(chunkText);
             var metadata = new Dictionary<string, string>
             {
@@ -129,6 +131,10 @@ public class DocumentBackgroundProcessor : BackgroundService
                 { "fileName", fileName },
                 { "chunkIndex", i.ToString() }
             };
+            if (chunk.PageNumber.HasValue)
+            {
+                metadata.Add("pageNumber", chunk.PageNumber.Value.ToString());
+            }
             await qdrant.UpsertVectorAsync(Guid.NewGuid().ToString(), denseVectors[i], sparse, metadata);
         }
     }
@@ -202,7 +208,7 @@ public class DocumentBackgroundProcessor : BackgroundService
                 var summaryChunk = await GenerateDocumentSummaryAsync(ocrText, openAiService, logger, ct);
                 var chunks = await documentProcessing.ChunkTextAsync(ocrText, ragOptions.ChunkSize, ragOptions.ChunkOverlap);
                 if (!string.IsNullOrWhiteSpace(summaryChunk))
-                    chunks.Insert(0, summaryChunk);
+                    chunks.Insert(0, new DocumentChunkDto { Text = summaryChunk, PageNumber = null });
 
                 logger.LogInformation("Document {DocumentId}: Split into {ChunkCount} chunks",
                     request.DocumentId, chunks.Count);
@@ -233,7 +239,7 @@ public class DocumentBackgroundProcessor : BackgroundService
                 var summaryChunk = await GenerateDocumentSummaryAsync(docxText, openAiService, logger, ct);
                 var chunks = await documentProcessing.ChunkTextAsync(docxText, ragOptions.ChunkSize, ragOptions.ChunkOverlap);
                 if (!string.IsNullOrWhiteSpace(summaryChunk))
-                    chunks.Insert(0, summaryChunk);
+                    chunks.Insert(0, new DocumentChunkDto { Text = summaryChunk, PageNumber = null });
 
                 logger.LogInformation("Document {DocumentId}: Split into {ChunkCount} chunks",
                     request.DocumentId, chunks.Count);
@@ -264,7 +270,7 @@ public class DocumentBackgroundProcessor : BackgroundService
                 var summaryChunk = await GenerateDocumentSummaryAsync(text, openAiService, logger, ct);
                 var chunks = await documentProcessing.ChunkTextAsync(text, ragOptions.ChunkSize, ragOptions.ChunkOverlap);
                 if (!string.IsNullOrWhiteSpace(summaryChunk))
-                    chunks.Insert(0, summaryChunk);
+                    chunks.Insert(0, new DocumentChunkDto { Text = summaryChunk, PageNumber = null });
 
                 logger.LogInformation("Document {DocumentId}: Split into {ChunkCount} chunks",
                     request.DocumentId, chunks.Count);
@@ -293,7 +299,7 @@ public class DocumentBackgroundProcessor : BackgroundService
                 var summaryChunk = await GenerateDocumentSummaryAsync(text, openAiService, logger, ct);
                 var chunks = await documentProcessing.ChunkTextAsync(text, ragOptions.ChunkSize, ragOptions.ChunkOverlap);
                 if (!string.IsNullOrWhiteSpace(summaryChunk))
-                    chunks.Insert(0, summaryChunk);
+                    chunks.Insert(0, new DocumentChunkDto { Text = summaryChunk, PageNumber = null });
 
                 logger.LogInformation("Document {DocumentId}: Split into {ChunkCount} chunks",
                     request.DocumentId, chunks.Count);
