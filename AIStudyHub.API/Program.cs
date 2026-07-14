@@ -2,7 +2,7 @@ using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Workers;
 using Microsoft.OpenApi.Models;
 using AIStudyHub.API.Extensions;
-using AIStudyHub.API.Hubs;
+using AIStudyHub.Business.Hubs;
 using AIStudyHub.API.Middleware;
 using AIStudyHub.Business.Mappings;
 using AIStudyHub.Business.Options;

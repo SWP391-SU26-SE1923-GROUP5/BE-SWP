@@ -431,7 +431,7 @@ public sealed class DocumentService : IDocumentService
 
         var remaining = await _unitOfWork.DocumentShares
             .Query()
-            .Where(s => s.DocumentId == documentId)
+            .Where(s => s.DocumentId == documentId && s.Id != share.Id)
             .CountAsync(cancellationToken);
 
         if (remaining == 0)

@@ -49,7 +49,7 @@ public class FlashcardReviewServiceSm2Tests
     public void Easy_AfterTwoReviews_MultipliesIntervalByEaseFactor()
     {
         var review = NewReview(interval: 6, repetitions: 2, ease: 2.5f);
-        FlashcardReviewService.ApplySm2(review, ReviewQuality.Easy);
+        FlashcardReviewService.ApplySm2(review, ReviewQuality.Easy, enableFuzzing: false);
 
         Assert.Equal(3, review.Repetitions);
         Assert.Equal(15, review.Interval); // round(6 * 2.5) = 15

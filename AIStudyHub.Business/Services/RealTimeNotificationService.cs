@@ -1,33 +1,30 @@
 using AIStudyHub.Business.DTOs.Common;
 using AIStudyHub.Business.DTOs.Gamification;
 using AIStudyHub.Business.DTOs.Notifications;
+using AIStudyHub.Business.Hubs;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Data.Enums;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace AIStudyHub.Business.Services;
 
-/// <summary>
-/// SignalR-backed implementation of <see cref="IRealTimeNotificationService"/>.
-///
-/// The concrete hub class lives in AIStudyHub.API (where transport endpoints belong).
-/// We receive <c>IHubContext&lt;Hub&gt;</c> and broadcast to the user's group, which the
-/// API hub manages via <c>JoinGroup(userId)</c>. This way the Business layer never has to
-/// reference the concrete hub class.
-/// </summary>
 public sealed class RealTimeNotificationService : IRealTimeNotificationService
 {
     private const string ReceiveNotificationMethod = "ReceiveNotification";
 
-    private readonly IHubContext<Hub> _hubContext;
+    private readonly IHubContext<NotificationsHub> _notificationsHubContext;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<RealTimeNotificationService> _logger;
 
     public RealTimeNotificationService(
-        IHubContext<Hub> hubContext,
+        IHubContext<NotificationsHub> notificationsHubContext,
+        IServiceScopeFactory scopeFactory,
         ILogger<RealTimeNotificationService> logger)
     {
-        _hubContext = hubContext;
+        _notificationsHubContext = notificationsHubContext;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -35,7 +32,32 @@ public sealed class RealTimeNotificationService : IRealTimeNotificationService
     {
         try
         {
-            await _hubContext.Clients
+            using var scope = _scopeFactory.CreateScope();
+            var unitOfWork = scope.ServiceProvider.GetRequiredService<AIStudyHub.Data.Interfaces.IUnitOfWork>();
+            var entity = new AIStudyHub.Data.Entities.Notification
+            {
+                Id = Guid.NewGuid(),
+                UserId = notification.UserId,
+                Title = notification.Title,
+                Message = notification.Body,
+                Type = notification.Type,
+                PayloadJson = notification.Payload != null
+                    ? System.Text.Json.JsonSerializer.Serialize(notification.Payload)
+                    : null,
+                IsRead = false,
+                CreatedAt = DateTime.UtcNow
+            };
+            await unitOfWork.Notifications.AddAsync(entity, cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+        catch (Exception dbEx)
+        {
+            _logger.LogWarning(dbEx, "Failed to save notification to database for user {UserId}", notification.UserId);
+        }
+
+        try
+        {
+            await _notificationsHubContext.Clients
                 .Group(notification.UserId.ToString())
                 .SendAsync(ReceiveNotificationMethod, notification, cancellationToken);
         }

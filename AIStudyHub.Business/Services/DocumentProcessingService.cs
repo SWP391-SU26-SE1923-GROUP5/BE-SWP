@@ -103,7 +103,8 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
                     var overlapWindow = lastChunk.Length > overlap
                         ? lastChunk[^overlap..]
                         : lastChunk;
-                    var lastSentenceBoundary = overlapWindow.LastIndexOfAny(
+                    var searchWindow = overlapWindow.Length > 1 ? overlapWindow[..^1] : overlapWindow;
+                    var lastSentenceBoundary = searchWindow.LastIndexOfAny(
                         new[] { '.', '!', '?', '\n' });
                     var overlapText = lastSentenceBoundary >= 0
                         ? overlapWindow[(lastSentenceBoundary + 1)..].Trim()
