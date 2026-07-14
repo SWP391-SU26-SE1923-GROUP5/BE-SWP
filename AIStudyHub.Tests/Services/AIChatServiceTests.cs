@@ -54,13 +54,19 @@ public class AIChatServiceTests : IDisposable
         _tokenTrackerMock.Setup(x => x.HasQuotaAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         _tokenTrackerMock.Setup(x => x.GetUsageInfoAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((0L, 100000L));
+            .ReturnsAsync((0, 100000));
 
         _service = new AIChatService(_unitOfWork, _mapperMock.Object, null!, _orchestratorMock.Object, _tokenTrackerMock.Object);
         _userId = Guid.NewGuid();
     }
 
     public void Dispose()
+    {
+        _connection?.Dispose();
+    }
+
+    [Fact]
+    public async Task CreateMessageAsync_NoDocumentAttached_ReturnsCorrectMessage()
     {
         // Arrange
         var session = new ChatSession { Id = Guid.NewGuid(), UserId = _userId, SessionTitle = "Test" };
@@ -88,10 +94,9 @@ public class AIChatServiceTests : IDisposable
         var doc = new Document { Id = Guid.NewGuid(), UserId = _userId, Title = "Doc 1" };
         await _dbContext.ChatSessions.AddAsync(session);
         await _dbContext.Documents.AddAsync(doc);
-        await _dbContext.ChatSessionDocuments.AddAsync(new ChatSessionDocument
+        session.ChatSessionDocuments.Add(new ChatSessionDocument
         {
             Id = Guid.NewGuid(),
-            ChatSessionId = session.Id,
             DocumentId = doc.Id,
             CreatedAt = DateTime.UtcNow
         });
@@ -125,10 +130,8 @@ public class AIChatServiceTests : IDisposable
         await _dbContext.ChatSessions.AddAsync(session);
         await _dbContext.Documents.AddAsync(doc1);
         await _dbContext.Documents.AddAsync(doc2);
-        await _dbContext.ChatSessionDocuments.AddRangeAsync(
-            new ChatSessionDocument { Id = Guid.NewGuid(), ChatSessionId = session.Id, DocumentId = doc1.Id, CreatedAt = DateTime.UtcNow },
-            new ChatSessionDocument { Id = Guid.NewGuid(), ChatSessionId = session.Id, DocumentId = doc2.Id, CreatedAt = DateTime.UtcNow }
-        );
+        session.ChatSessionDocuments.Add(new ChatSessionDocument { Id = Guid.NewGuid(), DocumentId = doc1.Id, CreatedAt = DateTime.UtcNow });
+        session.ChatSessionDocuments.Add(new ChatSessionDocument { Id = Guid.NewGuid(), DocumentId = doc2.Id, CreatedAt = DateTime.UtcNow });
         await _dbContext.SaveChangesAsync();
 
         _orchestratorMock.Setup(x => x.AskWithTrackingAsync(
@@ -163,7 +166,7 @@ public class AIChatServiceTests : IDisposable
         _tokenTrackerMock.Setup(x => x.HasQuotaAsync(_userId, It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
         _tokenTrackerMock.Setup(x => x.GetUsageInfoAsync(_userId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((50000L, 50000L));
+            .ReturnsAsync((50000, 50000));
 
         var request = new CreateChatMessageRequestDto(session.Id, "Hello");
 
