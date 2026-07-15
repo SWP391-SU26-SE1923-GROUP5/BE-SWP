@@ -6,6 +6,7 @@ using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.Services;
 using AIStudyHub.Data;
 using AIStudyHub.Data.Entities;
+using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Repositories;
 using AutoMapper;
 using Microsoft.Data.Sqlite;
@@ -109,6 +110,113 @@ public class DocumentServiceTests : IDisposable
         // Assert
         var docInDb = await _dbContext.Documents.FindAsync(docId);
         Assert.Null(docInDb);
+    }
+
+    [Fact]
+    public async Task GetAvailableFileNameAsync_DuplicateActiveNames_ReturnsSmallestAvailableSuffixCaseInsensitively()
+    {
+        var userId = Guid.NewGuid();
+        await SeedDocumentsAsync(userId,
+            ("abc.pdf", DocumentLifecycleStatus.Active),
+            ("ABC (1).PDF", DocumentLifecycleStatus.Active));
+
+        var result = await _service.GetAvailableFileNameAsync(userId, "abc.pdf");
+
+        Assert.Equal("abc (2).pdf", result);
+    }
+
+    [Fact]
+    public async Task GetAvailableFileNameAsync_TrashedAndOtherUserNames_DoNotReserveName()
+    {
+        var userId = Guid.NewGuid();
+        await SeedDocumentsAsync(userId, ("abc.pdf", DocumentLifecycleStatus.Trashed));
+        await SeedDocumentsAsync(Guid.NewGuid(), ("abc.pdf", DocumentLifecycleStatus.Active));
+
+        var result = await _service.GetAvailableFileNameAsync(userId, "abc.pdf");
+
+        Assert.Equal("abc.pdf", result);
+    }
+
+    [Theory]
+    [InlineData("archive.tar.gz", "archive.tar (1).gz")]
+    [InlineData("README", "README (1)")]
+    [InlineData("abc (1).pdf", "abc (1) (1).pdf")]
+    public async Task GetAvailableFileNameAsync_PreservesLiteralStemAndExtension(string requested, string expected)
+    {
+        var userId = Guid.NewGuid();
+        await SeedDocumentsAsync(userId, (requested, DocumentLifecycleStatus.Active));
+
+        var result = await _service.GetAvailableFileNameAsync(userId, requested);
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public async Task GetAvailableFileNameAsync_ExcludedDocument_DoesNotReserveItsOwnName()
+    {
+        var userId = Guid.NewGuid();
+        var documentId = await SeedDocumentsAsync(userId, ("abc.pdf", DocumentLifecycleStatus.Trashed));
+
+        var result = await _service.GetAvailableFileNameAsync(userId, "abc.pdf", documentId);
+
+        Assert.Equal("abc.pdf", result);
+    }
+
+    [Fact]
+    public async Task GetAvailableFileNameAsync_PathAndLongStem_ReturnsSafeNameWithinDatabaseLimit()
+    {
+        var userId = Guid.NewGuid();
+        var longName = new string('a', 251) + ".pdf";
+        await SeedDocumentsAsync(userId, (longName, DocumentLifecycleStatus.Active));
+
+        var result = await _service.GetAvailableFileNameAsync(userId, $"folder/{longName}");
+
+        Assert.Equal(255, result.Length);
+        Assert.EndsWith(" (1).pdf", result);
+        Assert.DoesNotContain("folder", result);
+    }
+
+    private async Task<Guid> SeedDocumentsAsync(
+        Guid userId,
+        params (string FileName, DocumentLifecycleStatus LifecycleStatus)[] documents)
+    {
+        if (!await _dbContext.Users.AnyAsync(x => x.Id == userId))
+        {
+            _dbContext.Users.Add(new User
+            {
+                Id = userId,
+                Email = $"{userId}@test.com",
+                FullName = "Filename Test User",
+                PasswordHash = "hash"
+            });
+        }
+
+        var subjectId = Guid.NewGuid();
+        _dbContext.Subjects.Add(new Subject
+        {
+            Id = subjectId,
+            SubjectCode = $"S_{subjectId:N}"[..20],
+            SubjectName = "Filename Test Subject"
+        });
+
+        var firstId = Guid.Empty;
+        foreach (var (fileName, lifecycleStatus) in documents)
+        {
+            var document = new Document
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                SubjectId = subjectId,
+                Title = fileName,
+                FileName = fileName,
+                LifecycleStatus = lifecycleStatus
+            };
+            firstId = firstId == Guid.Empty ? document.Id : firstId;
+            _dbContext.Documents.Add(document);
+        }
+
+        await _dbContext.SaveChangesAsync();
+        return firstId;
     }
 
     public void Dispose()

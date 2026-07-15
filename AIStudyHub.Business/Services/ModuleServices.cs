@@ -52,6 +52,52 @@ public sealed class DocumentService : IDocumentService
         d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status, d.ErrorMessage,
         d.Votes.Count, d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
 
+    public async Task<string> GetAvailableFileNameAsync(
+        Guid userId,
+        string fileName,
+        Guid? excludeDocumentId = null,
+        CancellationToken cancellationToken = default)
+    {
+        const int maxFileNameLength = 255;
+        var normalizedFileName = Path.GetFileName(fileName);
+        if (string.IsNullOrWhiteSpace(normalizedFileName))
+            throw new ArgumentException("Document filename is required.", nameof(fileName));
+
+        var extension = Path.GetExtension(normalizedFileName);
+        var stem = Path.GetFileNameWithoutExtension(normalizedFileName);
+        if (string.IsNullOrWhiteSpace(stem) || extension.Length >= maxFileNameLength)
+            throw new ArgumentException("Document filename is invalid.", nameof(fileName));
+
+        var query = _unitOfWork.Documents.Query()
+            .Where(d => d.UserId == userId
+                        && d.LifecycleStatus == DocumentLifecycleStatus.Active
+                        && d.FileName != null);
+
+        if (excludeDocumentId.HasValue)
+            query = query.Where(d => d.Id != excludeDocumentId.Value);
+
+        var existingNames = new HashSet<string>(
+            await query.Select(d => d.FileName!).ToListAsync(cancellationToken),
+            StringComparer.OrdinalIgnoreCase);
+
+        var initialStemLength = Math.Min(stem.Length, maxFileNameLength - extension.Length);
+        var candidate = stem[..initialStemLength] + extension;
+        if (!existingNames.Contains(candidate))
+            return candidate;
+
+        for (var suffixNumber = 1; ; suffixNumber++)
+        {
+            var suffix = $" ({suffixNumber})";
+            var maxStemLength = maxFileNameLength - extension.Length - suffix.Length;
+            if (maxStemLength <= 0)
+                throw new ArgumentException("Document filename is too long.", nameof(fileName));
+
+            candidate = stem[..Math.Min(stem.Length, maxStemLength)] + suffix + extension;
+            if (!existingNames.Contains(candidate))
+                return candidate;
+        }
+    }
+
     public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<DocumentResponseDto>> GetAllPagedAsync(
         Guid userId,
         AIStudyHub.Business.DTOs.Common.PaginationParams @params,
