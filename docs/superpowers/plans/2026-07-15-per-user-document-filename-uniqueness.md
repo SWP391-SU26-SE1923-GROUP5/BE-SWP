@@ -139,7 +139,7 @@ Run the Task 1 test command. Expected: FAIL because the index is absent.
 builder.HasIndex(x => new { x.UserId, x.FileName })
     .HasDatabaseName("UX_Document_UserId_FileName_Active")
     .IsUnique()
-    .HasFilter("[lifecycle_status] = 'Active' AND [file_name] IS NOT NULL");
+    .HasFilter("[LifecycleStatus] = 0 AND [file_name] IS NOT NULL");
 ```
 
 Keep the database's existing case-insensitive SQL Server collation. Before applying the migration, run `SELECT CONVERT(varchar(128), DATABASEPROPERTYEX(DB_NAME(), 'Collation'));`; abort deployment if it contains `_CS_`, because the application allocator requires a `_CI_` collation.

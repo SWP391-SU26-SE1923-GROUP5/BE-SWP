@@ -176,6 +176,19 @@ public class DocumentServiceTests : IDisposable
         Assert.DoesNotContain("folder", result);
     }
 
+    [Fact]
+    public void DocumentModel_ActiveFilenameIndex_IsOwnerScopedFilteredAndUnique()
+    {
+        var documentType = _dbContext.Model.FindEntityType(typeof(Document));
+        var index = documentType!.GetIndexes().SingleOrDefault(candidate =>
+            candidate.Properties.Select(property => property.Name)
+                .SequenceEqual(new[] { nameof(Document.UserId), nameof(Document.FileName) }));
+
+        Assert.NotNull(index);
+        Assert.True(index.IsUnique);
+        Assert.Equal("[LifecycleStatus] = 0 AND [file_name] IS NOT NULL", index.GetFilter());
+    }
+
     private async Task<Guid> SeedDocumentsAsync(
         Guid userId,
         params (string FileName, DocumentLifecycleStatus LifecycleStatus)[] documents)

@@ -22,7 +22,7 @@ The filename policy belongs in the existing `DocumentService`, which already own
 
 The upload action calls this service method before creating its `Document`. `RestoreAsync` reuses the same logic while excluding the document being restored. Filename parsing and suffix selection remain private implementation details of `DocumentService`; no new service, project, or dependency-injection registration is introduced.
 
-Add a filtered SQL Server unique index on `(UserId, FileName)` for rows where `LifecycleStatus` is `Active` and `FileName` is not null. This index is the final concurrency safeguard. Filename comparison must follow a case-insensitive SQL Server collation so application lookup and database enforcement agree.
+Add a filtered SQL Server unique index on `(UserId, FileName)` for rows where the existing integer `LifecycleStatus` column is `0` (`Active`) and `FileName` is not null. This index is the final concurrency safeguard. Filename comparison must follow a case-insensitive SQL Server collation so application lookup and database enforcement agree.
 
 ## Filename allocation
 

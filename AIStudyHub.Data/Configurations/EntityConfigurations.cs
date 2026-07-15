@@ -123,6 +123,10 @@ internal sealed class DocumentConfiguration : IEntityTypeConfiguration<Document>
         builder.Property(x => x.ErrorMessage).HasColumnName("error_message");
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+        builder.HasIndex(x => new { x.UserId, x.FileName })
+            .HasDatabaseName("UX_Document_UserId_FileName_Active")
+            .IsUnique()
+            .HasFilter("[LifecycleStatus] = 0 AND [file_name] IS NOT NULL");
         builder.HasOne(x => x.User).WithMany(x => x.Documents).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.Subject).WithMany(x => x.Documents).HasForeignKey(x => x.SubjectId).OnDelete(DeleteBehavior.Restrict);
     }
