@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Text.Json;
 
 namespace AIStudyHub.API.Controllers;
 
@@ -24,6 +25,9 @@ public sealed class DocumentController : ControllerBase
 {
     private const string ActiveFileNameIndex = "UX_Document_UserId_FileName_Active";
     private const int FileNameSaveAttempts = 3;
+    private const string SuggestedPromptsWelcomeMessage =
+        "Chào mừng bạn đến với AIStudyHub! Tôi có thể giúp bạn khám phá tài liệu này. "
+        + "Hãy chọn một câu hỏi gợi ý bên dưới hoặc nhập câu hỏi của riêng bạn.";
     private readonly IDocumentService _service;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IDocumentProcessingService _documentProcessing;
@@ -88,6 +92,45 @@ public sealed class DocumentController : ControllerBase
         }
 
         return Ok(result);
+    }
+
+    [HttpGet("{id:guid}/suggested-prompts")]
+    public async Task<ActionResult<SuggestedPromptsResponseDto>> GetSuggestedPrompts(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
+        if (document is null)
+            return NotFound();
+
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty)
+            return Unauthorized();
+
+        if (document.UserId != userId && document.ShareStatus != "public")
+        {
+            var isShared = await _unitOfWork.DocumentShares
+                .Query()
+                .AnyAsync<DocumentShare>(share =>
+                    share.DocumentId == id && share.UserId == userId, cancellationToken);
+            if (!isShared)
+                return Forbid();
+        }
+
+        IReadOnlyList<string> prompts = [];
+        if (!string.IsNullOrWhiteSpace(document.SuggestedPromptsJson))
+        {
+            try
+            {
+                prompts = JsonSerializer.Deserialize<List<string>>(document.SuggestedPromptsJson) ?? [];
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "Invalid suggested prompt JSON for document {DocumentId}", id);
+            }
+        }
+
+        return Ok(new SuggestedPromptsResponseDto(id, SuggestedPromptsWelcomeMessage, prompts));
     }
 
     [HttpPut("{id:guid}")]

@@ -21,6 +21,7 @@ public sealed class Document : BaseEntity
     public DateTime? ReindexClaimedAt { get; set; }
     public int ReindexAttemptCount { get; set; }
     public string? LastReindexError { get; set; }
+    public string? SuggestedPromptsJson { get; set; }
 
     /// <summary>Soft-delete state machine: Active -> Trashed -> Purged.</summary>
     public DocumentLifecycleStatus LifecycleStatus { get; set; } = DocumentLifecycleStatus.Active;

@@ -69,6 +69,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<INotificationService, NotificationService>();
         services.Configure<OtpOptions>(configuration.GetSection("Otp"));
         services.Configure<DocumentReindexOptions>(configuration.GetSection(DocumentReindexOptions.SectionName));
+        services.Configure<SuggestedPromptOptions>(configuration.GetSection(SuggestedPromptOptions.SectionName));
         services.Configure<AIStudyHub.Business.Options.VnPayOptions>(configuration.GetSection(AIStudyHub.Business.Options.VnPayOptions.SectionName));
         services.AddScoped<IVnPayService, VnPayService>();
         services.AddScoped<IPaymentService, PaymentService>();
@@ -81,6 +82,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<IOpenAIService, OpenAIService>();
         services.AddScoped<IFlashcardAiService, FlashcardAiService>();
         services.AddScoped<IQuizAiService, QuizAiService>();
+        services.AddScoped<IDocumentSuggestedPromptService, DocumentSuggestedPromptService>();
         services.AddScoped<ITokenTrackerService, TokenTrackerService>();
         services.AddScoped<ITokenWalletService, TokenWalletService>();
         services.AddScoped<IFileStorageService, LocalFileStorageService>();

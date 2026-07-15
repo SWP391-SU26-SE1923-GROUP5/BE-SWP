@@ -12,11 +12,13 @@ using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
 using AIStudyHub.Business.Interfaces.AI.LLM;
+using AIStudyHub.Business.Interfaces.AI.Generators;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.Services;
 using AIStudyHub.Business.Options;
 using AIStudyHub.Business.AI;
+using System.Text.Json;
 
 namespace AIStudyHub.Business.Workers;
 
@@ -182,6 +184,7 @@ public class DocumentBackgroundProcessor : BackgroundService
         var realTimeNotifier = services.GetService<IRealTimeNotificationService>();
         var indexRunId = request.IndexRunId ?? Guid.NewGuid();
         var indexed = false;
+        string? extractedText = null;
 
         try
         {
@@ -203,6 +206,7 @@ public class DocumentBackgroundProcessor : BackgroundService
 
                 var segments = await documentProcessing.ExtractSegmentsAsync(fileContent, extension);
                 var ocrText = string.Join("\n", segments.Select(segment => segment.Text));
+                extractedText = ocrText;
 
                 if (string.IsNullOrWhiteSpace(ocrText) || ocrText.Length < 10)
                 {
@@ -236,6 +240,7 @@ public class DocumentBackgroundProcessor : BackgroundService
 
                 var segments = await documentProcessing.ExtractSegmentsAsync(fileContent, extension);
                 var docxText = string.Join("\n", segments.Select(segment => segment.Text));
+                extractedText = docxText;
 
                 if (string.IsNullOrWhiteSpace(docxText) || docxText.Length < 10)
                 {
@@ -269,6 +274,7 @@ public class DocumentBackgroundProcessor : BackgroundService
 
                 var segments = await documentProcessing.ExtractSegmentsAsync(fileContent, extension);
                 var text = string.Join("\n", segments.Select(segment => segment.Text));
+                extractedText = text;
 
                 if (string.IsNullOrWhiteSpace(text) || text.Length < 10)
                 {
@@ -301,6 +307,7 @@ public class DocumentBackgroundProcessor : BackgroundService
 
                 var segments = await documentProcessing.ExtractSegmentsAsync(fileContent, extension);
                 var text = string.Join("\n", segments.Select(segment => segment.Text));
+                extractedText = text;
                 if (string.IsNullOrWhiteSpace(text) || text.Length < 10)
                 {
                     throw new InvalidOperationException(
@@ -347,6 +354,22 @@ public class DocumentBackgroundProcessor : BackgroundService
             {
                 var vectorStore = services.GetRequiredService<IVectorStoreService>();
                 await vectorStore.DeleteDocumentVectorsExceptRunAsync(request.DocumentId, indexRunId);
+            }
+
+            if (document != null && indexed && !string.IsNullOrWhiteSpace(extractedText))
+            {
+                try
+                {
+                    var suggestedPromptService = services.GetRequiredService<IDocumentSuggestedPromptService>();
+                    var prompts = await suggestedPromptService.GenerateAsync(extractedText, ct);
+                    document.SuggestedPromptsJson = JsonSerializer.Serialize(prompts);
+                }
+                catch (Exception promptEx)
+                {
+                    document.SuggestedPromptsJson = "[]";
+                    logger.LogWarning(promptEx,
+                        "Suggested prompt generation failed for document {DocumentId}", request.DocumentId);
+                }
             }
 
             // Update document status in database

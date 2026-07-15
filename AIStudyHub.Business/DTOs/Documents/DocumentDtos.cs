@@ -94,3 +94,8 @@ public sealed record TrashBinDto(
 /// Request to permanently purge a trashed document.
 /// </summary>
 public sealed record PurgeDocumentRequestDto(bool ConfirmPurge = true);
+
+public sealed record SuggestedPromptsResponseDto(
+    Guid DocumentId,
+    string WelcomeMessage,
+    IReadOnlyList<string> Prompts);

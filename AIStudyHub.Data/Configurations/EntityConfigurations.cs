@@ -126,6 +126,7 @@ internal sealed class DocumentConfiguration : IEntityTypeConfiguration<Document>
         builder.Property(x => x.ReindexClaimedAt).HasColumnName("reindex_claimed_at").HasColumnType("datetime");
         builder.Property(x => x.ReindexAttemptCount).HasColumnName("reindex_attempt_count").HasDefaultValue(0);
         builder.Property(x => x.LastReindexError).HasColumnName("last_reindex_error");
+        builder.Property(x => x.SuggestedPromptsJson).HasColumnName("suggested_prompts_json");
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasIndex(x => new { x.UserId, x.FileName })
