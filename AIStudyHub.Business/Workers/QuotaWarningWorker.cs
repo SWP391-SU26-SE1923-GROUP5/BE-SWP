@@ -33,13 +33,32 @@ public sealed class QuotaWarningWorker : BackgroundService
         _logger.LogInformation("QuotaWarningWorker started.");
         while (!stoppingToken.IsCancellationRequested)
         {
-            var now = DateTime.UtcNow;
-            if (now.Date != _lastRunDate && now.Hour >= 9)
+            try
             {
-                await RunOnceAsync(stoppingToken);
-                _lastRunDate = now.Date;
+                var now = DateTime.UtcNow;
+                if (now.Date != _lastRunDate && now.Hour >= 9)
+                {
+                    await RunOnceAsync(stoppingToken);
+                    _lastRunDate = now.Date;
+                }
             }
-            await Task.Delay(ScanInterval, stoppingToken);
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "QuotaWarningWorker iteration failed.");
+            }
+
+            try
+            {
+                await Task.Delay(ScanInterval, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
     }
 
