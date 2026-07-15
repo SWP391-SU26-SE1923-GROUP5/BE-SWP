@@ -268,7 +268,7 @@ sequenceDiagram
 
 | Tính năng UI | Gọi API theo thứ tự | Ghi chú |
 |---|---|---|
-| **Trang "Hỏi AI" (chat toàn bộ tài liệu)** | 1. `POST /api/AI/rag/ask { question }` → 2. (tuỳ chọn) lưu lịch sử vào `POST /api/Chat/messages` | Trả `answer`, `citations[]`, `confidence` |
+| **Hybrid search tài liệu** | `POST /api/AI/rag/ask { question, documentIds?, topK? }` | Trả `query`, `count`, `results[]`; không sinh AI answer |
 | **Trang "Tóm tắt document"** | `POST /api/AI/rag/summarize { documentId }` | Trả `{ summary }` |
 | **Trang "Tạo Quiz từ document"** | 1. `POST /api/AI/quizzes/generate?docId=X { numberOfQuestions: 10 }` → 2. Navigate user tới màn làm bài dùng `quiz.id` từ response | Validate 1≤n≤20 (BE check) |
 | **Trang "Tạo Flashcard từ document"** | 1. `POST /api/AI/flashcards/generate?docId=X { numberOfFlashcards: 10 }` → 2. List sẽ tự cập nhật qua SignalR `type=3 payload={documentId,title,count}` | Nếu không nghe SignalR, refetch `GET /api/Flashcard/{docId}/flashcards` |
@@ -816,18 +816,36 @@ Re-OCR + re-vector nếu job lỗi. Cùng response shape với upload.
 
 ### 10.1. POST `/api/AI/rag/ask`
 
-Hỏi đáp theo tất cả documents của user.
+Hybrid search trên các tài liệu của user. Endpoint này không gọi chat LLM và không sinh câu trả lời AI.
 
-**Body**: `{ "question": "string" }`
+**Body**:
+```json
+{
+  "question": "string",
+  "documentIds": ["optional-guid"],
+  "topK": 10
+}
+```
+
+`documentIds` và `topK` là tùy chọn. Nếu bỏ `documentIds`, hệ thống tìm trên toàn bộ tài liệu đã index của user.
 
 **Response 200**:
 ```json
 {
-  "answer": "string",
-  "citations": [
-    { "documentId": "guid", "documentTitle": "string", "chunkIndex": 0, "snippet": "string", "score": 0.85 }
-  ],
-  "confidence": 0.82
+  "query": "string",
+  "count": 1,
+  "results": [
+    {
+      "content": "matching document text",
+      "score": 0.85,
+      "documentId": "guid",
+      "fileName": "document.pdf",
+      "pageNumber": 12,
+      "chunkIndex": 22,
+      "matchType": "semantic",
+      "isHighlightable": true
+    }
+  ]
 }
 ```
 
@@ -1526,7 +1544,7 @@ export default api;
 - [ ] OAuth Google/GitHub (window.location redirect)
 - [ ] Subject picker + Tier picker (load 1 lần, cache)
 - [ ] Document upload với progress bar + status polling + SignalR fallback
-- [ ] Chat UI với RAG streaming (xem `/api/AI/rag/ask` cho polling)
+- [ ] Chat UI qua `POST /api/Chat/messages`; `/api/AI/rag/ask` chỉ dùng cho hybrid search
 - [ ] Flashcard review UI (hỗ trợ keyboard 1/2/3/4 cho Again/Hard/Good/Easy)
 - [ ] Quiz taking UI (timer, navigation, submit)
 - [ ] Gamification dashboard (XP bar, streak flame, leaderboard)

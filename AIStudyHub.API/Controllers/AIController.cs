@@ -1,10 +1,14 @@
 using AIStudyHub.Business.DTOs.Flashcards;
 using AIStudyHub.Business.DTOs.Quizzes;
+using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.AI.Generators;
 using AIStudyHub.Business.Interfaces.AI.Orchestration;
+using AIStudyHub.Business.Interfaces.AI.Search;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Configuration;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace AIStudyHub.API.Controllers;
 
@@ -14,6 +18,8 @@ namespace AIStudyHub.API.Controllers;
 public sealed class AIController : ControllerBase
 {
     private readonly ISemanticKernelOrchestrator _orchestrator;
+    private readonly IHybridSearchService _hybridSearchService;
+    private readonly RetrievalOptions _retrievalOptions;
     private readonly IFlashcardAiService _flashcardAiService;
     private readonly IQuizAiService _quizAiService;
     private readonly ILogger<AIController> _logger;
@@ -22,6 +28,8 @@ public sealed class AIController : ControllerBase
 
     public AIController(
         ISemanticKernelOrchestrator orchestrator,
+        IHybridSearchService hybridSearchService,
+        IOptions<RetrievalOptions> retrievalOptions,
         IFlashcardAiService flashcardAiService,
         IQuizAiService quizAiService,
         ILogger<AIController> logger,
@@ -29,6 +37,8 @@ public sealed class AIController : ControllerBase
         AIStudyHub.Data.Interfaces.IUnitOfWork unitOfWork)
     {
         _orchestrator = orchestrator;
+        _hybridSearchService = hybridSearchService;
+        _retrievalOptions = retrievalOptions.Value;
         _flashcardAiService = flashcardAiService;
         _quizAiService = quizAiService;
         _logger = logger;
@@ -47,9 +57,11 @@ public sealed class AIController : ControllerBase
             : Guid.Empty;
     }
 
-    /// <summary>Ask a question about the user's documents using RAG.</summary>
+    /// <summary>Search the user's documents using hybrid dense/sparse retrieval and reranking.</summary>
     [HttpPost("rag/ask")]
-    public async Task<IActionResult> Ask([FromBody] AskRequest request, CancellationToken ct)
+    public async Task<ActionResult<HybridSearchResponseDto>> Ask(
+        [FromBody] HybridSearchRequestDto request,
+        CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Question))
             return BadRequest("Question is required");
@@ -58,22 +70,35 @@ public sealed class AIController : ControllerBase
         if (userId == Guid.Empty)
             return Unauthorized();
 
+        var defaultTopK = Math.Max(1, _retrievalOptions.RerankTopK);
+        var maxTopK = Math.Max(defaultTopK, _retrievalOptions.TopK);
+        var topK = request.TopK ?? defaultTopK;
+        if (topK < 1 || topK > maxTopK)
+            return BadRequest($"TopK must be between 1 and {maxTopK}");
+
+        var documentIds = request.DocumentIds?
+            .Where(documentId => documentId != Guid.Empty)
+            .Distinct()
+            .ToList();
+        if (documentIds is { Count: 0 })
+            documentIds = null;
+
         try
         {
-            _logger.LogInformation("RAG query from user {UserId}: {Question}", userId, request.Question);
-            var response = await _orchestrator.AskAsync(userId, null, request.Question, [], ct);
+            _logger.LogInformation(
+                "Hybrid search from user {UserId}: {Question}; DocumentCount={DocumentCount}; TopK={TopK}",
+                userId, request.Question, documentIds?.Count ?? 0, topK);
+            var results = (await _hybridSearchService.SearchAsync(
+                    request.Question, userId, documentIds, topK, ct))
+                .Select(HybridSearchResultDto.FromSearchResult)
+                .ToList();
 
-            return Ok(new
-            {
-                answer = response.Answer,
-                citations = response.Citations,
-                confidence = response.Confidence
-            });
+            return Ok(new HybridSearchResponseDto(request.Question, results.Count, results));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing RAG query for user {UserId}", userId);
-            return StatusCode(500, "An error occurred while processing your question");
+            _logger.LogError(ex, "Error processing hybrid search for user {UserId}", userId);
+            return StatusCode(500, "An error occurred while searching your documents");
         }
     }
 
@@ -186,7 +211,6 @@ public sealed class AIController : ControllerBase
     }
 }
 
-public record AskRequest(string Question);
 public record SummarizeRequest(Guid DocumentId);
 
 
