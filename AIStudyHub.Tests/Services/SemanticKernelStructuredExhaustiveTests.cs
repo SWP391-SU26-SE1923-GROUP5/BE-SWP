@@ -67,7 +67,8 @@ public sealed class SemanticKernelStructuredExhaustiveTests
             It.Is<string>(prompt =>
                 prompt.Contains("BR-01 First rule.")
                 && prompt.Contains("An actor without a structured identifier.")
-                && prompt.Contains("Inspect every provided source chunk"))), Times.Once);
+                && prompt.Contains("Inspect every provided source chunk")
+                && prompt.Contains("Do not append follow-up offers"))), Times.Once);
     }
 
     private static SearchResult Result(Guid documentId, int chunkIndex, string text, int page) =>

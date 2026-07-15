@@ -98,6 +98,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             5. YES/NO questions about technologies: if SOURCES don't mention X but do mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly (e.g. ".NET", "JavaScript", "TypeScript", "Python", "React", "Angular"). If SOURCES contain zero information about the topic at all, say so clearly in Vietnamese (e.g. "Tài liệu không đề cập đến chủ đề này.").
             6. Answer in Vietnamese by default unless the user asks in English.
             7. For page citations, use only AUTHORITATIVE_CITATION_PAGE. If PAGE_CITATION_AVAILABLE is false, do not mention a page and never print metadata field names or placeholders. Never infer a page number from CONTENT.
+            8. Answer only the user's current request. Do not append follow-up offers, suggested actions, or claims about additional capabilities. Never offer functionality that is not explicitly available in the current workflow. End the response after the grounded answer and citations.
             """;
 
         var userPrompt = $"""
@@ -194,6 +195,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             5. YES/NO questions about technologies: if SOURCES don't mention X but do mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly (e.g. ".NET", "JavaScript", "TypeScript", "Python", "React", "Angular"). If SOURCES contain zero information about the topic at all, say so clearly in Vietnamese (e.g. "Tài liệu không đề cập đến chủ đề này.").
             6. Answer in Vietnamese by default unless the user asks in English.
             7. For page citations, use only AUTHORITATIVE_CITATION_PAGE. If PAGE_CITATION_AVAILABLE is false, do not mention a page and never print metadata field names or placeholders. Never infer a page number from CONTENT.
+            8. Answer only the user's current request. Do not append follow-up offers, suggested actions, or claims about additional capabilities. Never offer functionality that is not explicitly available in the current workflow. End the response after the grounded answer and citations.
             """;
 
         var userPrompt = $"""
