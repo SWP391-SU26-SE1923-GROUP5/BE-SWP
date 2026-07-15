@@ -131,6 +131,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         // Build citations
         var citations = resultList.Select((r, i) => new CitationInfo(
+            DocumentId: r.Metadata.TryGetValue("documentId", out var docIdStr) && Guid.TryParse(docIdStr, out var docId) ? docId : Guid.Empty,
             Source: r.Source,
             Content: r.Content,
             Relevance: r.Score,
@@ -149,7 +150,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         // L3: Retrieval with hybrid search and reranking
         var searchResults = await _searchService.SearchAsync(question, userId, documentIds, 20, ct);
         var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 5, ct);
-        
+
         var resultList = rerankedResults.ToList();
         if (!resultList.Any())
         {
@@ -227,6 +228,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         // Build citations
         var citations = resultList.Select((r, i) => new CitationInfo(
+            DocumentId: r.Metadata.TryGetValue("documentId", out var docIdStr) && Guid.TryParse(docIdStr, out var docId) ? docId : Guid.Empty,
             Source: r.Source,
             Content: r.Content,
             Relevance: r.Score,

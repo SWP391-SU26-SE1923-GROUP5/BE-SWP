@@ -28,6 +28,7 @@ public record SummarizeResult(
 );
 
 public record CitationInfo(
+    Guid DocumentId,
     string Source,
     string Content,
     double Relevance,

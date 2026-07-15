@@ -4,7 +4,20 @@ public sealed record ChatSessionResponseDto(Guid Id, Guid UserId, string Session
 
 public sealed record CreateChatSessionRequestDto(string SessionTitle);
 
-public sealed record ChatMessageResponseDto(Guid Id, Guid ChatSessionId, string Sender, string Content, DateTime CreatedAt, DateTime? UpdatedAt, bool IsRelevant);
+public sealed record ChatMessageResponseDto(Guid Id, Guid ChatSessionId, string Sender, string Content, DateTime CreatedAt, DateTime? UpdatedAt, bool IsRelevant, IReadOnlyList<ChatCitationDto>? Citations = null);
+
+/// <summary>
+/// Represents a single citation source from the RAG pipeline.
+/// FE uses DocumentId to identify the document, PageNumber to navigate the viewer, and Snippet to highlight text.
+/// Source (fileName) is kept as a display-friendly label but may not be unique.
+/// </summary>
+public sealed record ChatCitationDto(
+    Guid DocumentId,
+    string Source,
+    string Snippet,
+    int? PageNumber,
+    double Relevance,
+    string MatchType);
 
 public sealed record CreateChatMessageRequestDto(Guid? SessionId, string Message);
 

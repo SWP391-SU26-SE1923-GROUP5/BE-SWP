@@ -147,6 +147,7 @@ public sealed class AIChatService : IAIChatService
         int inputTokens = 0;
         int outputTokens = 0;
         bool isRelevant = false;
+        IReadOnlyList<ChatCitationDto>? citations = null;
 
         if (docIds != null && docIds.Count > 0)
         {
@@ -155,6 +156,19 @@ public sealed class AIChatService : IAIChatService
             inputTokens = ragResponse.InputTokens;
             outputTokens = ragResponse.OutputTokens;
             isRelevant = ragResponse.IsRelevant;
+
+            if (ragResponse.Citations is { Count: > 0 })
+            {
+                citations = ragResponse.Citations
+                    .Select(c => new ChatCitationDto(
+                        c.DocumentId,
+                        c.Source,
+                        c.Content.Length > 300 ? c.Content[..300] + "…" : c.Content,
+                        c.PageNumber,
+                        c.Relevance,
+                        c.MatchType))
+                    .ToList();
+            }
         }
         else
         {
@@ -190,7 +204,8 @@ public sealed class AIChatService : IAIChatService
             created.Content,
             created.CreatedAt,
             created.UpdatedAt,
-            isRelevant);
+            isRelevant,
+            citations);
     }
 
     public async Task<ChatSessionDocumentResponseDto> AddDocumentAsync(Guid sessionId, Guid documentId, Guid userId, CancellationToken ct = default)
