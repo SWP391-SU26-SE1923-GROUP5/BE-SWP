@@ -1,5 +1,4 @@
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
-using AIStudyHub.Business.Workers;
 using Microsoft.OpenApi.Models;
 using AIStudyHub.API.Extensions;
 using AIStudyHub.Business.Hubs;
@@ -74,12 +73,6 @@ builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.O
 
 builder.Services.Configure<DocumentStorageOptions>(builder.Configuration.GetSection("DocumentStorage"));
 builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<DocumentStorageOptions>>().Value);
-
-builder.Services.AddHostedService<UnverifiedAccountCleanupService>();
-builder.Services.AddHostedService<TierExpirationCleanupService>();
-builder.Services.AddHostedService<DailyStreakResetWorker>();
-builder.Services.AddHostedService<StreakWarningWorker>();
-builder.Services.AddHostedService<QuotaWarningWorker>();
 
 builder.Services.AddHttpClient("EmbeddingClient");
 builder.Services.AddHttpClient("VectorStoreClient");

@@ -26,6 +26,19 @@ namespace AIStudyHub.Business.Services;
 
 public static class BusinessServiceExtensions
 {
+    public static IServiceCollection AddBusinessHostedServices(this IServiceCollection services)
+    {
+        services.AddHostedService<DocumentBackgroundProcessor>();
+        services.AddHostedService<TierExpiryWorker>();
+        services.AddHostedService<UnverifiedAccountCleanupService>();
+        services.AddHostedService<TierExpirationCleanupService>();
+        services.AddHostedService<DailyStreakResetWorker>();
+        services.AddHostedService<StreakWarningWorker>();
+        services.AddHostedService<QuotaWarningWorker>();
+
+        return services;
+    }
+
     public static IServiceCollection AddBusinessServices(this IServiceCollection services, Microsoft.Extensions.Configuration.IConfiguration configuration)
     {
         services.AddMediatR(configuration =>
@@ -73,17 +86,7 @@ public static class BusinessServiceExtensions
         // Channel-based queue for background document processing
         services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>();
 
-        // Background processor for document queue
-        services.AddHostedService<DocumentBackgroundProcessor>();
-
-        // Plan C4 — daily scan for upcoming tier expirations (Plan B.3.2)
-        services.AddHostedService<TierExpiryWorker>();
-
-        // Phase 3a: notify users with active streaks that they're about to break (12:00 UTC)
-        services.AddHostedService<StreakWarningWorker>();
-
-        // Phase 3a: warn users approaching AI token quota (09:00 UTC)
-        services.AddHostedService<QuotaWarningWorker>();
+        services.AddBusinessHostedServices();
 
         // L3: Search Services
         services.Configure<RetrievalOptions>(configuration.GetSection("Retrieval"));
