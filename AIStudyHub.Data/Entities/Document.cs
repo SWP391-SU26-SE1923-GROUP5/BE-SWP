@@ -16,6 +16,11 @@ public sealed class Document : BaseEntity
     public DocumentStatus? Status { get; set; }
     public bool IsNonFlaggable { get; set; } = false;
     public bool? IsOcrApplied { get; set; }
+    public int ProcessingVersion { get; set; } = 1;
+    public Guid? ReindexClaimId { get; set; }
+    public DateTime? ReindexClaimedAt { get; set; }
+    public int ReindexAttemptCount { get; set; }
+    public string? LastReindexError { get; set; }
 
     /// <summary>Soft-delete state machine: Active -> Trashed -> Purged.</summary>
     public DocumentLifecycleStatus LifecycleStatus { get; set; } = DocumentLifecycleStatus.Active;

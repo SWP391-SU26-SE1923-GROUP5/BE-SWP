@@ -29,6 +29,7 @@ public static class BusinessServiceExtensions
     public static IServiceCollection AddBusinessHostedServices(this IServiceCollection services)
     {
         services.AddHostedService<DocumentBackgroundProcessor>();
+        services.AddHostedService<DocumentReindexWorker>();
         services.AddHostedService<TierExpiryWorker>();
         services.AddHostedService<UnverifiedAccountCleanupService>();
         services.AddHostedService<TierExpirationCleanupService>();
@@ -67,6 +68,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<IQuizSubmissionService, QuizSubmissionService>();
         services.AddScoped<INotificationService, NotificationService>();
         services.Configure<OtpOptions>(configuration.GetSection("Otp"));
+        services.Configure<DocumentReindexOptions>(configuration.GetSection(DocumentReindexOptions.SectionName));
         services.Configure<AIStudyHub.Business.Options.VnPayOptions>(configuration.GetSection(AIStudyHub.Business.Options.VnPayOptions.SectionName));
         services.AddScoped<IVnPayService, VnPayService>();
         services.AddScoped<IPaymentService, PaymentService>();
@@ -82,6 +84,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<ITokenTrackerService, TokenTrackerService>();
         services.AddScoped<ITokenWalletService, TokenWalletService>();
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
+        services.AddScoped<IDocumentReindexClaimService, DocumentReindexClaimService>();
 
         // Channel-based queue for background document processing
         services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>();

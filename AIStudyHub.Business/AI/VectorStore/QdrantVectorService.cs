@@ -174,6 +174,39 @@ public sealed class QdrantVectorService : IVectorStoreService
         }
     }
 
+    public async Task DeleteDocumentVectorsExceptRunAsync(Guid documentId, Guid successfulRunId)
+    {
+        await _client.DeleteAsync(
+            _options.CollectionName,
+            new Filter
+            {
+                Must = { MatchKeyword("documentId", documentId.ToString()) },
+                MustNot = { MatchKeyword("indexRunId", successfulRunId.ToString()) }
+            });
+
+        _logger.LogInformation(
+            "Deleted stale vector runs for document {DocumentId}; retained run {IndexRunId}",
+            documentId, successfulRunId);
+    }
+
+    public async Task DeleteDocumentVectorsByRunAsync(Guid documentId, Guid indexRunId)
+    {
+        await _client.DeleteAsync(
+            _options.CollectionName,
+            new Filter
+            {
+                Must =
+                {
+                    MatchKeyword("documentId", documentId.ToString()),
+                    MatchKeyword("indexRunId", indexRunId.ToString())
+                }
+            });
+
+        _logger.LogInformation(
+            "Deleted incomplete vector run {IndexRunId} for document {DocumentId}",
+            indexRunId, documentId);
+    }
+
     public async Task EnsureCollectionExistsAsync()
     {
         try

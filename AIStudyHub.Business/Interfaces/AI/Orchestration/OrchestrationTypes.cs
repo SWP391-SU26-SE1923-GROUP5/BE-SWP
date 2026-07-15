@@ -33,5 +33,7 @@ public record CitationInfo(
     string Content,
     double Relevance,
     int? PageNumber,
-    string MatchType
+    string MatchType,
+    bool IsHighlightable = false,
+    string? Reason = "legacy_unclassified"
 );

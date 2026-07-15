@@ -13,6 +13,7 @@ using PdfDocument = UglyToad.PdfPig.PdfDocument;
 using WpDrawing = DocumentFormat.OpenXml.Wordprocessing.Drawing;
 using DocProperties = DocumentFormat.OpenXml.Drawing.Wordprocessing.DocProperties;
 using AIStudyHub.Business.DTOs.Documents;
+using AIStudyHub.Business.Enums;
 
 
 namespace AIStudyHub.Business.Services;
@@ -58,6 +59,88 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
             "jpg" or "png" or "jpeg" or "webp" or "gif" => ExtractTextFromImage(fileContent, extension),
             _ => throw new NotSupportedException($"File type '.{extension}' is not supported.")
         };
+    }
+
+    public async Task<IReadOnlyList<ExtractedTextSegment>> ExtractSegmentsAsync(
+        byte[] fileContent,
+        string fileExtension)
+    {
+        var extension = fileExtension.ToLowerInvariant().TrimStart('.');
+        var extracted = await ExtractTextAsync(fileContent, fileExtension);
+        if (string.IsNullOrWhiteSpace(extracted) || IsBackendErrorMarker(extracted.Trim()))
+            return Array.Empty<ExtractedTextSegment>();
+
+        return extension switch
+        {
+            "pdf" => ParsePageSegments(extracted),
+            "docx" => ParseDocxSegments(extracted),
+            "jpg" or "png" or "jpeg" or "webp" or "gif" =>
+                [new ExtractedTextSegment(extracted, DocumentContentType.Ocr, null, false)],
+            _ => [new ExtractedTextSegment(extracted, DocumentContentType.Verbatim, null, true)]
+        };
+    }
+
+    private static IReadOnlyList<ExtractedTextSegment> ParsePageSegments(string text)
+    {
+        var result = new List<ExtractedTextSegment>();
+        var current = new StringBuilder();
+        int? page = null;
+
+        foreach (var line in Regex.Split(text, @"\r?\n"))
+        {
+            if (IsPageMarker(line.Trim()))
+            {
+                AddCurrentPage();
+                page = ParsePageMarker(line.Trim());
+                continue;
+            }
+            current.AppendLine(line);
+        }
+        AddCurrentPage();
+        return result;
+
+        void AddCurrentPage()
+        {
+            var value = current.ToString().Trim();
+            if (!string.IsNullOrWhiteSpace(value) && !IsBackendErrorMarker(value))
+                result.Add(new ExtractedTextSegment(value, DocumentContentType.Verbatim, page, true));
+            current.Clear();
+        }
+    }
+
+    private static IReadOnlyList<ExtractedTextSegment> ParseDocxSegments(string text)
+    {
+        var result = new List<ExtractedTextSegment>();
+        var current = new StringBuilder();
+        var type = DocumentContentType.Verbatim;
+
+        foreach (var line in Regex.Split(text, @"\r?\n"))
+        {
+            var trimmed = line.Trim();
+            var nextType = trimmed.StartsWith("[Diagram:", StringComparison.OrdinalIgnoreCase)
+                ? DocumentContentType.AltText
+                : Regex.IsMatch(trimmed, @"^\[--- Image \d+ ---\]$", RegexOptions.IgnoreCase)
+                    ? DocumentContentType.Ocr
+                    : type;
+
+            if (nextType != type)
+            {
+                AddCurrent();
+                type = nextType;
+            }
+            if (!IsTechnicalMarker(trimmed) && !IsBackendErrorMarker(trimmed))
+                current.AppendLine(line);
+        }
+        AddCurrent();
+        return result;
+
+        void AddCurrent()
+        {
+            var value = current.ToString().Trim();
+            if (!string.IsNullOrWhiteSpace(value))
+                result.Add(new ExtractedTextSegment(value, type, null, type == DocumentContentType.Verbatim));
+            current.Clear();
+        }
     }
 
     public Task<List<DocumentChunkDto>> ChunkTextAsync(string text, int chunkSize, int overlap, bool preserveTables = true)
@@ -123,6 +206,75 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
 
         return Task.FromResult(chunks);
     }
+
+    public async Task<List<DocumentChunkDto>> ChunkSegmentsAsync(
+        IReadOnlyList<ExtractedTextSegment> segments,
+        int chunkSize,
+        int overlap,
+        bool preserveTables = true)
+    {
+        var chunks = new List<DocumentChunkDto>();
+        var groups = new List<(DocumentContentType Type, int? Page, bool Highlightable, StringBuilder Text)>();
+
+        foreach (var segment in segments)
+        {
+            if (segment.ContentType == DocumentContentType.SystemError)
+                continue;
+
+            var sanitized = SanitizeSegmentText(segment.Text);
+            if (string.IsNullOrWhiteSpace(sanitized))
+                continue;
+
+            var current = groups.LastOrDefault();
+            if (current.Text is null || current.Type != segment.ContentType
+                || current.Page != segment.PageNumber
+                || current.Highlightable != segment.IsHighlightable)
+            {
+                current = (segment.ContentType, segment.PageNumber, segment.IsHighlightable, new StringBuilder());
+                groups.Add(current);
+            }
+
+            if (current.Text.Length > 0)
+                current.Text.AppendLine();
+            current.Text.Append(sanitized);
+        }
+
+        foreach (var group in groups)
+        {
+            var groupChunks = await ChunkTextAsync(group.Text.ToString(), chunkSize, overlap, preserveTables);
+            foreach (var chunk in groupChunks)
+            {
+                chunk.PageNumber = group.Page;
+                chunk.ContentType = group.Type;
+                chunk.IsHighlightable = group.Highlightable;
+                chunks.Add(chunk);
+            }
+        }
+
+        return chunks;
+    }
+
+    private static string SanitizeSegmentText(string text)
+    {
+        text = Regex.Replace(text, @"\r\n|\r", "\n");
+        text = Regex.Replace(text, @"^\s*\d+\s*\|\s*Page\s+", "",
+            RegexOptions.IgnoreCase);
+        var keptLines = text.Split('\n')
+            .Select(line => Regex.Replace(line, @"[ \t]+", " ").Trim())
+            .Where(line => !IsTechnicalMarker(line))
+            .Where(line => !line.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
+            .Where(line => !IsBackendErrorMarker(line));
+
+        return Regex.Replace(string.Join("\n", keptLines), @"\n{3,}", "\n\n").Trim();
+    }
+
+    private static bool IsTechnicalMarker(string line) =>
+        Regex.IsMatch(line, @"^\[---\s+(Page|Image)\s+\d+\s+---\]$", RegexOptions.IgnoreCase);
+
+    private static bool IsBackendErrorMarker(string line) =>
+        Regex.IsMatch(line,
+            @"^\[(PDF|DOCX|OCR image) extraction failed:.*\]$|^\[Image \d+ - content not extractable:.*\]$",
+            RegexOptions.IgnoreCase);
 
     private static bool IsPageMarker(string line) => line.StartsWith("[--- Page ") && line.EndsWith(" ---]");
     private static int? ParsePageMarker(string line)

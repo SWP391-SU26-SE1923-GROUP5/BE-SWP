@@ -16,6 +16,7 @@ using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.Services;
 using AIStudyHub.Business.Options;
+using AIStudyHub.Business.AI;
 
 namespace AIStudyHub.Business.Workers;
 
@@ -75,6 +76,7 @@ public class DocumentBackgroundProcessor : BackgroundService
         Guid documentId,
         Guid userId,
         string fileName,
+        Guid indexRunId,
         IServiceProvider services,
         CancellationToken ct)
     {
@@ -129,7 +131,11 @@ public class DocumentBackgroundProcessor : BackgroundService
                 { "userId", userId.ToString() },
                 { "text", chunkText },
                 { "fileName", fileName },
-                { "chunkIndex", i.ToString() }
+                { "chunkIndex", i.ToString() },
+                { "contentType", chunk.ContentType.ToString() },
+                { "isHighlightable", chunk.IsHighlightable.ToString() },
+                { "processingVersion", DocumentIngestionVersion.Current.ToString() },
+                { "indexRunId", indexRunId.ToString() }
             };
             if (chunk.PageNumber.HasValue)
             {
@@ -174,6 +180,8 @@ public class DocumentBackgroundProcessor : BackgroundService
         var unitOfWork = services.GetRequiredService<IUnitOfWork>();
         var logger = services.GetRequiredService<ILogger<DocumentBackgroundProcessor>>();
         var realTimeNotifier = services.GetService<IRealTimeNotificationService>();
+        var indexRunId = request.IndexRunId ?? Guid.NewGuid();
+        var indexed = false;
 
         try
         {
@@ -193,7 +201,8 @@ public class DocumentBackgroundProcessor : BackgroundService
                 logger.LogInformation("Document {DocumentId}: Detected as scanned PDF, using OCR",
                     request.DocumentId);
 
-                var ocrText = await documentProcessing.ExtractTextAsync(fileContent, extension);
+                var segments = await documentProcessing.ExtractSegmentsAsync(fileContent, extension);
+                var ocrText = string.Join("\n", segments.Select(segment => segment.Text));
 
                 if (string.IsNullOrWhiteSpace(ocrText) || ocrText.Length < 10)
                 {
@@ -206,14 +215,15 @@ public class DocumentBackgroundProcessor : BackgroundService
                     request.DocumentId, ocrText.Length);
 
                 var summaryChunk = await GenerateDocumentSummaryAsync(ocrText, openAiService, logger, ct);
-                var chunks = await documentProcessing.ChunkTextAsync(ocrText, ragOptions.ChunkSize, ragOptions.ChunkOverlap);
-                if (!string.IsNullOrWhiteSpace(summaryChunk))
-                    chunks.Insert(0, new DocumentChunkDto { Text = summaryChunk, PageNumber = null });
+                var chunks = await DocumentChunkAssembler.AssembleAsync(
+                    documentProcessing, segments, summaryChunk,
+                    ragOptions.ChunkSize, ragOptions.ChunkOverlap);
 
                 logger.LogInformation("Document {DocumentId}: Split into {ChunkCount} chunks",
                     request.DocumentId, chunks.Count);
 
-                await EmbedChunksAsync(chunks, request.DocumentId, request.UserId, request.FileName, services, ct);
+                await EmbedChunksAsync(chunks, request.DocumentId, request.UserId, request.FileName, indexRunId, services, ct);
+                indexed = true;
 
                 logger.LogInformation("Document {DocumentId}: Scanned PDF processed. {ChunkCount} chunks upserted",
                     request.DocumentId, chunks.Count);
@@ -224,7 +234,8 @@ public class DocumentBackgroundProcessor : BackgroundService
                 logger.LogInformation("Document {DocumentId}: Processing DOCX with ExtractTextAsync (includes tables + image OCR)",
                     request.DocumentId);
 
-                var docxText = await documentProcessing.ExtractTextAsync(fileContent, extension);
+                var segments = await documentProcessing.ExtractSegmentsAsync(fileContent, extension);
+                var docxText = string.Join("\n", segments.Select(segment => segment.Text));
 
                 if (string.IsNullOrWhiteSpace(docxText) || docxText.Length < 10)
                 {
@@ -237,14 +248,15 @@ public class DocumentBackgroundProcessor : BackgroundService
                     request.DocumentId, docxText.Length);
 
                 var summaryChunk = await GenerateDocumentSummaryAsync(docxText, openAiService, logger, ct);
-                var chunks = await documentProcessing.ChunkTextAsync(docxText, ragOptions.ChunkSize, ragOptions.ChunkOverlap);
-                if (!string.IsNullOrWhiteSpace(summaryChunk))
-                    chunks.Insert(0, new DocumentChunkDto { Text = summaryChunk, PageNumber = null });
+                var chunks = await DocumentChunkAssembler.AssembleAsync(
+                    documentProcessing, segments, summaryChunk,
+                    ragOptions.ChunkSize, ragOptions.ChunkOverlap);
 
                 logger.LogInformation("Document {DocumentId}: Split into {ChunkCount} chunks",
                     request.DocumentId, chunks.Count);
 
-                await EmbedChunksAsync(chunks, request.DocumentId, request.UserId, request.FileName, services, ct);
+                await EmbedChunksAsync(chunks, request.DocumentId, request.UserId, request.FileName, indexRunId, services, ct);
+                indexed = true;
 
                 logger.LogInformation("Document {DocumentId}: DOCX processed. {ChunkCount} chunks upserted",
                     request.DocumentId, chunks.Count);
@@ -255,7 +267,8 @@ public class DocumentBackgroundProcessor : BackgroundService
                 logger.LogInformation("Document {DocumentId}: Processing as text document with direct extraction",
                     request.DocumentId);
 
-                var text = await documentProcessing.ExtractTextAsync(fileContent, extension);
+                var segments = await documentProcessing.ExtractSegmentsAsync(fileContent, extension);
+                var text = string.Join("\n", segments.Select(segment => segment.Text));
 
                 if (string.IsNullOrWhiteSpace(text) || text.Length < 10)
                 {
@@ -268,14 +281,15 @@ public class DocumentBackgroundProcessor : BackgroundService
                     request.DocumentId, text.Length);
 
                 var summaryChunk = await GenerateDocumentSummaryAsync(text, openAiService, logger, ct);
-                var chunks = await documentProcessing.ChunkTextAsync(text, ragOptions.ChunkSize, ragOptions.ChunkOverlap);
-                if (!string.IsNullOrWhiteSpace(summaryChunk))
-                    chunks.Insert(0, new DocumentChunkDto { Text = summaryChunk, PageNumber = null });
+                var chunks = await DocumentChunkAssembler.AssembleAsync(
+                    documentProcessing, segments, summaryChunk,
+                    ragOptions.ChunkSize, ragOptions.ChunkOverlap);
 
                 logger.LogInformation("Document {DocumentId}: Split into {ChunkCount} chunks",
                     request.DocumentId, chunks.Count);
 
-                await EmbedChunksAsync(chunks, request.DocumentId, request.UserId, request.FileName, services, ct);
+                await EmbedChunksAsync(chunks, request.DocumentId, request.UserId, request.FileName, indexRunId, services, ct);
+                indexed = true;
 
                 logger.LogInformation("Document {DocumentId}: Text document processed. {ChunkCount} chunks upserted",
                     request.DocumentId, chunks.Count);
@@ -285,7 +299,8 @@ public class DocumentBackgroundProcessor : BackgroundService
                 logger.LogInformation("Document {DocumentId}: Processing image file {FileName} via OCR",
                     request.DocumentId, request.FileName);
 
-                var text = await documentProcessing.ExtractTextAsync(fileContent, extension);
+                var segments = await documentProcessing.ExtractSegmentsAsync(fileContent, extension);
+                var text = string.Join("\n", segments.Select(segment => segment.Text));
                 if (string.IsNullOrWhiteSpace(text) || text.Length < 10)
                 {
                     throw new InvalidOperationException(
@@ -297,14 +312,15 @@ public class DocumentBackgroundProcessor : BackgroundService
                     request.DocumentId, text.Length);
 
                 var summaryChunk = await GenerateDocumentSummaryAsync(text, openAiService, logger, ct);
-                var chunks = await documentProcessing.ChunkTextAsync(text, ragOptions.ChunkSize, ragOptions.ChunkOverlap);
-                if (!string.IsNullOrWhiteSpace(summaryChunk))
-                    chunks.Insert(0, new DocumentChunkDto { Text = summaryChunk, PageNumber = null });
+                var chunks = await DocumentChunkAssembler.AssembleAsync(
+                    documentProcessing, segments, summaryChunk,
+                    ragOptions.ChunkSize, ragOptions.ChunkOverlap);
 
                 logger.LogInformation("Document {DocumentId}: Split into {ChunkCount} chunks",
                     request.DocumentId, chunks.Count);
 
-                await EmbedChunksAsync(chunks, request.DocumentId, request.UserId, request.FileName, services, ct);
+                await EmbedChunksAsync(chunks, request.DocumentId, request.UserId, request.FileName, indexRunId, services, ct);
+                indexed = true;
 
                 logger.LogInformation("Document {DocumentId}: OCR image processing complete. "
                     + "{ChunkCount} chunks upserted to Qdrant", request.DocumentId, chunks.Count);
@@ -319,12 +335,30 @@ public class DocumentBackgroundProcessor : BackgroundService
                     request.DocumentId, extension);
             }
 
-            // Update document status in database
             var document = await unitOfWork.Documents.GetByIdAsync(request.DocumentId, ct);
+            if (request.IsReindex
+                && (document == null || !request.ReindexClaimId.HasValue
+                    || document.ReindexClaimId != request.ReindexClaimId))
+            {
+                throw new InvalidOperationException("The document reindex claim is no longer current.");
+            }
+
+            if (indexed)
+            {
+                var vectorStore = services.GetRequiredService<IVectorStoreService>();
+                await vectorStore.DeleteDocumentVectorsExceptRunAsync(request.DocumentId, indexRunId);
+            }
+
+            // Update document status in database
             if (document != null)
             {
                 document.Status = DocumentStatus.Done;
                 document.ErrorMessage = null;
+                if (indexed)
+                    document.ProcessingVersion = DocumentIngestionVersion.Current;
+                document.ReindexClaimId = null;
+                document.ReindexClaimedAt = null;
+                document.LastReindexError = null;
                 document.UpdatedAt = DateTime.UtcNow;
                 unitOfWork.Documents.Update(document);
                 await unitOfWork.SaveChangesAsync(ct);
@@ -362,11 +396,39 @@ public class DocumentBackgroundProcessor : BackgroundService
         }
         catch (Exception ex)
         {
+            try
+            {
+                var vectorStore = services.GetRequiredService<IVectorStoreService>();
+                await vectorStore.DeleteDocumentVectorsByRunAsync(request.DocumentId, indexRunId);
+            }
+            catch (Exception cleanupEx)
+            {
+                logger.LogWarning(cleanupEx,
+                    "Could not remove incomplete vector run {IndexRunId} for document {DocumentId}",
+                    indexRunId, request.DocumentId);
+            }
+
             var document = await unitOfWork.Documents.GetByIdAsync(request.DocumentId, ct);
             if (document != null)
             {
-                document.Status = DocumentStatus.Failed;
-                document.ErrorMessage = $"{ex.GetType().Name}: {ex.Message}";
+                var error = $"{ex.GetType().Name}: {ex.Message}";
+                if (request.IsReindex)
+                {
+                    // A reindex failure must not make the already-usable legacy document unavailable.
+                    document.Status = DocumentStatus.Done;
+                    if (request.ReindexClaimId.HasValue
+                        && document.ReindexClaimId == request.ReindexClaimId)
+                    {
+                        document.ReindexClaimId = null;
+                        document.ReindexClaimedAt = null;
+                        document.LastReindexError = error.Length > 2000 ? error[..2000] : error;
+                    }
+                }
+                else
+                {
+                    document.Status = DocumentStatus.Failed;
+                    document.ErrorMessage = error;
+                }
                 document.UpdatedAt = DateTime.UtcNow;
                 unitOfWork.Documents.Update(document);
                 await unitOfWork.SaveChangesAsync(ct);
@@ -374,7 +436,7 @@ public class DocumentBackgroundProcessor : BackgroundService
 
             logger.LogError(ex, "Failed to process document {DocumentId}", request.DocumentId);
 
-            if (realTimeNotifier is not null)
+            if (!request.IsReindex && realTimeNotifier is not null)
             {
                 try
                 {

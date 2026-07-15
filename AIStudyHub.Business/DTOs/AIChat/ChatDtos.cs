@@ -17,7 +17,9 @@ public sealed record ChatCitationDto(
     string Snippet,
     int? PageNumber,
     double Relevance,
-    string MatchType);
+    string MatchType,
+    bool IsHighlightable = false,
+    string? Reason = "legacy_unclassified");
 
 public sealed record CreateChatMessageRequestDto(Guid? SessionId, string Message);
 

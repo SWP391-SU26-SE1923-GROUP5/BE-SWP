@@ -20,6 +20,7 @@ public class BusinessHostedServiceRegistrationTests
         var expectedWorkerTypes = new[]
         {
             typeof(DocumentBackgroundProcessor),
+            typeof(DocumentReindexWorker),
             typeof(TierExpiryWorker),
             typeof(UnverifiedAccountCleanupService),
             typeof(TierExpirationCleanupService),
@@ -28,7 +29,7 @@ public class BusinessHostedServiceRegistrationTests
             typeof(QuotaWarningWorker)
         };
 
-        Assert.Equal(7, hostedServices.Count);
+        Assert.Equal(expectedWorkerTypes.Length, hostedServices.Count);
         foreach (var workerType in expectedWorkerTypes)
         {
             Assert.Single(hostedServices, descriptor => descriptor.ImplementationType == workerType);

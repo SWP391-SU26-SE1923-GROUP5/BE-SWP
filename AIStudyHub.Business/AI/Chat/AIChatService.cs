@@ -166,7 +166,9 @@ public sealed class AIChatService : IAIChatService
                         c.Content.Length > 300 ? c.Content[..300] + "…" : c.Content,
                         c.PageNumber,
                         c.Relevance,
-                        c.MatchType))
+                        c.MatchType,
+                        c.IsHighlightable,
+                        c.Reason))
                     .ToList();
             }
         }

@@ -187,8 +187,8 @@ public class AIChatServiceTests : IDisposable
                 "answer",
                 new List<CitationInfo>
                 {
-                    new(firstDocumentId, "abc.pdf", longContent, 0.91, 3, "hybrid"),
-                    new(secondDocumentId, "abc (1).pdf", "short", 0.82, null, "semantic")
+                    new(firstDocumentId, "abc.pdf", longContent, 0.91, 3, "hybrid", true, null),
+                    new(secondDocumentId, "abc (1).pdf", "short", 0.82, null, "semantic", false, "legacy_unclassified")
                 },
                 0.9,
                 10,
@@ -208,6 +208,8 @@ public class AIChatServiceTests : IDisposable
                 Assert.Equal(3, first.PageNumber);
                 Assert.Equal(0.91, first.Relevance);
                 Assert.Equal("hybrid", first.MatchType);
+                Assert.True(first.IsHighlightable);
+                Assert.Null(first.Reason);
             },
             second =>
             {
@@ -217,6 +219,8 @@ public class AIChatServiceTests : IDisposable
                 Assert.Null(second.PageNumber);
                 Assert.Equal(0.82, second.Relevance);
                 Assert.Equal("semantic", second.MatchType);
+                Assert.False(second.IsHighlightable);
+                Assert.Equal("legacy_unclassified", second.Reason);
             });
     }
 
