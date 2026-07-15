@@ -7,4 +7,6 @@ public class RetrievalOptions
     public bool UseHybridSearch { get; set; } = true;
     public bool UseReranking { get; set; } = true;
     public double RerankThreshold { get; set; } = 0.3;
+    public int ExhaustiveAdjacentChunkWindow { get; set; } = 2;
+    public int MaxContextChunks { get; set; } = 50;
 }

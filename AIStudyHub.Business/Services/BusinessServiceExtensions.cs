@@ -96,6 +96,8 @@ public static class BusinessServiceExtensions
         services.AddSingleton<ISparseVectorGenerator, Bm25SparseGenerator>();
         services.AddScoped<IHybridSearchService, HybridSearchService>();
         services.AddScoped<IRerankingService, RerankingService>();
+        services.AddScoped<RagContextExpander>();
+        services.AddScoped<RagRetrievalPipeline>();
 
         // L4: SK Orchestrator
         services.Configure<SemanticKernelOptions>(configuration.GetSection("SemanticKernel"));
