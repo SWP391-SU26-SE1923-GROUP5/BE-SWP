@@ -14,37 +14,60 @@ public sealed class RagContextExpanderTests
     [InlineData("Hãy liệt kê toàn bộ business rules")]
     [InlineData("Cho tôi tất cả các yêu cầu")]
     [InlineData("List all business rules")]
-    [InlineData("liệt kê các bussiness rule")]
-    [InlineData("liệt kê các business rules của dự án này")]
     public void IsExhaustiveQuery_RecognizesCompleteListIntent(string question)
     {
         Assert.True(RagContextExpander.IsExhaustiveQuery(question));
     }
 
-    [Fact]
-    public async Task ExpandAsync_ExhaustiveQuery_AddsAdjacentChunksInDocumentOrder()
+    [Theory]
+    [InlineData("liệt kê các bussiness rule")]
+    [InlineData("liệt kê các actors trong tài liệu")]
+    [InlineData("List API endpoints")]
+    [InlineData("Kể ra các rủi ro của dự án")]
+    public void IsExhaustiveQuery_UnboundedListIntent_IsGenericAcrossTopics(string question)
     {
-        var documentId = Guid.NewGuid();
-        var seeds = new[]
-        {
-            Result(documentId, 1, "Document overview", 1),
-            Result(documentId, 4, "BR-04 on page 8", 8)
-        };
-        _vectors.Setup(x => x.GetPayloadsByDocumentIdAsync(documentId)).ReturnsAsync(
-            new[] { Payload(documentId, 1, "Unrelated introduction", 1) }
-                .Concat(Enumerable.Range(3, 14)
-                .Select(index => Payload(
-                    documentId, index, $"BR-{index:D2} rule", index < 8 ? 8 : index < 13 ? 9 : 10)))
-                .Append(Payload(documentId, 20, "Unrelated appendix", 12))
-                .ToList());
+        Assert.True(RagContextExpander.IsExhaustiveQuery(question));
+    }
+
+    [Theory]
+    [InlineData("liệt kê 5 business rules")]
+    [InlineData("list top 3 actors")]
+    [InlineData("enumerate 10 API endpoints")]
+    public void IsExhaustiveQuery_ExplicitlyLimitedList_DoesNotScanCompleteSection(string question)
+    {
+        Assert.False(RagContextExpander.IsExhaustiveQuery(question));
+    }
+
+    [Fact]
+    public async Task ExpandAsync_ExhaustiveQuery_LoadsAllSelectedDocumentsInOrder()
+    {
+        var firstDocumentId = Guid.NewGuid();
+        var secondDocumentId = Guid.NewGuid();
+        var seeds = new[] { Result(firstDocumentId, 1, "semantic seed", 1) };
+        _vectors.Setup(x => x.GetPayloadsByDocumentIdAsync(firstDocumentId)).ReturnsAsync(
+        [
+            Payload(firstDocumentId, 2, "second chunk", 2),
+            Payload(firstDocumentId, 1, "first chunk", 1),
+            Payload(firstDocumentId, 3, "generated summary", 2, "Summary")
+        ]);
+        _vectors.Setup(x => x.GetPayloadsByDocumentIdAsync(secondDocumentId)).ReturnsAsync(
+        [
+            Payload(secondDocumentId, 1, "actor without a structured identifier", 4),
+            Payload(secondDocumentId, 2, "extraction failure", 4, "SystemError")
+        ]);
         var expander = new RagContextExpander(_vectors.Object);
 
         var results = await expander.ExpandAsync(
-            "Liệt kê toàn bộ business rules", seeds, adjacentWindow: 1, maxChunks: 20);
+            "Liệt kê các nội dung trong tài liệu",
+            seeds,
+            [firstDocumentId, secondDocumentId],
+            maxChunks: 20);
 
-        Assert.Equal(Enumerable.Range(3, 14), results.Select(GetChunkIndex));
-        Assert.Contains(results, r => GetChunkIndex(r) == 8 && r.Metadata["pageNumber"] == "9");
-        Assert.DoesNotContain(results, r => r.Content.Contains("appendix"));
+        Assert.Equal(
+            ["first chunk", "second chunk", "actor without a structured identifier"],
+            results.Select(result => result.Content));
+        _vectors.Verify(x => x.GetPayloadsByDocumentIdAsync(firstDocumentId), Times.Once);
+        _vectors.Verify(x => x.GetPayloadsByDocumentIdAsync(secondDocumentId), Times.Once);
     }
 
     [Fact]
@@ -54,7 +77,7 @@ public sealed class RagContextExpanderTests
         var seed = Result(documentId, 4, "BR-04", 8);
         var expander = new RagContextExpander(_vectors.Object);
 
-        var results = await expander.ExpandAsync("BR-04 là gì?", [seed], 2, 10);
+        var results = await expander.ExpandAsync("BR-04 là gì?", [seed], [documentId], 10);
 
         Assert.Single(results);
         _vectors.Verify(x => x.GetPayloadsByDocumentIdAsync(It.IsAny<Guid>()), Times.Never);
@@ -64,14 +87,14 @@ public sealed class RagContextExpanderTests
         new(text, 0.9, "srs.pdf", Payload(documentId, chunkIndex, text, page));
 
     private static Dictionary<string, string> Payload(
-        Guid documentId, int chunkIndex, string text, int page) => new()
+        Guid documentId, int chunkIndex, string text, int page, string contentType = "Verbatim") => new()
         {
             ["documentId"] = documentId.ToString(),
             ["chunkIndex"] = chunkIndex.ToString(),
             ["text"] = text,
             ["fileName"] = "srs.pdf",
             ["pageNumber"] = page.ToString(),
-            ["contentType"] = "Verbatim",
+            ["contentType"] = contentType,
             ["isHighlightable"] = "True"
         };
 

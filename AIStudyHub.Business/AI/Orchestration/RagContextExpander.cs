@@ -20,83 +20,52 @@ public sealed class RagContextExpander
         if (string.IsNullOrWhiteSpace(question))
             return false;
 
-        return ExhaustivePhrases.Any(phrase =>
-                question.Contains(phrase, StringComparison.OrdinalIgnoreCase))
-            || Regex.IsMatch(
-                question,
-                @"\b(liệt\s+kê|list)\b.*\bbus+iness\s+rules?\b",
-                RegexOptions.IgnoreCase);
+        var hasListIntent = Regex.IsMatch(
+            question,
+            @"\b(liệt\s+kê|kể\s+ra|list|enumerate)\b",
+            RegexOptions.IgnoreCase);
+        var hasExplicitLimit = Regex.IsMatch(
+            question,
+            @"\b(liệt\s+kê|kể\s+ra|list|enumerate)\s+(?:top\s+)?\d+\b",
+            RegexOptions.IgnoreCase);
+
+        if (hasExplicitLimit)
+            return false;
+
+        return hasListIntent || ExhaustivePhrases.Any(phrase =>
+            question.Contains(phrase, StringComparison.OrdinalIgnoreCase));
     }
 
     public async Task<List<SearchResult>> ExpandAsync(
         string question,
         IReadOnlyList<SearchResult> rankedResults,
-        int adjacentWindow,
+        IReadOnlyList<Guid>? documentIds,
         int maxChunks)
     {
         var limit = Math.Max(1, maxChunks);
         if (!IsExhaustiveQuery(question))
             return rankedResults.Take(limit).ToList();
 
+        var selectedDocumentIds = documentIds is { Count: > 0 }
+            ? documentIds.Distinct().ToList()
+            : rankedResults
+                .Select(result => GetDocumentId(result.Metadata))
+                .Where(documentId => documentId.HasValue)
+                .Select(documentId => documentId!.Value)
+                .Distinct()
+                .ToList();
         var expanded = new List<(int DocumentOrder, int ChunkIndex, SearchResult Result)>();
-        var excludedSeedKeys = new HashSet<string>(StringComparer.Ordinal);
-        var documentOrder = 0;
+        var fallbackScore = rankedResults.Count > 0 ? rankedResults.Max(result => result.Score) : 1d;
 
-        foreach (var group in rankedResults
-            .Select(result => (Result: result, DocumentId: GetDocumentId(result.Metadata)))
-            .Where(item => item.DocumentId.HasValue)
-            .GroupBy(item => item.DocumentId!.Value))
+        for (var documentOrder = 0; documentOrder < selectedDocumentIds.Count; documentOrder++)
         {
-            var seedIndexes = group
-                .Select(item => GetChunkIndex(item.Result.Metadata))
-                .Where(index => index.HasValue)
-                .Select(index => index!.Value)
-                .ToHashSet();
-            var seedScore = group.Max(item => item.Result.Score);
-            var payloads = await _vectorStore.GetPayloadsByDocumentIdAsync(group.Key);
-            var firstChunk = seedIndexes.Min() - Math.Max(0, adjacentWindow);
-            var lastChunk = seedIndexes.Max() + Math.Max(0, adjacentWindow);
-            var structuredPrefixes = group
-                .SelectMany(item => Regex.Matches(
-                    item.Result.Content, @"\b([A-Z]{2,10})-\d{1,4}\b", RegexOptions.IgnoreCase)
-                    .Select(match => match.Groups[1].Value))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            if (structuredPrefixes.Count > 0)
-            {
-                var matchingIndexes = payloads
-                    .Where(payload => Regex.Matches(
-                            payload.GetValueOrDefault("text", ""),
-                            @"\b([A-Z]{2,10})-\d{1,4}\b",
-                            RegexOptions.IgnoreCase)
-                        .Any(match => structuredPrefixes.Contains(match.Groups[1].Value)))
-                    .Select(GetChunkIndex)
-                    .Where(index => index.HasValue)
-                    .Select(index => index!.Value)
-                    .ToList();
-                if (matchingIndexes.Count > 0)
-                {
-                    // A structured exhaustive query should contain the complete structured
-                    // section, not unrelated semantic hits before or after that section.
-                    firstChunk = matchingIndexes.Min();
-                    lastChunk = matchingIndexes.Max();
-                    foreach (var seed in group)
-                    {
-                        var seedIndex = GetChunkIndex(seed.Result.Metadata);
-                        if (!seedIndex.HasValue
-                            || seedIndex.Value < firstChunk
-                            || seedIndex.Value > lastChunk)
-                            excludedSeedKeys.Add(BuildKey(seed.Result));
-                    }
-                }
-            }
+            var documentId = selectedDocumentIds[documentOrder];
+            var payloads = await _vectorStore.GetPayloadsByDocumentIdAsync(documentId);
 
             foreach (var payload in payloads)
             {
                 var chunkIndex = GetChunkIndex(payload);
-                if (!chunkIndex.HasValue
-                    || chunkIndex.Value < firstChunk
-                    || chunkIndex.Value > lastChunk)
+                if (!chunkIndex.HasValue)
                     continue;
 
                 var contentType = payload.GetValueOrDefault("contentType");
@@ -109,25 +78,14 @@ public sealed class RagContextExpander
 
                 expanded.Add((documentOrder, chunkIndex.Value, new SearchResult(
                     content,
-                    seedIndexes.Contains(chunkIndex.Value) ? seedScore : seedScore * 0.95,
-                    payload.GetValueOrDefault("fileName", group.First().Result.Source),
+                    fallbackScore,
+                    payload.GetValueOrDefault("fileName", string.Empty),
                     payload,
-                    seedIndexes.Contains(chunkIndex.Value) ? "semantic" : "adjacent")));
+                    "exhaustive")));
             }
-
-            documentOrder++;
         }
 
-        var expandedKeys = expanded
-            .Select(item => BuildKey(item.Result))
-            .ToHashSet(StringComparer.Ordinal);
-        var withoutDocumentMetadata = rankedResults
-            .Where(result => !expandedKeys.Contains(BuildKey(result))
-                && !excludedSeedKeys.Contains(BuildKey(result)))
-            .Select((result, index) => (DocumentOrder: int.MaxValue, ChunkIndex: index, Result: result));
-
         return expanded
-            .Concat(withoutDocumentMetadata)
             .OrderBy(item => item.DocumentOrder)
             .ThenBy(item => item.ChunkIndex)
             .Select(item => item.Result)

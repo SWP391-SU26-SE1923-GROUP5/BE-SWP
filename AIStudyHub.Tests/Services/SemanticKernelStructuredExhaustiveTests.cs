@@ -1,5 +1,6 @@
 using AIStudyHub.Business.AI.Orchestration;
 using AIStudyHub.Business.Configuration;
+using AIStudyHub.Business.DTOs.AI;
 using AIStudyHub.Business.Interfaces.AI.Guardrails;
 using AIStudyHub.Business.Interfaces.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.Orchestration;
@@ -14,7 +15,7 @@ namespace AIStudyHub.Tests.Services;
 public sealed class SemanticKernelStructuredExhaustiveTests
 {
     [Fact]
-    public async Task AskWithTrackingAsync_StructuredExhaustiveAnswer_DoesNotCallLlm()
+    public async Task AskWithTrackingAsync_ExhaustiveAnswer_UsesAllChunksWithoutStructuredIdShortcut()
     {
         var documentId = Guid.NewGuid();
         var search = new Mock<IHybridSearchService>();
@@ -28,13 +29,14 @@ public sealed class SemanticKernelStructuredExhaustiveTests
         vectors.Setup(x => x.GetPayloadsByDocumentIdAsync(documentId)).ReturnsAsync(
         [
             seed.Metadata,
-            Result(documentId, 16, "BR-02 Second rule.", 9).Metadata
+            Result(documentId, 16, "An actor without a structured identifier.", 9).Metadata
         ]);
+        openAi.Setup(x => x.SendMessageWithUsageAsync(It.IsAny<string>()))
+            .ReturnsAsync(new TokenUsageResult("Complete answer", 120, 20));
         var retrievalOptions = Options.Create(new RetrievalOptions
         {
             TopK = 50,
             RerankTopK = 10,
-            ExhaustiveAdjacentChunkWindow = 2,
             MaxContextChunks = 50
         });
         var pipeline = new RagRetrievalPipeline(
@@ -56,13 +58,16 @@ public sealed class SemanticKernelStructuredExhaustiveTests
             Mock.Of<ILogger<SemanticKernelOrchestrator>>());
 
         var response = await orchestrator.AskWithTrackingAsync(
-            Guid.NewGuid(), [documentId], "liệt kê các bussiness rule", []);
+            Guid.NewGuid(), [documentId], "liệt kê toàn bộ business rules", []);
 
-        Assert.Contains("BR-01", response.Answer);
-        Assert.Contains("BR-02", response.Answer);
-        Assert.Equal(0, response.InputTokens);
-        Assert.Equal(0, response.OutputTokens);
-        openAi.Verify(x => x.SendMessageWithUsageAsync(It.IsAny<string>()), Times.Never);
+        Assert.Equal("Complete answer", response.Answer);
+        Assert.Equal(120, response.InputTokens);
+        Assert.Equal(20, response.OutputTokens);
+        openAi.Verify(x => x.SendMessageWithUsageAsync(
+            It.Is<string>(prompt =>
+                prompt.Contains("BR-01 First rule.")
+                && prompt.Contains("An actor without a structured identifier.")
+                && prompt.Contains("Inspect every provided source chunk"))), Times.Once);
     }
 
     private static SearchResult Result(Guid documentId, int chunkIndex, string text, int page) =>

@@ -77,20 +77,9 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             return new RagResponse(combined, new(), 0.0, IsRelevant: false);
         }
 
-        if (StructuredExhaustiveAnswerBuilder.TryBuild(question, resultList, out var structuredAnswer))
-        {
-            var structuredFaithfulness = await _faithfulnessFilter.ValidateAsync(
-                structuredAnswer, resultList.Select(result => result.Content));
-            var structuredGrounding = new GroundingResult(true, 1.0, new());
-            var structuredConfidence = _confidenceScorer.Score(
-                structuredAnswer, structuredGrounding, structuredFaithfulness);
-            return new RagResponse(
-                structuredAnswer, BuildCitations(resultList), structuredConfidence, IsRelevant: true);
-        }
-
         // L4: Generate answer using Custom LLM Prompt (Avoids duplicate KernelMemory search)
         var contextBuilder = RagPromptContextBuilder.Build(resultList);
-        var exhaustiveCoverage = ExhaustiveAnswerCoverage.Analyze(question, resultList, string.Empty);
+        var exhaustiveInstruction = GetExhaustiveInstruction(question);
 
         _logger.LogInformation("RAG Context being fed to AI:\n{Context}", contextBuilder.ToString());
 
@@ -120,29 +109,13 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             QUESTION: {question}
 
-            {exhaustiveCoverage.Instruction}
+            {exhaustiveInstruction}
 
             ANSWER:
             """;
 
         var fullPrompt = $"{systemPrompt}\n\n{userPrompt}";
         var answer = await _openAiService.SendMessageAsync(fullPrompt) ?? "Xin lỗi, tôi không thể trả lời lúc này.";
-        var answerCoverage = ExhaustiveAnswerCoverage.Analyze(question, resultList, answer);
-        if (answerCoverage.MissingIds.Count > 0)
-        {
-            _logger.LogWarning("Exhaustive answer omitted IDs: {MissingIds}; retrying once",
-                string.Join(", ", answerCoverage.MissingIds));
-            answer = await _openAiService.SendMessageAsync($"""
-                {fullPrompt}
-
-                PREVIOUS_INCOMPLETE_ANSWER:
-                {answer}
-
-                MISSING_IDS: {string.Join(", ", answerCoverage.MissingIds)}
-                Rewrite the complete answer. Include every EXHAUSTIVE_REQUIRED_ID exactly once in ascending order. Use AUTHORITATIVE_CITATION_PAGE only when present; when PAGE_CITATION_AVAILABLE is false, do not mention a page or print a placeholder.
-                """) ?? answer;
-        }
-
         // L5: Guardrails
         var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
         // TODO: GroundingVerifier is too strict for short/Vietnamese answers - disabled temporarily
@@ -195,18 +168,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             return new RagResponseWithUsage(combined, new(), 0.0, 0, 0, IsRelevant: false);
         }
 
-        if (StructuredExhaustiveAnswerBuilder.TryBuild(question, resultList, out var structuredAnswer))
-        {
-            var structuredFaithfulness = await _faithfulnessFilter.ValidateAsync(
-                structuredAnswer, resultList.Select(result => result.Content));
-            var structuredGrounding = new GroundingResult(true, 1.0, new());
-            var structuredConfidence = _confidenceScorer.Score(
-                structuredAnswer, structuredGrounding, structuredFaithfulness);
-            return new RagResponseWithUsage(
-                structuredAnswer, BuildCitations(resultList), structuredConfidence,
-                InputTokens: 0, OutputTokens: 0, IsRelevant: true);
-        }
-
         // L4: Pre-check for yes/no tech questions — short-circuit if answer is clearly "Không"
         if (TryDetectNoAnswer(question, resultList, out var noAnswer))
         {
@@ -216,7 +177,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         // L4: Generate answer using Custom LLM Prompt
         var contextBuilder = RagPromptContextBuilder.Build(resultList);
-        var exhaustiveCoverage = ExhaustiveAnswerCoverage.Analyze(question, resultList, string.Empty);
+        var exhaustiveInstruction = GetExhaustiveInstruction(question);
 
         var systemPrompt = """
             You are 'AIStudyHub Assistant', a helpful and friendly AI tutor for AIStudyHub.
@@ -244,7 +205,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             QUESTION: {question}
 
-            {exhaustiveCoverage.Instruction}
+            {exhaustiveInstruction}
 
             ANSWER:
             """;
@@ -254,26 +215,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var answer = usageResult.Text ?? "Xin lỗi, tôi không thể trả lời lúc này.";
         var totalInputTokens = usageResult.InputTokens;
         var totalOutputTokens = usageResult.OutputTokens;
-        var answerCoverage = ExhaustiveAnswerCoverage.Analyze(question, resultList, answer);
-        if (answerCoverage.MissingIds.Count > 0)
-        {
-            _logger.LogWarning("Exhaustive answer omitted IDs: {MissingIds}; retrying once",
-                string.Join(", ", answerCoverage.MissingIds));
-            var retryResult = await _openAiService.SendMessageWithUsageAsync($"""
-                {fullPrompt}
-
-                PREVIOUS_INCOMPLETE_ANSWER:
-                {answer}
-
-                MISSING_IDS: {string.Join(", ", answerCoverage.MissingIds)}
-                Rewrite the complete answer. Include every EXHAUSTIVE_REQUIRED_ID exactly once in ascending order. Use AUTHORITATIVE_CITATION_PAGE only when present; when PAGE_CITATION_AVAILABLE is false, do not mention a page or print a placeholder.
-                """);
-            if (!string.IsNullOrWhiteSpace(retryResult.Text))
-                answer = retryResult.Text;
-            totalInputTokens += retryResult.InputTokens;
-            totalOutputTokens += retryResult.OutputTokens;
-        }
-
         // L5: Guardrails
         var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
         // TODO: GroundingVerifier is too strict for short/Vietnamese answers - disabled temporarily
@@ -524,6 +465,11 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
                 IsHighlightable: highlight.IsHighlightable,
                 Reason: highlight.Reason);
         }).ToList();
+
+    private static string GetExhaustiveInstruction(string question) =>
+        RagContextExpander.IsExhaustiveQuery(question)
+            ? "Inspect every provided source chunk and return every matching item. Do not sample, omit ranges, or claim completeness unless all provided chunks were considered."
+            : string.Empty;
 
     /// <summary>
     /// Fixes mojibake (UTF-8 bytes misread as Latin-1) commonly found in PDF-extracted Vietnamese text.

@@ -33,7 +33,7 @@ public sealed class RagRetrievalPipeline
         return await _contextExpander.ExpandAsync(
             question,
             seeds,
-            _options.ExhaustiveAdjacentChunkWindow,
+            documentIds,
             _options.MaxContextChunks);
     }
 }

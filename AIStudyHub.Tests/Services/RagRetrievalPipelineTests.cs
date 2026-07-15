@@ -26,7 +26,6 @@ public sealed class RagRetrievalPipelineTests
         {
             TopK = 50,
             RerankTopK = 10,
-            ExhaustiveAdjacentChunkWindow = 2,
             MaxContextChunks = 20
         });
         var pipeline = new RagRetrievalPipeline(
@@ -37,5 +36,40 @@ public sealed class RagRetrievalPipelineTests
 
         Assert.Equal(10, results.Count);
         search.VerifyAll();
+    }
+
+    [Fact]
+    public async Task RetrieveAsync_ExhaustiveQuery_DefaultLimitIncludesSixtyThreeChunkDocument()
+    {
+        var documentId = Guid.NewGuid();
+        var search = new Mock<IHybridSearchService>();
+        var vectors = new Mock<IVectorStoreService>();
+        var seed = new SearchResult("seed", 0.9, "document.pdf", new Dictionary<string, string>
+        {
+            ["documentId"] = documentId.ToString(),
+            ["chunkIndex"] = "0"
+        });
+        search.Setup(x => x.SearchAsync(
+                It.IsAny<string>(), It.IsAny<Guid>(), It.IsAny<IReadOnlyList<Guid>?>(),
+                10, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([seed]);
+        vectors.Setup(x => x.GetPayloadsByDocumentIdAsync(documentId)).ReturnsAsync(
+            Enumerable.Range(0, 63).Select(index => new Dictionary<string, string>
+            {
+                ["documentId"] = documentId.ToString(),
+                ["chunkIndex"] = index.ToString(),
+                ["text"] = $"item {index}",
+                ["fileName"] = "document.pdf",
+                ["contentType"] = "Verbatim"
+            }).ToList());
+        var pipeline = new RagRetrievalPipeline(
+            search.Object,
+            new RagContextExpander(vectors.Object),
+            Options.Create(new RetrievalOptions()));
+
+        var results = await pipeline.RetrieveAsync(
+            "list all items", Guid.NewGuid(), [documentId], CancellationToken.None);
+
+        Assert.Equal(63, results.Count);
     }
 }
