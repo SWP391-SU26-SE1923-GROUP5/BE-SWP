@@ -158,6 +158,69 @@ public class AIChatServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateMessageAsync_RagCitations_PreserveDocumentIdentityAndDisplayMetadata()
+    {
+        var session = new ChatSession { Id = Guid.NewGuid(), UserId = _userId, SessionTitle = "Citation Test" };
+        var firstDocumentId = Guid.NewGuid();
+        var secondDocumentId = Guid.NewGuid();
+        var firstDocument = new Document { Id = firstDocumentId, UserId = _userId, Title = "First" };
+        var secondDocument = new Document { Id = secondDocumentId, UserId = _userId, Title = "Second" };
+        session.ChatSessionDocuments.Add(new ChatSessionDocument
+        {
+            Id = Guid.NewGuid(), ChatSessionId = session.Id, DocumentId = firstDocumentId, CreatedAt = DateTime.UtcNow
+        });
+        session.ChatSessionDocuments.Add(new ChatSessionDocument
+        {
+            Id = Guid.NewGuid(), ChatSessionId = session.Id, DocumentId = secondDocumentId, CreatedAt = DateTime.UtcNow
+        });
+        await _dbContext.AddRangeAsync(session, firstDocument, secondDocument);
+        await _dbContext.SaveChangesAsync();
+
+        var longContent = new string('x', 301);
+        _orchestratorMock.Setup(x => x.AskWithTrackingAsync(
+                _userId,
+                It.IsAny<IReadOnlyList<Guid>>(),
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<ChatMessage>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RagResponseWithUsage(
+                "answer",
+                new List<CitationInfo>
+                {
+                    new(firstDocumentId, "abc.pdf", longContent, 0.91, 3, "hybrid"),
+                    new(secondDocumentId, "abc (1).pdf", "short", 0.82, null, "semantic")
+                },
+                0.9,
+                10,
+                5,
+                true));
+
+        var result = await _service.CreateMessageAsync(
+            new CreateChatMessageRequestDto(session.Id, "Compare sources"), _userId);
+
+        Assert.NotNull(result.Citations);
+        Assert.Collection(result.Citations,
+            first =>
+            {
+                Assert.Equal(firstDocumentId, first.DocumentId);
+                Assert.Equal("abc.pdf", first.Source);
+                Assert.Equal(new string('x', 300) + "…", first.Snippet);
+                Assert.Equal(3, first.PageNumber);
+                Assert.Equal(0.91, first.Relevance);
+                Assert.Equal("hybrid", first.MatchType);
+            },
+            second =>
+            {
+                Assert.Equal(secondDocumentId, second.DocumentId);
+                Assert.Equal("abc (1).pdf", second.Source);
+                Assert.Equal("short", second.Snippet);
+                Assert.Null(second.PageNumber);
+                Assert.Equal(0.82, second.Relevance);
+                Assert.Equal("semantic", second.MatchType);
+            });
+    }
+
+    [Fact]
     public async Task CreateMessageAsync_QuotaExceeded_ThrowsQuotaExceededException()
     {
         // Arrange
