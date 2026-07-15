@@ -1,4 +1,3 @@
-using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Data;
 using AIStudyHub.Data.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -15,21 +14,15 @@ namespace AIStudyHub.Business.Workers;
 ///
 /// Uses an interval loop (default 1h) rather than a true cron expression so it stays simple and
 /// crash-tolerant. The actual reset only runs once per day by comparing the last-run date.
-///
-/// Also sends a 12:00 UTC streak-at-risk warning to users who have an active streak but have
-/// not studied today yet. Idempotent within the day via _lastWarnDate.
 /// </summary>
 public sealed class DailyStreakResetWorker : BackgroundService
 {
     private static readonly TimeSpan CheckInterval = TimeSpan.FromHours(1);
-    private const int WarnHourUtc = 12;
     private const int ResetHourUtc = 23;
-    private const int HoursUntilReset = 11; // 23 - 12 = 11 hours between warn and reset
 
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<DailyStreakResetWorker> _logger;
     private DateTime _lastResetDate = DateTime.MinValue.Date;
-    private DateTime _lastWarnDate = DateTime.MinValue.Date;
 
     public DailyStreakResetWorker(IServiceProvider serviceProvider, ILogger<DailyStreakResetWorker> logger)
     {
@@ -49,13 +42,6 @@ public sealed class DailyStreakResetWorker : BackgroundService
 
                 var now = DateTime.UtcNow;
 
-                // 12:00 UTC streak-at-risk warning
-                if (now.Date != _lastWarnDate && now.Hour >= WarnHourUtc)
-                {
-                    await WarnStaleStreaksAsync(stoppingToken);
-                    _lastWarnDate = now.Date;
-                }
-
                 if (now.Date == _lastResetDate)
                     continue;
 
@@ -63,7 +49,7 @@ public sealed class DailyStreakResetWorker : BackgroundService
                 // so the job still fires even if the host restarts right at midnight.
                 if (now.Hour >= ResetHourUtc)
                 {
-                    await ResetStaleStreaksAsync(stoppingToken);
+                    await RunOnceAsync(stoppingToken);
                     _lastResetDate = now.Date;
                 }
             }
@@ -78,52 +64,7 @@ public sealed class DailyStreakResetWorker : BackgroundService
         }
     }
 
-    /// <summary>
-    /// At noon UTC, warn users with an active streak that haven't studied today that their
-    /// streak will be reset in <see cref="HoursUntilReset"/> hours. Best-effort: failures are
-    /// logged but never throw.
-    /// </summary>
-    private async Task WarnStaleStreaksAsync(CancellationToken cancellationToken)
-    {
-        using var scope = _serviceProvider.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        var notifier = scope.ServiceProvider.GetService<IRealTimeNotificationService>();
-        if (notifier is null)
-        {
-            _logger.LogDebug("IRealTimeNotificationService not registered, skipping streak-at-risk warn job.");
-            return;
-        }
-
-        var today = DateTime.UtcNow.Date;
-        var stale = await db.UserStats
-            .Where(s => s.CurrentStreak > 0
-                        && (s.LastActivityDate == null || s.LastActivityDate.Value.Date < today))
-            .Select(s => new { s.UserId, s.CurrentStreak })
-            .ToListAsync(cancellationToken);
-
-        if (stale.Count == 0)
-        {
-            _logger.LogInformation("Streak-at-risk warn job: no eligible users today.");
-            return;
-        }
-
-        foreach (var stats in stale)
-        {
-            try
-            {
-                await notifier.NotifyStreakAtRiskAsync(
-                    stats.UserId, stats.CurrentStreak, HoursUntilReset, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to send streak-at-risk for user {UserId}", stats.UserId);
-            }
-        }
-
-        _logger.LogInformation("Streak-at-risk warn job: notified {Count} users.", stale.Count);
-    }
-
-    private async Task ResetStaleStreaksAsync(CancellationToken cancellationToken)
+    public async Task RunOnceAsync(CancellationToken cancellationToken)
     {
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
