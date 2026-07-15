@@ -22,6 +22,8 @@ namespace AIStudyHub.API.Controllers;
 [Route("api/[controller]")]
 public sealed class DocumentController : ControllerBase
 {
+    private const string ActiveFileNameIndex = "UX_Document_UserId_FileName_Active";
+    private const int FileNameSaveAttempts = 3;
     private readonly IDocumentService _service;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IDocumentProcessingService _documentProcessing;
@@ -171,8 +173,16 @@ public sealed class DocumentController : ControllerBase
     {
         var userId = GetCurrentUserId();
         if (userId == Guid.Empty) return Unauthorized();
-        await _service.RestoreAsync(id, userId, cancellationToken);
-        return Ok();
+        try
+        {
+            await _service.RestoreAsync(id, userId, cancellationToken);
+            return Ok();
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.Contains("unique document filename", StringComparison.OrdinalIgnoreCase))
+        {
+            return Conflict(new { message = ex.Message });
+        }
     }
 
     /// <summary>Permanently purges a trashed document. Idempotent — returns 204 even if already purged.</summary>
@@ -418,18 +428,13 @@ public sealed class DocumentController : ControllerBase
 
             var filePath = await _fileStorage.SaveFileAsync(fileContent, Path.GetFileNameWithoutExtension(request.File.FileName), extension, cancellationToken);
             var fileUrl = _fileStorage.GetFileUrl(filePath);
-            var allocatedFileName = await _service.GetAvailableFileNameAsync(
-                userId,
-                request.File.FileName,
-                cancellationToken: cancellationToken);
-
             var document = new Document
             {
                 Id = Guid.NewGuid(),
                 UserId = userId,
                 SubjectId = request.SubjectId,
                 Title = request.Title,
-                FileName = allocatedFileName,
+                FileName = request.File.FileName,
                 FileExtension = extension,
                 FileType = request.File.ContentType,
                 FileLink = fileUrl,
@@ -444,7 +449,34 @@ public sealed class DocumentController : ControllerBase
             user.CurrentStorageCapacity += (int)fileSizeMb;
             _unitOfWork.Users.Update(user);
 
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            var saved = false;
+            for (var attempt = 1; attempt <= FileNameSaveAttempts; attempt++)
+            {
+                document.FileName = await _service.GetAvailableFileNameAsync(
+                    userId,
+                    request.File.FileName,
+                    cancellationToken: cancellationToken);
+
+                try
+                {
+                    await _unitOfWork.SaveChangesAsync(cancellationToken);
+                    saved = true;
+                    break;
+                }
+                catch (DbUpdateException ex) when (IsActiveFileNameConflict(ex))
+                {
+                    if (attempt == FileNameSaveAttempts)
+                    {
+                        return Conflict(new
+                        {
+                            message = $"Could not allocate a unique document filename after {FileNameSaveAttempts} attempts."
+                        });
+                    }
+                }
+            }
+
+            if (!saved)
+                return Conflict(new { message = "Could not allocate a unique document filename." });
 
             _logger.LogInformation("Document {DocumentId} accepted for processing by user {UserId}", document.Id, userId);
 
@@ -453,7 +485,7 @@ public sealed class DocumentController : ControllerBase
                 document.Id,
                 userId,
                 fullPath,
-                allocatedFileName,
+                document.FileName!,
                 request.File.ContentType);
             await _processingQueue.EnqueueAsync(processRequest);
 
@@ -522,5 +554,11 @@ public sealed class DocumentController : ControllerBase
         return claim != null && Guid.TryParse(claim.Value, out var userId)
             ? userId
             : Guid.Empty;
+    }
+
+    private static bool IsActiveFileNameConflict(DbUpdateException exception)
+    {
+        var message = exception.InnerException?.Message ?? exception.Message;
+        return message.Contains(ActiveFileNameIndex, StringComparison.OrdinalIgnoreCase);
     }
 }

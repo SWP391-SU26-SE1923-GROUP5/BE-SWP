@@ -30,6 +30,8 @@ namespace AIStudyHub.Business.Services;
 
 public sealed class DocumentService : IDocumentService
 {
+    private const string ActiveFileNameIndex = "UX_Document_UserId_FileName_Active";
+    private const int FileNameSaveAttempts = 3;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
     private readonly IVectorStoreService? _vectorStoreService;
@@ -398,16 +400,39 @@ public sealed class DocumentService : IDocumentService
         if (document.LifecycleStatus == DocumentLifecycleStatus.Purged)
             throw new InvalidOperationException("A purged document cannot be restored.");
 
-        document.FileName = await GetAvailableFileNameAsync(
-            userId,
-            document.FileName ?? "document",
-            document.Id,
-            cancellationToken);
-        document.LifecycleStatus = DocumentLifecycleStatus.Active;
-        document.TrashedAt = null;
-        document.TrashedBy = null;
-        _unitOfWork.Documents.Update(document);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        var requestedFileName = document.FileName ?? "document";
+        for (var attempt = 1; attempt <= FileNameSaveAttempts; attempt++)
+        {
+            document.FileName = await GetAvailableFileNameAsync(
+                userId,
+                requestedFileName,
+                document.Id,
+                cancellationToken);
+            document.LifecycleStatus = DocumentLifecycleStatus.Active;
+            document.TrashedAt = null;
+            document.TrashedBy = null;
+            _unitOfWork.Documents.Update(document);
+
+            try
+            {
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+                return;
+            }
+            catch (DbUpdateException ex) when (IsActiveFileNameConflict(ex))
+            {
+                if (attempt == FileNameSaveAttempts)
+                {
+                    throw new InvalidOperationException(
+                        $"Could not allocate a unique document filename after {FileNameSaveAttempts} attempts.", ex);
+                }
+            }
+        }
+    }
+
+    private static bool IsActiveFileNameConflict(DbUpdateException exception)
+    {
+        var message = exception.InnerException?.Message ?? exception.Message;
+        return message.Contains(ActiveFileNameIndex, StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task PurgeAsync(Guid documentId, Guid userId, CancellationToken cancellationToken = default)
