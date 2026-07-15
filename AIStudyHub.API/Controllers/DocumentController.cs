@@ -418,6 +418,10 @@ public sealed class DocumentController : ControllerBase
 
             var filePath = await _fileStorage.SaveFileAsync(fileContent, Path.GetFileNameWithoutExtension(request.File.FileName), extension, cancellationToken);
             var fileUrl = _fileStorage.GetFileUrl(filePath);
+            var allocatedFileName = await _service.GetAvailableFileNameAsync(
+                userId,
+                request.File.FileName,
+                cancellationToken: cancellationToken);
 
             var document = new Document
             {
@@ -425,7 +429,7 @@ public sealed class DocumentController : ControllerBase
                 UserId = userId,
                 SubjectId = request.SubjectId,
                 Title = request.Title,
-                FileName = request.File.FileName,
+                FileName = allocatedFileName,
                 FileExtension = extension,
                 FileType = request.File.ContentType,
                 FileLink = fileUrl,
@@ -449,7 +453,7 @@ public sealed class DocumentController : ControllerBase
                 document.Id,
                 userId,
                 fullPath,
-                request.File.FileName,
+                allocatedFileName,
                 request.File.ContentType);
             await _processingQueue.EnqueueAsync(processRequest);
 

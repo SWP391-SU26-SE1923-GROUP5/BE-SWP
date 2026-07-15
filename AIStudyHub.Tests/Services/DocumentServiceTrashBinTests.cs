@@ -35,7 +35,11 @@ public class DocumentServiceTrashBinTests : IDisposable
         _service = new DocumentService(_unitOfWork, null!);
     }
 
-    private async Task<(Guid UserId, Guid DocId)> SeedDocument(string title = "Test Doc", DocumentLifecycleStatus status = DocumentLifecycleStatus.Active, Guid? userId = null)
+    private async Task<(Guid UserId, Guid DocId)> SeedDocument(
+        string title = "Test Doc",
+        DocumentLifecycleStatus status = DocumentLifecycleStatus.Active,
+        Guid? userId = null,
+        string? fileName = null)
     {
         var uId = userId ?? Guid.NewGuid();
         var subjectId = Guid.NewGuid();
@@ -43,7 +47,15 @@ public class DocumentServiceTrashBinTests : IDisposable
         if (_dbContext.Users.Find(uId) == null)
             _dbContext.Users.Add(new User { Id = uId, Email = $"{uId}@test.com", FullName = "User", PasswordHash = "hash" });
         _dbContext.Subjects.Add(new Subject { Id = subjectId, SubjectCode = $"T_{subjectId.ToString().Substring(0, 8)}", SubjectName = "Test" });
-        _dbContext.Documents.Add(new Document { Id = docId, UserId = uId, SubjectId = subjectId, Title = title, LifecycleStatus = status });
+        _dbContext.Documents.Add(new Document
+        {
+            Id = docId,
+            UserId = uId,
+            SubjectId = subjectId,
+            Title = title,
+            FileName = fileName,
+            LifecycleStatus = status
+        });
         await _dbContext.SaveChangesAsync();
         return (uId, docId);
     }
@@ -117,6 +129,46 @@ public class DocumentServiceTrashBinTests : IDisposable
         Assert.Equal(DocumentLifecycleStatus.Active, doc!.LifecycleStatus);
         Assert.Null(doc.TrashedAt);
         Assert.Null(doc.TrashedBy);
+    }
+
+    [Fact]
+    public async Task RestoreAsync_ActiveOwnerNameCollision_AssignsSmallestAvailableSuffix()
+    {
+        var (userId, trashedId) = await SeedDocument(
+            "Trashed", DocumentLifecycleStatus.Trashed, fileName: "abc.pdf");
+        await SeedDocument("Active", DocumentLifecycleStatus.Active, userId, "abc.pdf");
+        await SeedDocument("Active suffix", DocumentLifecycleStatus.Active, userId, "abc (1).pdf");
+
+        await _service.RestoreAsync(trashedId, userId);
+
+        var restored = await _dbContext.Documents.FindAsync(trashedId);
+        Assert.Equal(DocumentLifecycleStatus.Active, restored!.LifecycleStatus);
+        Assert.Equal("abc (2).pdf", restored.FileName);
+    }
+
+    [Fact]
+    public async Task RestoreAsync_FreeFormerName_PreservesFileName()
+    {
+        var (userId, trashedId) = await SeedDocument(
+            "Trashed", DocumentLifecycleStatus.Trashed, fileName: "abc.pdf");
+
+        await _service.RestoreAsync(trashedId, userId);
+
+        var restored = await _dbContext.Documents.FindAsync(trashedId);
+        Assert.Equal("abc.pdf", restored!.FileName);
+    }
+
+    [Fact]
+    public async Task RestoreAsync_OtherOwnerNameCollision_PreservesFileName()
+    {
+        var (userId, trashedId) = await SeedDocument(
+            "Trashed", DocumentLifecycleStatus.Trashed, fileName: "abc.pdf");
+        await SeedDocument("Other owner", DocumentLifecycleStatus.Active, fileName: "abc.pdf");
+
+        await _service.RestoreAsync(trashedId, userId);
+
+        var restored = await _dbContext.Documents.FindAsync(trashedId);
+        Assert.Equal("abc.pdf", restored!.FileName);
     }
 
     [Fact]

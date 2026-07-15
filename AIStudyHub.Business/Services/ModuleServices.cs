@@ -398,6 +398,11 @@ public sealed class DocumentService : IDocumentService
         if (document.LifecycleStatus == DocumentLifecycleStatus.Purged)
             throw new InvalidOperationException("A purged document cannot be restored.");
 
+        document.FileName = await GetAvailableFileNameAsync(
+            userId,
+            document.FileName ?? "document",
+            document.Id,
+            cancellationToken);
         document.LifecycleStatus = DocumentLifecycleStatus.Active;
         document.TrashedAt = null;
         document.TrashedBy = null;
