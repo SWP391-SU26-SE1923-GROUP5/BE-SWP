@@ -274,6 +274,83 @@ public class AIChatServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateSessionAsync_OwnerRenamesSessionAndTrimsTitle()
+    {
+        var session = new ChatSession
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userId,
+            SessionTitle = "Old title"
+        };
+        await _dbContext.ChatSessions.AddAsync(session);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _service.UpdateSessionAsync(
+            session.Id,
+            new UpdateChatSessionRequestDto("  New title  "),
+            _userId);
+
+        Assert.Equal("New title", result.SessionTitle);
+        Assert.Equal("New title", (await _dbContext.ChatSessions.FindAsync(session.Id))!.SessionTitle);
+    }
+
+    [Fact]
+    public async Task UpdateSessionAsync_OtherUserCannotRenameSession()
+    {
+        var session = new ChatSession
+        {
+            Id = Guid.NewGuid(),
+            UserId = Guid.NewGuid(),
+            SessionTitle = "Private"
+        };
+        await _dbContext.ChatSessions.AddAsync(session);
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateSessionAsync(
+            session.Id,
+            new UpdateChatSessionRequestDto("Changed"),
+            _userId));
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_OwnerDeletesSession()
+    {
+        var session = new ChatSession
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userId,
+            SessionTitle = "Delete me"
+        };
+        await _dbContext.ChatSessions.AddAsync(session);
+        var message = new ChatMessage
+        {
+            Id = Guid.NewGuid(),
+            ChatSessionId = session.Id,
+            Sender = "assistant",
+            Content = "Answer"
+        };
+        message.Citations.Add(new ChatMessageCitation
+        {
+            Id = Guid.NewGuid(),
+            CitationIndex = 1,
+            DocumentId = Guid.NewGuid(),
+            Source = "source.pdf",
+            Snippet = "Quoted text",
+            MatchType = "hybrid"
+        });
+        await _dbContext.ChatMessages.AddAsync(message);
+        await _dbContext.SaveChangesAsync();
+        _dbContext.ChangeTracker.Clear();
+        await _dbContext.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = ON;");
+
+        await _service.DeleteSessionAsync(session.Id, _userId);
+
+        Assert.Null(await _dbContext.ChatSessions.FindAsync(session.Id));
+        Assert.Empty(await _dbContext.ChatMessages.ToListAsync());
+        Assert.Empty(await _dbContext.ChatMessageCitations.ToListAsync());
+    }
+
+    [Fact]
     public async Task CreateMessageAsync_QuotaExceeded_ThrowsQuotaExceededException()
     {
         // Arrange

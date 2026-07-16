@@ -4,6 +4,8 @@ public sealed record ChatSessionResponseDto(Guid Id, Guid UserId, string Session
 
 public sealed record CreateChatSessionRequestDto(string SessionTitle);
 
+public sealed record UpdateChatSessionRequestDto(string SessionTitle);
+
 public sealed record ChatMessageResponseDto(Guid Id, Guid ChatSessionId, string Sender, string Content, DateTime CreatedAt, DateTime? UpdatedAt, bool IsRelevant, IReadOnlyList<ChatCitationDto> Citations);
 
 /// <summary>

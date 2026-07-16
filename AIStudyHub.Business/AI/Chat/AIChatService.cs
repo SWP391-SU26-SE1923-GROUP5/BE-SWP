@@ -70,6 +70,44 @@ public sealed class AIChatService : IAIChatService
         return _mapper.Map<ChatSessionResponseDto>(created);
     }
 
+    public async Task<ChatSessionResponseDto> UpdateSessionAsync(
+        Guid sessionId,
+        UpdateChatSessionRequestDto request,
+        Guid userId,
+        CancellationToken ct = default)
+    {
+        var title = request.SessionTitle?.Trim();
+        if (string.IsNullOrWhiteSpace(title) || title.Length > 64)
+        {
+            throw new ArgumentException("Session title must contain between 1 and 64 characters.", nameof(request));
+        }
+
+        var session = await _unitOfWork.ChatSessions.Query()
+            .FirstOrDefaultAsync(item => item.Id == sessionId && item.UserId == userId, ct);
+        if (session is null)
+        {
+            throw new KeyNotFoundException($"Chat session with ID {sessionId} not found.");
+        }
+
+        session.SessionTitle = title;
+        await _unitOfWork.SaveChangesAsync(ct);
+
+        return _mapper.Map<ChatSessionResponseDto>(session);
+    }
+
+    public async Task DeleteSessionAsync(Guid sessionId, Guid userId, CancellationToken ct = default)
+    {
+        var session = await _unitOfWork.ChatSessions.Query()
+            .FirstOrDefaultAsync(item => item.Id == sessionId && item.UserId == userId, ct);
+        if (session is null)
+        {
+            throw new KeyNotFoundException($"Chat session with ID {sessionId} not found.");
+        }
+
+        _unitOfWork.ChatSessions.Remove(session);
+        await _unitOfWork.SaveChangesAsync(ct);
+    }
+
     public async Task<IReadOnlyList<ChatMessageResponseDto>> GetMessagesAsync(Guid sessionId, Guid userId, CancellationToken ct = default)
     {
         var sessionExists = await _unitOfWork.ChatSessions.Query()
