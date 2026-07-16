@@ -11,6 +11,7 @@ using AIStudyHub.Business.Interfaces.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.Orchestration;
 using AIStudyHub.Business.Interfaces.AI.Tracking;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Mappings;
 using AIStudyHub.Data;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Repositories;
@@ -30,7 +31,7 @@ public class AIChatServiceTests : IDisposable
     private readonly UnitOfWork _unitOfWork;
     private readonly Mock<ITokenTrackerService> _tokenTrackerMock;
     private readonly Mock<ISemanticKernelOrchestrator> _orchestratorMock;
-    private readonly Mock<IMapper> _mapperMock;
+    private readonly IMapper _mapper;
     private readonly AIChatService _service;
     private readonly Guid _userId;
 
@@ -48,7 +49,11 @@ public class AIChatServiceTests : IDisposable
         _unitOfWork = new UnitOfWork(_dbContext);
         _tokenTrackerMock = new Mock<ITokenTrackerService>();
         _orchestratorMock = new Mock<ISemanticKernelOrchestrator>();
-        _mapperMock = new Mock<IMapper>();
+        var mapperConfig = new MapperConfigurationExpression();
+        mapperConfig.AddProfile<ApplicationMappingProfile>();
+        _mapper = new MapperConfiguration(
+            mapperConfig,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance).CreateMapper();
 
         // Default: user has quota
         _tokenTrackerMock.Setup(x => x.HasQuotaAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
@@ -56,7 +61,7 @@ public class AIChatServiceTests : IDisposable
         _tokenTrackerMock.Setup(x => x.GetUsageInfoAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((0, 100000));
 
-        _service = new AIChatService(_unitOfWork, _mapperMock.Object, null!, _orchestratorMock.Object, _tokenTrackerMock.Object);
+        _service = new AIChatService(_unitOfWork, _mapper, null!, _orchestratorMock.Object, _tokenTrackerMock.Object);
         _userId = Guid.NewGuid();
     }
 
@@ -222,6 +227,50 @@ public class AIChatServiceTests : IDisposable
                 Assert.False(second.IsHighlightable);
                 Assert.Equal("legacy_unclassified", second.Reason);
             });
+
+        _dbContext.ChangeTracker.Clear();
+        var persisted = await _dbContext.ChatMessageCitations
+            .OrderBy(citation => citation.CitationIndex)
+            .ToListAsync();
+
+        Assert.Collection(persisted,
+            first =>
+            {
+                Assert.Equal(1, first.CitationIndex);
+                Assert.Equal(firstDocumentId, first.DocumentId);
+                Assert.Equal("abc.pdf", first.Source);
+                Assert.Equal(result.Citations[0].Snippet, first.Snippet);
+                Assert.Equal(3, first.PageNumber);
+                Assert.True(first.IsHighlightable);
+            },
+            second =>
+            {
+                Assert.Equal(2, second.CitationIndex);
+                Assert.Equal(secondDocumentId, second.DocumentId);
+                Assert.Equal("legacy_unclassified", second.Reason);
+            });
+
+        var history = await _service.GetMessagesAsync(session.Id, _userId);
+        var reloadedAssistant = Assert.Single(history, message => message.Sender == "assistant");
+        Assert.Collection(reloadedAssistant.Citations,
+            first => Assert.Equal(firstDocumentId, first.DocumentId),
+            second => Assert.Equal(secondDocumentId, second.DocumentId));
+    }
+
+    [Fact]
+    public async Task GetMessagesAsync_SessionOwnedByAnotherUser_ThrowsNotFound()
+    {
+        var session = new ChatSession
+        {
+            Id = Guid.NewGuid(),
+            UserId = Guid.NewGuid(),
+            SessionTitle = "Private"
+        };
+        await _dbContext.ChatSessions.AddAsync(session);
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            _service.GetMessagesAsync(session.Id, _userId));
     }
 
     [Fact]

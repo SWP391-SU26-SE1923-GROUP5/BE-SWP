@@ -28,6 +28,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<ChatSession> ChatSessions => Set<ChatSession>();
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
+    public DbSet<ChatMessageCitation> ChatMessageCitations => Set<ChatMessageCitation>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<OtpRecord> OtpRecords => Set<OtpRecord>();
     public DbSet<UserStats> UserStats => Set<UserStats>();

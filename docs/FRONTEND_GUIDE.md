@@ -1,5 +1,24 @@
 # AIStudyHub - Frontend Integration Guide
 
+## AI Notebook session reload and persistent citations
+
+Frontend route khuyen nghi: `/ai-notebook/{sessionId}`.
+
+Khi mo route hoac refresh trang, Frontend dung `sessionId` de goi:
+
+```http
+GET /api/Chat/sessions/{sessionId}/messages
+GET /api/Chat/sessions/{sessionId}/documents
+```
+
+Backend tra `404` neu session khong ton tai hoac khong thuoc user dang dang nhap. Khong tu dong chon Notebook moi nhat khi URL da co `sessionId`.
+
+Moi assistant message tra `citations` la mot array khong null. Thu tu array tuong ung citation marker: phan tu dau tien la `[1]`, phan tu thu hai la `[2]`.
+
+Khi click citation, Frontend mo `documentId`, chuyen den `pageNumber` neu co, va chi highlight `snippet` khi `isHighlightable` la `true`. Neu khong highlight duoc, van mo dung tai lieu/trang va co the hien thi `reason`.
+
+Message tao truoc migration persistent citations khong duoc backfill va se tra `citations: []`.
+
 > **Phiên bản**: cập nhật 2026-06-28
 > **Backend**: ASP.NET Core 8 Web API
 > **Auth**: JWT Bearer (access + refresh) + External (Google, GitHub)

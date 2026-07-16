@@ -6,7 +6,7 @@ public interface IAIChatService
 {
     Task<IReadOnlyList<ChatSessionResponseDto>> GetSessionsAsync();
     Task<ChatSessionResponseDto> CreateSessionAsync(CreateChatSessionRequestDto request, Guid userId);
-    Task<IReadOnlyList<ChatMessageResponseDto>> GetMessagesAsync(Guid sessionId);
+    Task<IReadOnlyList<ChatMessageResponseDto>> GetMessagesAsync(Guid sessionId, Guid userId, CancellationToken ct = default);
     Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request, Guid userId, CancellationToken ct = default);
     Task<ChatSessionDocumentResponseDto> AddDocumentAsync(Guid sessionId, Guid documentId, Guid userId, CancellationToken ct = default);
     Task RemoveDocumentAsync(Guid sessionId, Guid documentId, Guid userId, CancellationToken ct = default);

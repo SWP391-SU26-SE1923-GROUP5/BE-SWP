@@ -37,8 +37,15 @@ public sealed class ChatController : ControllerBase
     [HttpGet("sessions/{sessionId:guid}/messages")]
     public async Task<ActionResult<IReadOnlyList<ChatMessageResponseDto>>> GetMessages(Guid sessionId)
     {
-        var result = await _chatService.GetMessagesAsync(sessionId);
-        return Ok(result);
+        try
+        {
+            var result = await _chatService.GetMessagesAsync(sessionId, GetCurrentUserId());
+            return Ok(result);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(ex.Message);
+        }
     }
 
     [HttpPost("messages")]
