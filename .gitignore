@@ -11,6 +11,7 @@ bld/
 build/
 artifacts/
 wwwroot/
+docs/superpowers/plans
 
 # Visual Studio
 .vs/
