@@ -17,6 +17,8 @@ public interface IVectorStoreService
 
     Task DeleteVectorAsync(string id);
     Task DeleteVectorsByDocumentIdAsync(Guid documentId);
+    Task DeleteDocumentVectorsExceptRunAsync(Guid documentId, Guid successfulRunId);
+    Task DeleteDocumentVectorsByRunAsync(Guid documentId, Guid indexRunId);
     Task EnsureCollectionExistsAsync();
     Task<List<Dictionary<string, string>>> GetPayloadsByDocumentIdAsync(Guid documentId);
 }

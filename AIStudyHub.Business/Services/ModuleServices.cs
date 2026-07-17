@@ -17,6 +17,7 @@ using AIStudyHub.Business.DTOs.Common;
 using AIStudyHub.Business.DTOs.Votes;
 using AIStudyHub.Business.Exceptions;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
@@ -29,13 +30,17 @@ namespace AIStudyHub.Business.Services;
 
 public sealed class DocumentService : IDocumentService
 {
+    private const string ActiveFileNameIndex = "UX_Document_UserId_FileName_Active";
+    private const int FileNameSaveAttempts = 3;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IMapper _mapper;
+    private readonly IVectorStoreService? _vectorStoreService;
 
-    public DocumentService(IUnitOfWork unitOfWork, IMapper mapper)
+    public DocumentService(IUnitOfWork unitOfWork, IMapper mapper, IVectorStoreService? vectorStoreService = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
+        _vectorStoreService = vectorStoreService;
     }
 
     private static DocumentResponseDto MapToDto(Document d) => new(
@@ -48,6 +53,52 @@ public sealed class DocumentService : IDocumentService
         d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
         d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status, d.ErrorMessage,
         d.Votes.Count, d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
+
+    public async Task<string> GetAvailableFileNameAsync(
+        Guid userId,
+        string fileName,
+        Guid? excludeDocumentId = null,
+        CancellationToken cancellationToken = default)
+    {
+        const int maxFileNameLength = 255;
+        var normalizedFileName = Path.GetFileName(fileName);
+        if (string.IsNullOrWhiteSpace(normalizedFileName))
+            throw new ArgumentException("Document filename is required.", nameof(fileName));
+
+        var extension = Path.GetExtension(normalizedFileName);
+        var stem = Path.GetFileNameWithoutExtension(normalizedFileName);
+        if (string.IsNullOrWhiteSpace(stem) || extension.Length >= maxFileNameLength)
+            throw new ArgumentException("Document filename is invalid.", nameof(fileName));
+
+        var query = _unitOfWork.Documents.Query()
+            .Where(d => d.UserId == userId
+                        && d.LifecycleStatus == DocumentLifecycleStatus.Active
+                        && d.FileName != null);
+
+        if (excludeDocumentId.HasValue)
+            query = query.Where(d => d.Id != excludeDocumentId.Value);
+
+        var existingNames = new HashSet<string>(
+            await query.Select(d => d.FileName!).ToListAsync(cancellationToken),
+            StringComparer.OrdinalIgnoreCase);
+
+        var initialStemLength = Math.Min(stem.Length, maxFileNameLength - extension.Length);
+        var candidate = stem[..initialStemLength] + extension;
+        if (!existingNames.Contains(candidate))
+            return candidate;
+
+        for (var suffixNumber = 1; ; suffixNumber++)
+        {
+            var suffix = $" ({suffixNumber})";
+            var maxStemLength = maxFileNameLength - extension.Length - suffix.Length;
+            if (maxStemLength <= 0)
+                throw new ArgumentException("Document filename is too long.", nameof(fileName));
+
+            candidate = stem[..Math.Min(stem.Length, maxStemLength)] + suffix + extension;
+            if (!existingNames.Contains(candidate))
+                return candidate;
+        }
+    }
 
     public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<DocumentResponseDto>> GetAllPagedAsync(
         Guid userId,
@@ -188,6 +239,9 @@ public sealed class DocumentService : IDocumentService
         var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken)
             ?? throw new KeyNotFoundException($"Document with ID {id} not found.");
 
+        if (_vectorStoreService != null)
+            await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
+
         _unitOfWork.Documents.Remove(document);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
@@ -325,6 +379,9 @@ public sealed class DocumentService : IDocumentService
         if (document.LifecycleStatus == DocumentLifecycleStatus.Trashed)
             return; // already trashed — idempotent
 
+        if (_vectorStoreService != null)
+            await _vectorStoreService.DeleteVectorsByDocumentIdAsync(documentId);
+
         document.LifecycleStatus = DocumentLifecycleStatus.Trashed;
         document.TrashedAt = DateTime.UtcNow;
         document.TrashedBy = userId;
@@ -343,11 +400,39 @@ public sealed class DocumentService : IDocumentService
         if (document.LifecycleStatus == DocumentLifecycleStatus.Purged)
             throw new InvalidOperationException("A purged document cannot be restored.");
 
-        document.LifecycleStatus = DocumentLifecycleStatus.Active;
-        document.TrashedAt = null;
-        document.TrashedBy = null;
-        _unitOfWork.Documents.Update(document);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        var requestedFileName = document.FileName ?? "document";
+        for (var attempt = 1; attempt <= FileNameSaveAttempts; attempt++)
+        {
+            document.FileName = await GetAvailableFileNameAsync(
+                userId,
+                requestedFileName,
+                document.Id,
+                cancellationToken);
+            document.LifecycleStatus = DocumentLifecycleStatus.Active;
+            document.TrashedAt = null;
+            document.TrashedBy = null;
+            _unitOfWork.Documents.Update(document);
+
+            try
+            {
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+                return;
+            }
+            catch (DbUpdateException ex) when (IsActiveFileNameConflict(ex))
+            {
+                if (attempt == FileNameSaveAttempts)
+                {
+                    throw new InvalidOperationException(
+                        $"Could not allocate a unique document filename after {FileNameSaveAttempts} attempts.", ex);
+                }
+            }
+        }
+    }
+
+    private static bool IsActiveFileNameConflict(DbUpdateException exception)
+    {
+        var message = exception.InnerException?.Message ?? exception.Message;
+        return message.Contains(ActiveFileNameIndex, StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task PurgeAsync(Guid documentId, Guid userId, CancellationToken cancellationToken = default)
@@ -360,6 +445,9 @@ public sealed class DocumentService : IDocumentService
 
         if (document.LifecycleStatus != DocumentLifecycleStatus.Trashed)
             throw new InvalidOperationException("Only trashed documents can be permanently purged.");
+
+        if (_vectorStoreService != null)
+            await _vectorStoreService.DeleteVectorsByDocumentIdAsync(documentId);
 
         _unitOfWork.Documents.Remove(document);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
@@ -419,7 +507,7 @@ public sealed class DocumentService : IDocumentService
 
         var remaining = await _unitOfWork.DocumentShares
             .Query()
-            .Where(s => s.DocumentId == documentId)
+            .Where(s => s.DocumentId == documentId && s.Id != share.Id)
             .CountAsync(cancellationToken);
 
         if (remaining == 0)

@@ -121,8 +121,21 @@ internal sealed class DocumentConfiguration : IEntityTypeConfiguration<Document>
         builder.Property(x => x.Status).HasColumnName("status").HasConversion<string>().HasMaxLength(20);
         builder.Property(x => x.IsNonFlaggable).HasColumnName("is_non_flaggable").HasDefaultValue(false);
         builder.Property(x => x.ErrorMessage).HasColumnName("error_message");
+        builder.Property(x => x.ProcessingVersion).HasColumnName("processing_version").HasDefaultValue(1);
+        builder.Property(x => x.ReindexClaimId).HasColumnName("reindex_claim_id");
+        builder.Property(x => x.ReindexClaimedAt).HasColumnName("reindex_claimed_at").HasColumnType("datetime");
+        builder.Property(x => x.ReindexAttemptCount).HasColumnName("reindex_attempt_count").HasDefaultValue(0);
+        builder.Property(x => x.LastReindexError).HasColumnName("last_reindex_error");
+        builder.Property(x => x.SuggestedPromptsJson).HasColumnName("suggested_prompts_json");
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+        builder.HasIndex(x => new { x.UserId, x.FileName })
+            .HasDatabaseName("UX_Document_UserId_FileName_Active")
+            .IsUnique()
+            .HasFilter("[LifecycleStatus] = 0 AND [file_name] IS NOT NULL");
+        builder.HasIndex(x => x.UserId);
+        builder.HasIndex(x => new { x.ProcessingVersion, x.ReindexClaimedAt })
+            .HasDatabaseName("IX_Document_ReindexEligibility");
         builder.HasOne(x => x.User).WithMany(x => x.Documents).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(x => x.Subject).WithMany(x => x.Documents).HasForeignKey(x => x.SubjectId).OnDelete(DeleteBehavior.Restrict);
     }
@@ -366,7 +379,7 @@ internal sealed class NotificationConfiguration : IEntityTypeConfiguration<Notif
         builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
         builder.Property(x => x.Title).HasColumnName("title").HasMaxLength(200);
         builder.Property(x => x.Message).HasColumnName("message").IsRequired();
-        builder.Property(x => x.PayloadJson).HasColumnName("payload_json").HasColumnType("nvarchar(max)");
+        builder.Property(x => x.PayloadJson).HasColumnName("payload_json");
         builder.Property(x => x.ActionUrl).HasColumnName("action_url").HasMaxLength(500);
         builder.Property(x => x.IsRead).HasColumnName("is_read").HasDefaultValue(false);
         builder.Property(x => x.Type).HasColumnName("type").HasConversion<int>().IsRequired();
@@ -451,6 +464,33 @@ internal sealed class ChatMessageConfiguration : IEntityTypeConfiguration<ChatMe
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.ChatSession).WithMany(x => x.ChatMessages).HasForeignKey(x => x.ChatSessionId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+internal sealed class ChatMessageCitationConfiguration : IEntityTypeConfiguration<ChatMessageCitation>
+{
+    public void Configure(EntityTypeBuilder<ChatMessageCitation> builder)
+    {
+        builder.ToTable("ChatMessageCitation");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("citation_id");
+        builder.Property(x => x.ChatMessageId).HasColumnName("message_id").IsRequired();
+        builder.Property(x => x.CitationIndex).HasColumnName("citation_index").IsRequired();
+        builder.Property(x => x.DocumentId).HasColumnName("document_id").IsRequired();
+        builder.Property(x => x.Source).HasColumnName("source").HasMaxLength(500).IsRequired();
+        builder.Property(x => x.Snippet).HasColumnName("snippet").IsRequired();
+        builder.Property(x => x.PageNumber).HasColumnName("page_number");
+        builder.Property(x => x.Relevance).HasColumnName("relevance").IsRequired();
+        builder.Property(x => x.MatchType).HasColumnName("match_type").HasMaxLength(50).IsRequired();
+        builder.Property(x => x.IsHighlightable).HasColumnName("is_highlightable").IsRequired();
+        builder.Property(x => x.Reason).HasColumnName("reason").HasMaxLength(100);
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+        builder.HasIndex(x => new { x.ChatMessageId, x.CitationIndex }).IsUnique();
+        builder.HasOne(x => x.ChatMessage)
+            .WithMany(x => x.Citations)
+            .HasForeignKey(x => x.ChatMessageId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }
 

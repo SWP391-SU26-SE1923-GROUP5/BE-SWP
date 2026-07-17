@@ -70,9 +70,48 @@ public sealed class AIChatService : IAIChatService
         return _mapper.Map<ChatSessionResponseDto>(created);
     }
 
-    public async Task<IReadOnlyList<ChatMessageResponseDto>> GetMessagesAsync(Guid sessionId)
+    public async Task<ChatSessionResponseDto> UpdateSessionAsync(
+        Guid sessionId,
+        UpdateChatSessionRequestDto request,
+        Guid userId,
+        CancellationToken ct = default)
     {
-        var sessionExists = await _unitOfWork.ChatSessions.GetByIdAsync(sessionId) is not null;
+        var title = request.SessionTitle?.Trim();
+        if (string.IsNullOrWhiteSpace(title) || title.Length > 64)
+        {
+            throw new ArgumentException("Session title must contain between 1 and 64 characters.", nameof(request));
+        }
+
+        var session = await _unitOfWork.ChatSessions.Query()
+            .FirstOrDefaultAsync(item => item.Id == sessionId && item.UserId == userId, ct);
+        if (session is null)
+        {
+            throw new KeyNotFoundException($"Chat session with ID {sessionId} not found.");
+        }
+
+        session.SessionTitle = title;
+        await _unitOfWork.SaveChangesAsync(ct);
+
+        return _mapper.Map<ChatSessionResponseDto>(session);
+    }
+
+    public async Task DeleteSessionAsync(Guid sessionId, Guid userId, CancellationToken ct = default)
+    {
+        var session = await _unitOfWork.ChatSessions.Query()
+            .FirstOrDefaultAsync(item => item.Id == sessionId && item.UserId == userId, ct);
+        if (session is null)
+        {
+            throw new KeyNotFoundException($"Chat session with ID {sessionId} not found.");
+        }
+
+        _unitOfWork.ChatSessions.Remove(session);
+        await _unitOfWork.SaveChangesAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<ChatMessageResponseDto>> GetMessagesAsync(Guid sessionId, Guid userId, CancellationToken ct = default)
+    {
+        var sessionExists = await _unitOfWork.ChatSessions.Query()
+            .AnyAsync(session => session.Id == sessionId && session.UserId == userId, ct);
         if (!sessionExists)
         {
             throw new KeyNotFoundException($"Chat session with ID {sessionId} not found.");
@@ -81,9 +120,10 @@ public sealed class AIChatService : IAIChatService
         var messages = await _unitOfWork.ChatMessages
             .Query()
             .Where(message => message.ChatSessionId == sessionId)
+            .Include(message => message.Citations)
             .OrderBy(message => message.CreatedAt)
             .AsNoTracking()
-            .ToListAsync();
+            .ToListAsync(ct);
 
         return messages.Select(_mapper.Map<ChatMessageResponseDto>).ToList();
     }
@@ -147,6 +187,7 @@ public sealed class AIChatService : IAIChatService
         int inputTokens = 0;
         int outputTokens = 0;
         bool isRelevant = false;
+        IReadOnlyList<ChatCitationDto> citations = Array.Empty<ChatCitationDto>();
 
         if (docIds != null && docIds.Count > 0)
         {
@@ -155,6 +196,21 @@ public sealed class AIChatService : IAIChatService
             inputTokens = ragResponse.InputTokens;
             outputTokens = ragResponse.OutputTokens;
             isRelevant = ragResponse.IsRelevant;
+
+            if (ragResponse.Citations is { Count: > 0 })
+            {
+                citations = ragResponse.Citations
+                    .Select(c => new ChatCitationDto(
+                        c.DocumentId,
+                        c.Source,
+                        c.Content.Length > 300 ? c.Content[..300] + "…" : c.Content,
+                        c.PageNumber,
+                        c.Relevance,
+                        c.MatchType,
+                        c.IsHighlightable,
+                        c.Reason))
+                    .ToList();
+            }
         }
         else
         {
@@ -172,7 +228,29 @@ public sealed class AIChatService : IAIChatService
         {
             ChatSessionId = session.Id,
             Sender = "assistant",
-            Content = aiResponse
+            Content = aiResponse,
+            Citations = citations.Select((citation, index) =>
+            {
+                if (citation.DocumentId == Guid.Empty
+                    || string.IsNullOrWhiteSpace(citation.Source)
+                    || string.IsNullOrWhiteSpace(citation.Snippet))
+                {
+                    throw new InvalidOperationException("Citation snapshot is missing required source metadata.");
+                }
+
+                return new ChatMessageCitation
+                {
+                    CitationIndex = index + 1,
+                    DocumentId = citation.DocumentId,
+                    Source = citation.Source,
+                    Snippet = citation.Snippet,
+                    PageNumber = citation.PageNumber,
+                    Relevance = citation.Relevance,
+                    MatchType = citation.MatchType,
+                    IsHighlightable = citation.IsHighlightable,
+                    Reason = citation.Reason
+                };
+            }).ToList()
         };
 
         await _unitOfWork.ChatMessages.AddAsync(assistantMessage);
@@ -190,7 +268,8 @@ public sealed class AIChatService : IAIChatService
             created.Content,
             created.CreatedAt,
             created.UpdatedAt,
-            isRelevant);
+            isRelevant,
+            citations);
     }
 
     public async Task<ChatSessionDocumentResponseDto> AddDocumentAsync(Guid sessionId, Guid documentId, Guid userId, CancellationToken ct = default)

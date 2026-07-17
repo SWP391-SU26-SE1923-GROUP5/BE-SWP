@@ -26,6 +26,20 @@ namespace AIStudyHub.Business.Services;
 
 public static class BusinessServiceExtensions
 {
+    public static IServiceCollection AddBusinessHostedServices(this IServiceCollection services)
+    {
+        services.AddHostedService<DocumentBackgroundProcessor>();
+        services.AddHostedService<DocumentReindexWorker>();
+        services.AddHostedService<TierExpiryWorker>();
+        services.AddHostedService<UnverifiedAccountCleanupService>();
+        services.AddHostedService<TierExpirationCleanupService>();
+        services.AddHostedService<DailyStreakResetWorker>();
+        services.AddHostedService<StreakWarningWorker>();
+        services.AddHostedService<QuotaWarningWorker>();
+
+        return services;
+    }
+
     public static IServiceCollection AddBusinessServices(this IServiceCollection services, Microsoft.Extensions.Configuration.IConfiguration configuration)
     {
         services.AddMediatR(configuration =>
@@ -40,6 +54,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<ISubjectService, SubjectService>();
         services.AddScoped<IVoteService, VoteService>();
         services.AddScoped<IReportService, ReportService>();
+        services.AddScoped<IAdminService, AdminService>();
         services.AddScoped<IFlashcardService, FlashcardService>();
         services.AddScoped<IFlashcardReviewService, FlashcardReviewService>();
         services.AddScoped<IGamificationService, GamificationService>();
@@ -53,6 +68,8 @@ public static class BusinessServiceExtensions
         services.AddScoped<IQuizSubmissionService, QuizSubmissionService>();
         services.AddScoped<INotificationService, NotificationService>();
         services.Configure<OtpOptions>(configuration.GetSection("Otp"));
+        services.Configure<DocumentReindexOptions>(configuration.GetSection(DocumentReindexOptions.SectionName));
+        services.Configure<SuggestedPromptOptions>(configuration.GetSection(SuggestedPromptOptions.SectionName));
         services.Configure<AIStudyHub.Business.Options.VnPayOptions>(configuration.GetSection(AIStudyHub.Business.Options.VnPayOptions.SectionName));
         services.AddScoped<IVnPayService, VnPayService>();
         services.AddScoped<IPaymentService, PaymentService>();
@@ -65,30 +82,24 @@ public static class BusinessServiceExtensions
         services.AddScoped<IOpenAIService, OpenAIService>();
         services.AddScoped<IFlashcardAiService, FlashcardAiService>();
         services.AddScoped<IQuizAiService, QuizAiService>();
+        services.AddScoped<IDocumentSuggestedPromptService, DocumentSuggestedPromptService>();
         services.AddScoped<ITokenTrackerService, TokenTrackerService>();
         services.AddScoped<ITokenWalletService, TokenWalletService>();
         services.AddScoped<IFileStorageService, LocalFileStorageService>();
+        services.AddScoped<IDocumentReindexClaimService, DocumentReindexClaimService>();
 
         // Channel-based queue for background document processing
         services.AddSingleton<IDocumentProcessingQueue, DocumentProcessingQueue>();
 
-        // Background processor for document queue
-        services.AddHostedService<DocumentBackgroundProcessor>();
-
-        // Plan C4 — daily scan for upcoming tier expirations (Plan B.3.2)
-        services.AddHostedService<TierExpiryWorker>();
-
-        // Phase 3a: notify users with active streaks that they're about to break (12:00 UTC)
-        services.AddHostedService<StreakWarningWorker>();
-
-        // Phase 3a: warn users approaching AI token quota (09:00 UTC)
-        services.AddHostedService<QuotaWarningWorker>();
+        services.AddBusinessHostedServices();
 
         // L3: Search Services
         services.Configure<RetrievalOptions>(configuration.GetSection("Retrieval"));
         services.AddSingleton<ISparseVectorGenerator, Bm25SparseGenerator>();
         services.AddScoped<IHybridSearchService, HybridSearchService>();
         services.AddScoped<IRerankingService, RerankingService>();
+        services.AddScoped<RagContextExpander>();
+        services.AddScoped<RagRetrievalPipeline>();
 
         // L4: SK Orchestrator
         services.Configure<SemanticKernelOptions>(configuration.GetSection("SemanticKernel"));

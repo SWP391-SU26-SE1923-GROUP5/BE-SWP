@@ -16,9 +16,8 @@ namespace AIStudyHub.Business.AI.Orchestration;
 
 public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 {
-    private readonly IHybridSearchService _searchService;
+    private readonly RagRetrievalPipeline _retrievalPipeline;
     private readonly IVectorStoreService _vectorStoreService;
-    private readonly IRerankingService _rerankingService;
     private readonly IFaithfulnessFilter _faithfulnessFilter;
     private readonly IGroundingVerifier _groundingVerifier;
     private readonly IConfidenceScorer _confidenceScorer;
@@ -27,9 +26,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
     private readonly ILogger<SemanticKernelOrchestrator> _logger;
 
     public SemanticKernelOrchestrator(
-        IHybridSearchService searchService,
+        RagRetrievalPipeline retrievalPipeline,
         IVectorStoreService vectorStoreService,
-        IRerankingService rerankingService,
         IFaithfulnessFilter faithfulnessFilter,
         IGroundingVerifier groundingVerifier,
         IConfidenceScorer confidenceScorer,
@@ -37,9 +35,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         IOpenAIService openAiService,
         ILogger<SemanticKernelOrchestrator> logger)
     {
-        _searchService = searchService;
+        _retrievalPipeline = retrievalPipeline;
         _vectorStoreService = vectorStoreService;
-        _rerankingService = rerankingService;
         _faithfulnessFilter = faithfulnessFilter;
         _groundingVerifier = groundingVerifier;
         _confidenceScorer = confidenceScorer;
@@ -53,8 +50,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _logger.LogInformation("Processing RAG query for user {UserId}", userId);
 
         // L3: Retrieval with hybrid search and reranking
-        var searchResults = await _searchService.SearchAsync(question, userId, documentIds, 20, ct);
-        var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 5, ct);
+        var rerankedResults = await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct);
         _logger.LogInformation("After 1st rerank ({Count}): {Chunks}",
             rerankedResults.Count(),
             string.Join("\n===\n", rerankedResults.Take(5).Select(r => r.Content.Length > 250 ? r.Content[..250] + "..." : r.Content)));
@@ -82,14 +78,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         }
 
         // L4: Generate answer using Custom LLM Prompt (Avoids duplicate KernelMemory search)
-        var contextBuilder = new StringBuilder();
-        foreach (var r in resultList)
-        {
-            var pageInfo = r.Metadata.TryGetValue("pageNumber", out var pg) ? $", Trang: {pg}" : "";
-            contextBuilder.AppendLine($"--- Nguồn: {r.Source}{pageInfo} ---");
-            contextBuilder.AppendLine(r.Content);
-            contextBuilder.AppendLine();
-        }
+        var contextBuilder = RagPromptContextBuilder.Build(resultList);
+        var exhaustiveInstruction = GetExhaustiveInstruction(question);
 
         _logger.LogInformation("RAG Context being fed to AI:\n{Context}", contextBuilder.ToString());
 
@@ -107,6 +97,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             4. YES/NO questions: use the SOURCES to answer. If the SOURCES answer the question indirectly (e.g. user asks "Does it use Java?" and SOURCES say "The backend uses .NET"), answer "Không" or "Có" with the supporting evidence. Never say "Tài liệu không đề cập" if the SOURCES provide enough information to infer the answer.
             5. YES/NO questions about technologies: if SOURCES don't mention X but do mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly (e.g. ".NET", "JavaScript", "TypeScript", "Python", "React", "Angular"). If SOURCES contain zero information about the topic at all, say so clearly in Vietnamese (e.g. "Tài liệu không đề cập đến chủ đề này.").
             6. Answer in Vietnamese by default unless the user asks in English.
+            7. For page citations, use only AUTHORITATIVE_CITATION_PAGE. If PAGE_CITATION_AVAILABLE is false, do not mention a page and never print metadata field names or placeholders. Never infer a page number from CONTENT.
+            8. Answer only the user's current request. Do not append follow-up offers, suggested actions, or claims about additional capabilities. Never offer functionality that is not explicitly available in the current workflow. End the response after the grounded answer and citations.
             """;
 
         var userPrompt = $"""
@@ -118,11 +110,13 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             QUESTION: {question}
 
+            {exhaustiveInstruction}
+
             ANSWER:
             """;
 
-        var answer = await _openAiService.SendMessageAsync($"{systemPrompt}\n\n{userPrompt}") ?? "Xin lỗi, tôi không thể trả lời lúc này.";
-
+        var fullPrompt = $"{systemPrompt}\n\n{userPrompt}";
+        var answer = await _openAiService.SendMessageAsync(fullPrompt) ?? "Xin lỗi, tôi không thể trả lời lúc này.";
         // L5: Guardrails
         var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
         // TODO: GroundingVerifier is too strict for short/Vietnamese answers - disabled temporarily
@@ -130,13 +124,19 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
 
         // Build citations
-        var citations = resultList.Select((r, i) => new CitationInfo(
-            Source: r.Source,
-            Content: r.Content,
-            Relevance: r.Score,
-            PageNumber: r.Metadata.TryGetValue("pageNumber", out var pgStr) && int.TryParse(pgStr, out var pg) ? pg : null,
-            MatchType: r.MatchType
-        )).ToList();
+        var citations = resultList.Select(r =>
+        {
+            var highlight = CitationHighlightability.FromMetadata(r.Metadata);
+            return new CitationInfo(
+                DocumentId: r.Metadata.TryGetValue("documentId", out var docIdStr) && Guid.TryParse(docIdStr, out var docId) ? docId : Guid.Empty,
+                Source: r.Source,
+                Content: r.Content,
+                Relevance: r.Score,
+                PageNumber: r.Metadata.TryGetValue("pageNumber", out var pgStr) && int.TryParse(pgStr, out var pg) ? pg : null,
+                MatchType: r.MatchType,
+                IsHighlightable: highlight.IsHighlightable,
+                Reason: highlight.Reason);
+        }).ToList();
 
         return new RagResponse(answer, citations, confidence, IsRelevant: true);
     }
@@ -147,9 +147,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _logger.LogInformation("Processing RAG query with tracking for user {UserId}", userId);
 
         // L3: Retrieval with hybrid search and reranking
-        var searchResults = await _searchService.SearchAsync(question, userId, documentIds, 20, ct);
-        var rerankedResults = await _rerankingService.RerankAsync(question, searchResults, 5, ct);
-        
+        var rerankedResults = await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct);
+
         var resultList = rerankedResults.ToList();
         if (!resultList.Any())
         {
@@ -178,14 +177,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         }
 
         // L4: Generate answer using Custom LLM Prompt
-        var contextBuilder = new StringBuilder();
-        foreach (var r in resultList)
-        {
-            var pageInfo = r.Metadata.TryGetValue("pageNumber", out var pg) ? $", Trang: {pg}" : "";
-            contextBuilder.AppendLine($"--- Nguồn: {r.Source}{pageInfo} ---");
-            contextBuilder.AppendLine(r.Content);
-            contextBuilder.AppendLine();
-        }
+        var contextBuilder = RagPromptContextBuilder.Build(resultList);
+        var exhaustiveInstruction = GetExhaustiveInstruction(question);
 
         var systemPrompt = """
             You are 'AIStudyHub Assistant', a helpful and friendly AI tutor for AIStudyHub.
@@ -201,6 +194,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             4. YES/NO questions: use the SOURCES to answer. If the SOURCES answer the question indirectly (e.g. user asks "Does it use Java?" and SOURCES say "The backend uses .NET"), answer "Không" or "Có" with the supporting evidence. Never say "Tài liệu không đề cập" if the SOURCES provide enough information to infer the answer.
             5. YES/NO questions about technologies: if SOURCES don't mention X but do mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly (e.g. ".NET", "JavaScript", "TypeScript", "Python", "React", "Angular"). If SOURCES contain zero information about the topic at all, say so clearly in Vietnamese (e.g. "Tài liệu không đề cập đến chủ đề này.").
             6. Answer in Vietnamese by default unless the user asks in English.
+            7. For page citations, use only AUTHORITATIVE_CITATION_PAGE. If PAGE_CITATION_AVAILABLE is false, do not mention a page and never print metadata field names or placeholders. Never infer a page number from CONTENT.
+            8. Answer only the user's current request. Do not append follow-up offers, suggested actions, or claims about additional capabilities. Never offer functionality that is not explicitly available in the current workflow. End the response after the grounded answer and citations.
             """;
 
         var userPrompt = $"""
@@ -212,13 +207,16 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             QUESTION: {question}
 
+            {exhaustiveInstruction}
+
             ANSWER:
             """;
 
         var fullPrompt = $"{systemPrompt}\n\n{userPrompt}";
         var usageResult = await _openAiService.SendMessageWithUsageAsync(fullPrompt);
         var answer = usageResult.Text ?? "Xin lỗi, tôi không thể trả lời lúc này.";
-
+        var totalInputTokens = usageResult.InputTokens;
+        var totalOutputTokens = usageResult.OutputTokens;
         // L5: Guardrails
         var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
         // TODO: GroundingVerifier is too strict for short/Vietnamese answers - disabled temporarily
@@ -226,15 +224,21 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
 
         // Build citations
-        var citations = resultList.Select((r, i) => new CitationInfo(
-            Source: r.Source,
-            Content: r.Content,
-            Relevance: r.Score,
-            PageNumber: r.Metadata.TryGetValue("pageNumber", out var pgStr) && int.TryParse(pgStr, out var pg) ? pg : null,
-            MatchType: r.MatchType
-        )).ToList();
+        var citations = resultList.Select(r =>
+        {
+            var highlight = CitationHighlightability.FromMetadata(r.Metadata);
+            return new CitationInfo(
+                DocumentId: r.Metadata.TryGetValue("documentId", out var docIdStr) && Guid.TryParse(docIdStr, out var docId) ? docId : Guid.Empty,
+                Source: r.Source,
+                Content: r.Content,
+                Relevance: r.Score,
+                PageNumber: r.Metadata.TryGetValue("pageNumber", out var pgStr) && int.TryParse(pgStr, out var pg) ? pg : null,
+                MatchType: r.MatchType,
+                IsHighlightable: highlight.IsHighlightable,
+                Reason: highlight.Reason);
+        }).ToList();
 
-        return new RagResponseWithUsage(answer, citations, confidence, usageResult.InputTokens, usageResult.OutputTokens, IsRelevant: true);
+        return new RagResponseWithUsage(answer, citations, confidence, totalInputTokens, totalOutputTokens, IsRelevant: true);
     }
 
     public async Task<string> SummarizeAsync(Guid documentId, Guid userId, CancellationToken ct = default)
@@ -446,6 +450,28 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         await Task.CompletedTask;
         return relevance;
     }
+
+    private static List<CitationInfo> BuildCitations(IEnumerable<SearchResult> results) =>
+        results.Select(result =>
+        {
+            var highlight = CitationHighlightability.FromMetadata(result.Metadata);
+            return new CitationInfo(
+                DocumentId: result.Metadata.TryGetValue("documentId", out var documentIdValue)
+                    && Guid.TryParse(documentIdValue, out var documentId) ? documentId : Guid.Empty,
+                Source: result.Source,
+                Content: result.Content,
+                Relevance: result.Score,
+                PageNumber: result.Metadata.TryGetValue("pageNumber", out var pageValue)
+                    && int.TryParse(pageValue, out var page) ? page : null,
+                MatchType: result.MatchType,
+                IsHighlightable: highlight.IsHighlightable,
+                Reason: highlight.Reason);
+        }).ToList();
+
+    private static string GetExhaustiveInstruction(string question) =>
+        RagContextExpander.IsExhaustiveQuery(question)
+            ? "Inspect every provided source chunk and return every matching item. Do not sample, omit ranges, or claim completeness unless all provided chunks were considered."
+            : string.Empty;
 
     /// <summary>
     /// Fixes mojibake (UTF-8 bytes misread as Latin-1) commonly found in PDF-extracted Vietnamese text.

@@ -91,7 +91,7 @@ public sealed class QdrantVectorService : IVectorStoreService
             Filter? filter = null;
             if (filterMetadata != null && filterMetadata.Count > 0)
             {
-                var conditions = filterMetadata.Select(kvp => MatchText(kvp.Key, kvp.Value)).ToArray();
+                var conditions = filterMetadata.Select(kvp => MatchKeyword(kvp.Key, kvp.Value)).ToArray();
                 filter = new Filter { Must = { conditions } };
             }
 
@@ -123,7 +123,7 @@ public sealed class QdrantVectorService : IVectorStoreService
         {
             await _client.DeleteAsync(
                 _options.CollectionName,
-                new Filter { Must = { MatchText("chunkId", id) } });
+                new Filter { Must = { MatchKeyword("chunkId", id) } });
 
             _logger.LogDebug("Deleted vector {Id} from Qdrant", id);
         }
@@ -139,14 +139,72 @@ public sealed class QdrantVectorService : IVectorStoreService
         {
             await _client.DeleteAsync(
                 _options.CollectionName,
-                new Filter { Must = { MatchText("documentId", documentId.ToString()) } });
+                new Filter { Must = { MatchKeyword("documentId", documentId.ToString()) } });
 
-            _logger.LogInformation("Deleted all vectors for document {DocumentId} from Qdrant", documentId);
+            _logger.LogInformation("Deleted all vectors for document {DocumentId} from Qdrant via gRPC", documentId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Qdrant delete by documentId failed for {DocumentId}", documentId);
+            _logger.LogWarning(ex, "gRPC delete failed for document {DocumentId}, falling back to REST API", documentId);
+            try
+            {
+                var uri = new Uri(_options.Url);
+                var restUrl = $"{uri.Scheme}://{uri.Host}:6333/collections/{_options.CollectionName}/points/delete";
+                var payload = new
+                {
+                    filter = new
+                    {
+                        must = new[]
+                        {
+                            new { key = "documentId", match = new { value = documentId.ToString() } }
+                        }
+                    }
+                };
+                using var client = new System.Net.Http.HttpClient();
+                var json = System.Text.Json.JsonSerializer.Serialize(payload);
+                var content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json");
+                var response = await client.PostAsync(restUrl, content);
+                response.EnsureSuccessStatusCode();
+                _logger.LogInformation("Deleted all vectors for document {DocumentId} from Qdrant via REST API", documentId);
+            }
+            catch (Exception restEx)
+            {
+                _logger.LogError(restEx, "Qdrant delete by documentId failed for {DocumentId}", documentId);
+            }
         }
+    }
+
+    public async Task DeleteDocumentVectorsExceptRunAsync(Guid documentId, Guid successfulRunId)
+    {
+        await _client.DeleteAsync(
+            _options.CollectionName,
+            new Filter
+            {
+                Must = { MatchKeyword("documentId", documentId.ToString()) },
+                MustNot = { MatchKeyword("indexRunId", successfulRunId.ToString()) }
+            });
+
+        _logger.LogInformation(
+            "Deleted stale vector runs for document {DocumentId}; retained run {IndexRunId}",
+            documentId, successfulRunId);
+    }
+
+    public async Task DeleteDocumentVectorsByRunAsync(Guid documentId, Guid indexRunId)
+    {
+        await _client.DeleteAsync(
+            _options.CollectionName,
+            new Filter
+            {
+                Must =
+                {
+                    MatchKeyword("documentId", documentId.ToString()),
+                    MatchKeyword("indexRunId", indexRunId.ToString())
+                }
+            });
+
+        _logger.LogInformation(
+            "Deleted incomplete vector run {IndexRunId} for document {DocumentId}",
+            indexRunId, documentId);
     }
 
     public async Task EnsureCollectionExistsAsync()

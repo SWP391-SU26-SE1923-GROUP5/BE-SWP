@@ -260,11 +260,9 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
     ///
     /// Fuzzing: for intervals >= 10 days, apply a ±5% random multiplier.
     /// </summary>
-    internal static void ApplySm2(FlashcardReview review, ReviewQuality quality)
+    internal static void ApplySm2(FlashcardReview review, ReviewQuality quality, bool enableFuzzing = true)
     {
-        var q = (int)quality; // 0=Again, 1=Hard, 2=Good, 3=Easy
-
-        if (q < 3)
+        if (quality < ReviewQuality.Good)
         {
             // Incorrect — reset, increment lapses
             review.Repetitions = 0;
@@ -283,13 +281,21 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             };
         }
 
+        var qClassic = quality switch
+        {
+            ReviewQuality.Easy => 5,
+            ReviewQuality.Good => 4,
+            ReviewQuality.Hard => 2,
+            _ => 1
+        };
+
         // Classic SM-2 ease factor update (using Master Spec formula):
         // EF = Max(1.3, EF + (0.1 - (5-q)*(0.08 + (5-q)*0.02)))
-        var efDelta = 0.1f - (5 - q) * (0.08f + (5 - q) * 0.02f);
+        var efDelta = 0.1f - (5 - qClassic) * (0.08f + (5 - qClassic) * 0.02f);
         review.EaseFactor = Math.Max(1.3f, review.EaseFactor + efDelta);
 
         // Fuzzing ±5%: apply to intervals >= 10 days
-        if (review.Interval >= 10)
+        if (enableFuzzing && review.Interval >= 10)
         {
             var rng = Random.Shared;
             var factor = (float)(0.95 + rng.NextDouble() * 0.10); // [0.95, 1.05)

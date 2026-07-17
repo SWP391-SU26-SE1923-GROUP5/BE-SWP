@@ -218,6 +218,75 @@ namespace AIStudyHub.Data.Migrations
                     b.ToTable("ChatMessage", (string)null);
                 });
 
+            modelBuilder.Entity("AIStudyHub.Data.Entities.ChatMessageCitation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("citation_id");
+
+                    b.Property<Guid>("ChatMessageId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("message_id");
+
+                    b.Property<int>("CitationIndex")
+                        .HasColumnType("int")
+                        .HasColumnName("citation_index");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("create_at");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("document_id");
+
+                    b.Property<bool>("IsHighlightable")
+                        .HasColumnType("bit")
+                        .HasColumnName("is_highlightable");
+
+                    b.Property<string>("MatchType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)")
+                        .HasColumnName("match_type");
+
+                    b.Property<int?>("PageNumber")
+                        .HasColumnType("int")
+                        .HasColumnName("page_number");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)")
+                        .HasColumnName("reason");
+
+                    b.Property<double>("Relevance")
+                        .HasColumnType("float")
+                        .HasColumnName("relevance");
+
+                    b.Property<string>("Snippet")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("snippet");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("source");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("update_at");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChatMessageId", "CitationIndex")
+                        .IsUnique();
+
+                    b.ToTable("ChatMessageCitation", (string)null);
+                });
+
             modelBuilder.Entity("AIStudyHub.Data.Entities.ChatSession", b =>
                 {
                     b.Property<Guid>("Id")
@@ -329,8 +398,32 @@ namespace AIStudyHub.Data.Migrations
                     b.Property<bool?>("IsOcrApplied")
                         .HasColumnType("bit");
 
+                    b.Property<string>("LastReindexError")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("last_reindex_error");
+
                     b.Property<int>("LifecycleStatus")
                         .HasColumnType("int");
+
+                    b.Property<int>("ProcessingVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1)
+                        .HasColumnName("processing_version");
+
+                    b.Property<int>("ReindexAttemptCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0)
+                        .HasColumnName("reindex_attempt_count");
+
+                    b.Property<Guid?>("ReindexClaimId")
+                        .HasColumnType("uniqueidentifier")
+                        .HasColumnName("reindex_claim_id");
+
+                    b.Property<DateTime?>("ReindexClaimedAt")
+                        .HasColumnType("datetime")
+                        .HasColumnName("reindex_claimed_at");
 
                     b.Property<string>("ShareStatus")
                         .IsRequired()
@@ -348,6 +441,10 @@ namespace AIStudyHub.Data.Migrations
                     b.Property<Guid>("SubjectId")
                         .HasColumnType("uniqueidentifier")
                         .HasColumnName("subject_id");
+
+                    b.Property<string>("SuggestedPromptsJson")
+                        .HasColumnType("nvarchar(max)")
+                        .HasColumnName("suggested_prompts_json");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -374,6 +471,14 @@ namespace AIStudyHub.Data.Migrations
                     b.HasIndex("SubjectId");
 
                     b.HasIndex("UserId");
+
+                    b.HasIndex("ProcessingVersion", "ReindexClaimedAt")
+                        .HasDatabaseName("IX_Document_ReindexEligibility");
+
+                    b.HasIndex("UserId", "FileName")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Document_UserId_FileName_Active")
+                        .HasFilter("[LifecycleStatus] = 0 AND [file_name] IS NOT NULL");
 
                     b.ToTable("Document", (string)null);
                 });
@@ -1792,6 +1897,17 @@ namespace AIStudyHub.Data.Migrations
                     b.Navigation("ChatSession");
                 });
 
+            modelBuilder.Entity("AIStudyHub.Data.Entities.ChatMessageCitation", b =>
+                {
+                    b.HasOne("AIStudyHub.Data.Entities.ChatMessage", "ChatMessage")
+                        .WithMany("Citations")
+                        .HasForeignKey("ChatMessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ChatMessage");
+                });
+
             modelBuilder.Entity("AIStudyHub.Data.Entities.ChatSession", b =>
                 {
                     b.HasOne("AIStudyHub.Data.Entities.User", "User")
@@ -2162,6 +2278,11 @@ namespace AIStudyHub.Data.Migrations
             modelBuilder.Entity("AIStudyHub.Data.Entities.Badge", b =>
                 {
                     b.Navigation("UserBadges");
+                });
+
+            modelBuilder.Entity("AIStudyHub.Data.Entities.ChatMessage", b =>
+                {
+                    b.Navigation("Citations");
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.ChatSession", b =>

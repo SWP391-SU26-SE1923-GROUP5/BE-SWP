@@ -28,9 +28,12 @@ public record SummarizeResult(
 );
 
 public record CitationInfo(
+    Guid DocumentId,
     string Source,
     string Content,
     double Relevance,
     int? PageNumber,
-    string MatchType
+    string MatchType,
+    bool IsHighlightable = false,
+    string? Reason = "legacy_unclassified"
 );

@@ -11,6 +11,7 @@ using AIStudyHub.Business.Interfaces.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.Orchestration;
 using AIStudyHub.Business.Interfaces.AI.Tracking;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Mappings;
 using AIStudyHub.Data;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Repositories;
@@ -30,7 +31,7 @@ public class AIChatServiceTests : IDisposable
     private readonly UnitOfWork _unitOfWork;
     private readonly Mock<ITokenTrackerService> _tokenTrackerMock;
     private readonly Mock<ISemanticKernelOrchestrator> _orchestratorMock;
-    private readonly Mock<IMapper> _mapperMock;
+    private readonly IMapper _mapper;
     private readonly AIChatService _service;
     private readonly Guid _userId;
 
@@ -48,19 +49,30 @@ public class AIChatServiceTests : IDisposable
         _unitOfWork = new UnitOfWork(_dbContext);
         _tokenTrackerMock = new Mock<ITokenTrackerService>();
         _orchestratorMock = new Mock<ISemanticKernelOrchestrator>();
-        _mapperMock = new Mock<IMapper>();
+        var mapperConfig = new MapperConfigurationExpression();
+        mapperConfig.AddProfile<ApplicationMappingProfile>();
+        _mapper = new MapperConfiguration(
+            mapperConfig,
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance).CreateMapper();
 
         // Default: user has quota
         _tokenTrackerMock.Setup(x => x.HasQuotaAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         _tokenTrackerMock.Setup(x => x.GetUsageInfoAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((0L, 100000L));
+            .ReturnsAsync((0, 100000));
 
-        _service = new AIChatService(_unitOfWork, _mapperMock.Object, null!, _orchestratorMock.Object, _tokenTrackerMock.Object);
+        _service = new AIChatService(_unitOfWork, _mapper, null!, _orchestratorMock.Object, _tokenTrackerMock.Object);
         _userId = Guid.NewGuid();
     }
 
     public void Dispose()
+    {
+        _dbContext.Dispose();
+        _connection.Dispose();
+    }
+
+    [Fact]
+    public async Task CreateMessageAsync_SessionWithNoDocuments_ReturnsWarningMessage()
     {
         // Arrange
         var session = new ChatSession { Id = Guid.NewGuid(), UserId = _userId, SessionTitle = "Test" };
@@ -86,15 +98,15 @@ public class AIChatServiceTests : IDisposable
         // Arrange
         var session = new ChatSession { Id = Guid.NewGuid(), UserId = _userId, SessionTitle = "Test" };
         var doc = new Document { Id = Guid.NewGuid(), UserId = _userId, Title = "Doc 1" };
-        await _dbContext.ChatSessions.AddAsync(session);
-        await _dbContext.Documents.AddAsync(doc);
-        await _dbContext.ChatSessionDocuments.AddAsync(new ChatSessionDocument
+        session.ChatSessionDocuments.Add(new ChatSessionDocument
         {
             Id = Guid.NewGuid(),
             ChatSessionId = session.Id,
             DocumentId = doc.Id,
             CreatedAt = DateTime.UtcNow
         });
+        await _dbContext.ChatSessions.AddAsync(session);
+        await _dbContext.Documents.AddAsync(doc);
         await _dbContext.SaveChangesAsync();
 
         _orchestratorMock.Setup(x => x.AskWithTrackingAsync(
@@ -121,14 +133,12 @@ public class AIChatServiceTests : IDisposable
         var session = new ChatSession { Id = Guid.NewGuid(), UserId = _userId, SessionTitle = "Multi-doc Test" };
         var doc1 = new Document { Id = Guid.NewGuid(), UserId = _userId, Title = "Doc 1" };
         var doc2 = new Document { Id = Guid.NewGuid(), UserId = _userId, Title = "Doc 2" };
+        session.ChatSessionDocuments.Add(new ChatSessionDocument { Id = Guid.NewGuid(), ChatSessionId = session.Id, DocumentId = doc1.Id, CreatedAt = DateTime.UtcNow });
+        session.ChatSessionDocuments.Add(new ChatSessionDocument { Id = Guid.NewGuid(), ChatSessionId = session.Id, DocumentId = doc2.Id, CreatedAt = DateTime.UtcNow });
 
         await _dbContext.ChatSessions.AddAsync(session);
         await _dbContext.Documents.AddAsync(doc1);
         await _dbContext.Documents.AddAsync(doc2);
-        await _dbContext.ChatSessionDocuments.AddRangeAsync(
-            new ChatSessionDocument { Id = Guid.NewGuid(), ChatSessionId = session.Id, DocumentId = doc1.Id, CreatedAt = DateTime.UtcNow },
-            new ChatSessionDocument { Id = Guid.NewGuid(), ChatSessionId = session.Id, DocumentId = doc2.Id, CreatedAt = DateTime.UtcNow }
-        );
         await _dbContext.SaveChangesAsync();
 
         _orchestratorMock.Setup(x => x.AskWithTrackingAsync(
@@ -153,6 +163,194 @@ public class AIChatServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateMessageAsync_RagCitations_PreserveDocumentIdentityAndDisplayMetadata()
+    {
+        var session = new ChatSession { Id = Guid.NewGuid(), UserId = _userId, SessionTitle = "Citation Test" };
+        var firstDocumentId = Guid.NewGuid();
+        var secondDocumentId = Guid.NewGuid();
+        var firstDocument = new Document { Id = firstDocumentId, UserId = _userId, Title = "First" };
+        var secondDocument = new Document { Id = secondDocumentId, UserId = _userId, Title = "Second" };
+        session.ChatSessionDocuments.Add(new ChatSessionDocument
+        {
+            Id = Guid.NewGuid(), ChatSessionId = session.Id, DocumentId = firstDocumentId, CreatedAt = DateTime.UtcNow
+        });
+        session.ChatSessionDocuments.Add(new ChatSessionDocument
+        {
+            Id = Guid.NewGuid(), ChatSessionId = session.Id, DocumentId = secondDocumentId, CreatedAt = DateTime.UtcNow
+        });
+        await _dbContext.AddRangeAsync(session, firstDocument, secondDocument);
+        await _dbContext.SaveChangesAsync();
+
+        var longContent = new string('x', 301);
+        _orchestratorMock.Setup(x => x.AskWithTrackingAsync(
+                _userId,
+                It.IsAny<IReadOnlyList<Guid>>(),
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<ChatMessage>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RagResponseWithUsage(
+                "answer",
+                new List<CitationInfo>
+                {
+                    new(firstDocumentId, "abc.pdf", longContent, 0.91, 3, "hybrid", true, null),
+                    new(secondDocumentId, "abc (1).pdf", "short", 0.82, null, "semantic", false, "legacy_unclassified")
+                },
+                0.9,
+                10,
+                5,
+                true));
+
+        var result = await _service.CreateMessageAsync(
+            new CreateChatMessageRequestDto(session.Id, "Compare sources"), _userId);
+
+        Assert.NotNull(result.Citations);
+        Assert.Collection(result.Citations,
+            first =>
+            {
+                Assert.Equal(firstDocumentId, first.DocumentId);
+                Assert.Equal("abc.pdf", first.Source);
+                Assert.Equal(new string('x', 300) + "…", first.Snippet);
+                Assert.Equal(3, first.PageNumber);
+                Assert.Equal(0.91, first.Relevance);
+                Assert.Equal("hybrid", first.MatchType);
+                Assert.True(first.IsHighlightable);
+                Assert.Null(first.Reason);
+            },
+            second =>
+            {
+                Assert.Equal(secondDocumentId, second.DocumentId);
+                Assert.Equal("abc (1).pdf", second.Source);
+                Assert.Equal("short", second.Snippet);
+                Assert.Null(second.PageNumber);
+                Assert.Equal(0.82, second.Relevance);
+                Assert.Equal("semantic", second.MatchType);
+                Assert.False(second.IsHighlightable);
+                Assert.Equal("legacy_unclassified", second.Reason);
+            });
+
+        _dbContext.ChangeTracker.Clear();
+        var persisted = await _dbContext.ChatMessageCitations
+            .OrderBy(citation => citation.CitationIndex)
+            .ToListAsync();
+
+        Assert.Collection(persisted,
+            first =>
+            {
+                Assert.Equal(1, first.CitationIndex);
+                Assert.Equal(firstDocumentId, first.DocumentId);
+                Assert.Equal("abc.pdf", first.Source);
+                Assert.Equal(result.Citations[0].Snippet, first.Snippet);
+                Assert.Equal(3, first.PageNumber);
+                Assert.True(first.IsHighlightable);
+            },
+            second =>
+            {
+                Assert.Equal(2, second.CitationIndex);
+                Assert.Equal(secondDocumentId, second.DocumentId);
+                Assert.Equal("legacy_unclassified", second.Reason);
+            });
+
+        var history = await _service.GetMessagesAsync(session.Id, _userId);
+        var reloadedAssistant = Assert.Single(history, message => message.Sender == "assistant");
+        Assert.Collection(reloadedAssistant.Citations,
+            first => Assert.Equal(firstDocumentId, first.DocumentId),
+            second => Assert.Equal(secondDocumentId, second.DocumentId));
+    }
+
+    [Fact]
+    public async Task GetMessagesAsync_SessionOwnedByAnotherUser_ThrowsNotFound()
+    {
+        var session = new ChatSession
+        {
+            Id = Guid.NewGuid(),
+            UserId = Guid.NewGuid(),
+            SessionTitle = "Private"
+        };
+        await _dbContext.ChatSessions.AddAsync(session);
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            _service.GetMessagesAsync(session.Id, _userId));
+    }
+
+    [Fact]
+    public async Task UpdateSessionAsync_OwnerRenamesSessionAndTrimsTitle()
+    {
+        var session = new ChatSession
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userId,
+            SessionTitle = "Old title"
+        };
+        await _dbContext.ChatSessions.AddAsync(session);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _service.UpdateSessionAsync(
+            session.Id,
+            new UpdateChatSessionRequestDto("  New title  "),
+            _userId);
+
+        Assert.Equal("New title", result.SessionTitle);
+        Assert.Equal("New title", (await _dbContext.ChatSessions.FindAsync(session.Id))!.SessionTitle);
+    }
+
+    [Fact]
+    public async Task UpdateSessionAsync_OtherUserCannotRenameSession()
+    {
+        var session = new ChatSession
+        {
+            Id = Guid.NewGuid(),
+            UserId = Guid.NewGuid(),
+            SessionTitle = "Private"
+        };
+        await _dbContext.ChatSessions.AddAsync(session);
+        await _dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.UpdateSessionAsync(
+            session.Id,
+            new UpdateChatSessionRequestDto("Changed"),
+            _userId));
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_OwnerDeletesSession()
+    {
+        var session = new ChatSession
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userId,
+            SessionTitle = "Delete me"
+        };
+        await _dbContext.ChatSessions.AddAsync(session);
+        var message = new ChatMessage
+        {
+            Id = Guid.NewGuid(),
+            ChatSessionId = session.Id,
+            Sender = "assistant",
+            Content = "Answer"
+        };
+        message.Citations.Add(new ChatMessageCitation
+        {
+            Id = Guid.NewGuid(),
+            CitationIndex = 1,
+            DocumentId = Guid.NewGuid(),
+            Source = "source.pdf",
+            Snippet = "Quoted text",
+            MatchType = "hybrid"
+        });
+        await _dbContext.ChatMessages.AddAsync(message);
+        await _dbContext.SaveChangesAsync();
+        _dbContext.ChangeTracker.Clear();
+        await _dbContext.Database.ExecuteSqlRawAsync("PRAGMA foreign_keys = ON;");
+
+        await _service.DeleteSessionAsync(session.Id, _userId);
+
+        Assert.Null(await _dbContext.ChatSessions.FindAsync(session.Id));
+        Assert.Empty(await _dbContext.ChatMessages.ToListAsync());
+        Assert.Empty(await _dbContext.ChatMessageCitations.ToListAsync());
+    }
+
+    [Fact]
     public async Task CreateMessageAsync_QuotaExceeded_ThrowsQuotaExceededException()
     {
         // Arrange
@@ -163,7 +361,7 @@ public class AIChatServiceTests : IDisposable
         _tokenTrackerMock.Setup(x => x.HasQuotaAsync(_userId, It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
         _tokenTrackerMock.Setup(x => x.GetUsageInfoAsync(_userId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((50000L, 50000L));
+            .ReturnsAsync((50000, 50000));
 
         var request = new CreateChatMessageRequestDto(session.Id, "Hello");
 

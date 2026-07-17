@@ -31,14 +31,33 @@ public sealed class StreakWarningWorker : BackgroundService
         _logger.LogInformation("StreakWarningWorker started.");
         while (!stoppingToken.IsCancellationRequested)
         {
-            var now = DateTime.UtcNow;
-            if (now.Date != _lastRunDate && now.Hour >= 12)
+            try
             {
-                await RunOnceAsync(stoppingToken);
-                _lastRunDate = now.Date;
+                var now = DateTime.UtcNow;
+                if (now.Date != _lastRunDate && now.Hour >= 12)
+                {
+                    await RunOnceAsync(stoppingToken);
+                    _lastRunDate = now.Date;
+                }
             }
-            // Wake up every hour to check if it's time to run
-            await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "StreakWarningWorker iteration failed.");
+            }
+
+            try
+            {
+                // Wake up every hour to check if it's time to run
+                await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
     }
 

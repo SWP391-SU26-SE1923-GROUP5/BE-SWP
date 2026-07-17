@@ -35,23 +35,36 @@ public class DocumentServiceTrashBinTests : IDisposable
         _service = new DocumentService(_unitOfWork, null!);
     }
 
-    private async Task<(Guid UserId, Guid DocId)> SeedDocument(string title = "Test Doc", DocumentLifecycleStatus status = DocumentLifecycleStatus.Active)
+    private async Task<(Guid UserId, Guid DocId)> SeedDocument(
+        string title = "Test Doc",
+        DocumentLifecycleStatus status = DocumentLifecycleStatus.Active,
+        Guid? userId = null,
+        string? fileName = null)
     {
-        var userId = Guid.NewGuid();
+        var uId = userId ?? Guid.NewGuid();
         var subjectId = Guid.NewGuid();
         var docId = Guid.NewGuid();
-        _dbContext.Users.Add(new User { Id = userId, Email = $"{userId}@test.com", FullName = "User", PasswordHash = "hash" });
-        _dbContext.Subjects.Add(new Subject { Id = subjectId, SubjectCode = "T1", SubjectName = "Test" });
-        _dbContext.Documents.Add(new Document { Id = docId, UserId = userId, SubjectId = subjectId, Title = title, LifecycleStatus = status });
+        if (_dbContext.Users.Find(uId) == null)
+            _dbContext.Users.Add(new User { Id = uId, Email = $"{uId}@test.com", FullName = "User", PasswordHash = "hash" });
+        _dbContext.Subjects.Add(new Subject { Id = subjectId, SubjectCode = $"T_{subjectId.ToString().Substring(0, 8)}", SubjectName = "Test" });
+        _dbContext.Documents.Add(new Document
+        {
+            Id = docId,
+            UserId = uId,
+            SubjectId = subjectId,
+            Title = title,
+            FileName = fileName,
+            LifecycleStatus = status
+        });
         await _dbContext.SaveChangesAsync();
-        return (userId, docId);
+        return (uId, docId);
     }
 
     [Fact]
     public async Task GetAllByUserIdAsync_ExcludesTrashedDocuments()
     {
         var (userId, _) = await SeedDocument("Active Doc", DocumentLifecycleStatus.Active);
-        await SeedDocument("Trashed Doc", DocumentLifecycleStatus.Trashed);
+        await SeedDocument("Trashed Doc", DocumentLifecycleStatus.Trashed, userId);
 
         var result = await _service.GetAllByUserIdAsync(userId);
 
@@ -119,6 +132,46 @@ public class DocumentServiceTrashBinTests : IDisposable
     }
 
     [Fact]
+    public async Task RestoreAsync_ActiveOwnerNameCollision_AssignsSmallestAvailableSuffix()
+    {
+        var (userId, trashedId) = await SeedDocument(
+            "Trashed", DocumentLifecycleStatus.Trashed, fileName: "abc.pdf");
+        await SeedDocument("Active", DocumentLifecycleStatus.Active, userId, "abc.pdf");
+        await SeedDocument("Active suffix", DocumentLifecycleStatus.Active, userId, "abc (1).pdf");
+
+        await _service.RestoreAsync(trashedId, userId);
+
+        var restored = await _dbContext.Documents.FindAsync(trashedId);
+        Assert.Equal(DocumentLifecycleStatus.Active, restored!.LifecycleStatus);
+        Assert.Equal("abc (2).pdf", restored.FileName);
+    }
+
+    [Fact]
+    public async Task RestoreAsync_FreeFormerName_PreservesFileName()
+    {
+        var (userId, trashedId) = await SeedDocument(
+            "Trashed", DocumentLifecycleStatus.Trashed, fileName: "abc.pdf");
+
+        await _service.RestoreAsync(trashedId, userId);
+
+        var restored = await _dbContext.Documents.FindAsync(trashedId);
+        Assert.Equal("abc.pdf", restored!.FileName);
+    }
+
+    [Fact]
+    public async Task RestoreAsync_OtherOwnerNameCollision_PreservesFileName()
+    {
+        var (userId, trashedId) = await SeedDocument(
+            "Trashed", DocumentLifecycleStatus.Trashed, fileName: "abc.pdf");
+        await SeedDocument("Other owner", DocumentLifecycleStatus.Active, fileName: "abc.pdf");
+
+        await _service.RestoreAsync(trashedId, userId);
+
+        var restored = await _dbContext.Documents.FindAsync(trashedId);
+        Assert.Equal("abc.pdf", restored!.FileName);
+    }
+
+    [Fact]
     public async Task RestoreAsync_CannotRestorePurgedDocument()
     {
         var (userId, docId) = await SeedDocument(status: DocumentLifecycleStatus.Purged);
@@ -149,8 +202,8 @@ public class DocumentServiceTrashBinTests : IDisposable
     public async Task GetTrashAsync_ReturnsOnlyTrashedDocuments()
     {
         var (userId, _) = await SeedDocument("Active Doc", DocumentLifecycleStatus.Active);
-        await SeedDocument("Trashed Doc 1", DocumentLifecycleStatus.Trashed);
-        await SeedDocument("Trashed Doc 2", DocumentLifecycleStatus.Trashed);
+        await SeedDocument("Trashed Doc 1", DocumentLifecycleStatus.Trashed, userId);
+        await SeedDocument("Trashed Doc 2", DocumentLifecycleStatus.Trashed, userId);
 
         var result = await _service.GetTrashAsync(userId);
 

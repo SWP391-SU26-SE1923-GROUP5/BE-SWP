@@ -543,12 +543,14 @@ sequenceDiagram
     end
 ```
 
-#### L2-L5 — RAG Query Flow (Chat with Document)
+#### L2-L5 — Legacy RAG Query Flow (Chat with Document)
+
+> Current API contract: `POST /api/AI/rag/ask` is search-only and returns reranked chunks. Chat answer generation uses `POST /api/Chat/messages`. The sequence below documents the orchestration used by the chat flow, not the search-only endpoint.
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Controller as AIController
+    participant Controller as ChatController
     participant Orch as SemanticKernelOrchestrator
     participant Hybrid as HybridSearchService
     participant EmbedSvc as EmbeddingService
@@ -560,8 +562,8 @@ sequenceDiagram
     participant Ground as GroundingVerifier
     participant Score as ConfidenceScorer
 
-    Client->>Controller: POST /api/AI/rag/ask { question }
-    Controller->>Orch: AskAsync(userId, question)
+    Client->>Controller: POST /api/Chat/messages { sessionId, message }
+    Controller->>Orch: AskWithTrackingAsync(userId, documentIds, question, history)
 
     rect rgb(235, 245, 255)
         Note over Orch,Qdrant: L2 — Retrieval (Hybrid Search + Reranking)

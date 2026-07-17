@@ -7,4 +7,5 @@ public sealed class ChatMessage : BaseEntity
     public string Content { get; set; } = string.Empty;
 
     public ChatSession ChatSession { get; set; } = null!;
+    public ICollection<ChatMessageCitation> Citations { get; set; } = new List<ChatMessageCitation>();
 }

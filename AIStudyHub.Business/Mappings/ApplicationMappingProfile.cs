@@ -126,7 +126,20 @@ public sealed class ApplicationMappingProfile : Profile
                 src.Content,
                 src.CreatedAt,
                 src.UpdatedAt,
-                false)); // IsRelevant is only meaningful for assistant messages; set in service
+                false, // IsRelevant is only meaningful for assistant messages; set in service
+                src.Citations
+                    .OrderBy(citation => citation.CitationIndex)
+                    .Select(citation => new ChatCitationDto(
+                        citation.DocumentId,
+                        citation.Source,
+                        citation.Snippet,
+                        citation.PageNumber,
+                        citation.Relevance,
+                        citation.MatchType,
+                        citation.IsHighlightable,
+                        citation.Reason))
+                    .ToList()))
+            .ForMember(destination => destination.Citations, option => option.Ignore());
         CreateMap<CreateChatMessageRequestDto, ChatMessage>()
             .ForMember(dest => dest.ChatSessionId, opt => opt.MapFrom(src => src.SessionId))
             .ForMember(dest => dest.Content, opt => opt.MapFrom(src => src.Message))

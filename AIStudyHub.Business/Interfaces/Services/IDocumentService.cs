@@ -7,6 +7,12 @@ public interface IDocumentService : ICrudService<DocumentResponseDto, CreateDocu
     Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<DocumentResponseDto>> GetAllPagedAsync(Guid userId, AIStudyHub.Business.DTOs.Common.PaginationParams @params, Guid? subjectId = null, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<DocumentResponseDto>> GetAllByUserIdAsync(Guid userId, string? keyword = null, Guid? subjectId = null, CancellationToken cancellationToken = default);
 
+    Task<string> GetAvailableFileNameAsync(
+        Guid userId,
+        string fileName,
+        Guid? excludeDocumentId = null,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Persists the list of users a document is shared with and updates its share status.
     /// Only the document owner can change its sharing settings.
