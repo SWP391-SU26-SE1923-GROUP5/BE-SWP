@@ -88,10 +88,21 @@ public sealed class AIController : ControllerBase
             _logger.LogInformation(
                 "Hybrid search from user {UserId}: {Question}; DocumentCount={DocumentCount}; TopK={TopK}",
                 userId, request.Question, documentIds?.Count ?? 0, topK);
-            var results = (await _hybridSearchService.SearchAsync(
-                    request.Question, userId, documentIds, topK, ct))
-                .Select(HybridSearchResultDto.FromSearchResult)
-                .ToList();
+            var searchResults = await _hybridSearchService.SearchAsync(
+                request.Question, userId, documentIds, topK, ct);
+            var results = new List<HybridSearchResultDto>();
+            foreach (var searchResult in searchResults)
+            {
+                if (HybridSearchResultDto.TryFromSearchResult(searchResult, out var result))
+                {
+                    results.Add(result!);
+                    continue;
+                }
+
+                _logger.LogWarning(
+                    "Hybrid search result from source {Source} was omitted because documentId metadata is invalid",
+                    searchResult.Source);
+            }
 
             return Ok(new HybridSearchResponseDto(request.Question, results.Count, results));
         }
