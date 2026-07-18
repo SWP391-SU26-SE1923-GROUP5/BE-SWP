@@ -106,6 +106,10 @@ public sealed class AIController : ControllerBase
 
             return Ok(new HybridSearchResponseDto(request.Question, results.Count, results));
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing hybrid search for user {UserId}", userId);

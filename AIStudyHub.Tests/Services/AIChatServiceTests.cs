@@ -468,6 +468,31 @@ public class AIChatServiceTests : IDisposable
         await Assert.ThrowsAsync<QuotaExceededException>(() => _service.CreateMessageAsync(request, _userId));
     }
 
+    [Fact]
+    public async Task CreateMessageAsync_CanceledBeforeSessionLookup_DoesNotPersistMessage()
+    {
+        var session = new ChatSession
+        {
+            Id = Guid.NewGuid(),
+            UserId = _userId,
+            SessionTitle = "Canceled request"
+        };
+        await _dbContext.ChatSessions.AddAsync(session);
+        await _dbContext.SaveChangesAsync();
+        _dbContext.ChangeTracker.Clear();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            _service.CreateMessageAsync(
+                new CreateChatMessageRequestDto(session.Id, "question"),
+                _userId,
+                cts.Token));
+
+        _dbContext.ChangeTracker.Clear();
+        Assert.Empty(await _dbContext.ChatMessages.ToListAsync());
+    }
+
     private sealed class FailCitationSaveInterceptor : SaveChangesInterceptor
     {
         public override ValueTask<InterceptionResult<int>> SavingChangesAsync(

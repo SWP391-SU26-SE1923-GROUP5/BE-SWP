@@ -92,6 +92,43 @@ public sealed class CitationControllerContractTests
         Assert.Equal(documentId, result.DocumentId);
     }
 
+    [Fact]
+    public async Task Ask_RequestCanceled_RethrowsCancellation()
+    {
+        var userId = Guid.NewGuid();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var search = new Mock<IHybridSearchService>();
+        search.Setup(item => item.SearchAsync(
+                It.IsAny<string>(),
+                userId,
+                It.IsAny<IReadOnlyList<Guid>?>(),
+                It.IsAny<int>(),
+                cts.Token))
+            .ThrowsAsync(new OperationCanceledException(cts.Token));
+        var controller = new AIController(
+            Mock.Of<ISemanticKernelOrchestrator>(),
+            search.Object,
+            Options.Create(new RetrievalOptions
+            {
+                TopK = 10,
+                RerankTopK = 5,
+                MaxContextChunks = 10
+            }),
+            Mock.Of<IFlashcardAiService>(),
+            Mock.Of<IQuizAiService>(),
+            Mock.Of<ILogger<AIController>>(),
+            Mock.Of<IRealTimeNotificationService>(),
+            Mock.Of<IUnitOfWork>())
+        {
+            ControllerContext = CreateControllerContext(userId)
+        };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => controller.Ask(
+            new HybridSearchRequestDto("question"),
+            cts.Token));
+    }
+
     private static ControllerContext CreateControllerContext(Guid userId) => new()
     {
         HttpContext = new DefaultHttpContext

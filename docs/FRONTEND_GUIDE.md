@@ -35,11 +35,11 @@ Sau khi tim dung citation, Frontend chuyen den `pageNumber` neu co va chi highli
 
 Message tao truoc migration persistent citations khong duoc backfill va se tra `citations: []`.
 
-> **Phiên bản**: cập nhật 2026-06-28
+> **Phiên bản**: cập nhật 2026-07-18
 > **Backend**: ASP.NET Core 8 Web API
 > **Auth**: JWT Bearer (access + refresh) + External (Google, GitHub)
 > **Real-time**: SignalR tại `/hubs/notifications`
-> **Database**: EF Core (mới nhất: 21 migration cũ + 4 migration mới về tier/flashcard-review/gamification/user-stats)
+> **Database**: EF Core (citation contract mới nhất: `20260718140849_CompleteChatCitationFlow`)
 
 Document này chia làm 3 phần:
 1. **Phần 1 (mục 1-5)**: Mô tả luồng nghiệp vụ bằng ngôn ngữ dễ hiểu cho BA/QC/Frontend dev.
@@ -1205,7 +1205,7 @@ Lấy lịch sử messages của 1 session.
 
 ### 17.4. POST `/api/Chat/messages`
 
-Gửi message mới (user message + AI response được tạo đồng thời).
+Gửi message mới theo hai giai đoạn: backend lưu user message trước khi gọi AI; sau đó lưu assistant message và toàn bộ citation snapshots trong cùng một `SaveChangesAsync`.
 
 **Body**: `{ "sessionId": "guid", "message": "string" }`
 

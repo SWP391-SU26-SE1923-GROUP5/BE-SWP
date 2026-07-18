@@ -93,6 +93,109 @@ public sealed class SemanticKernelCitationTests
         openAi.Verify(service => service.SendMessageWithUsageAsync(It.IsAny<string>()), Times.Never);
     }
 
+    [Fact]
+    public async Task AskWithTrackingAsync_MixedSources_PromptsWithAllowedSourceAndReturnsItsCitation()
+    {
+        var allowedDocumentId = Guid.NewGuid();
+        var outOfSessionDocumentId = Guid.NewGuid();
+        var search = new Mock<IHybridSearchService>();
+        search.Setup(service => service.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<Guid>(),
+                It.IsAny<IReadOnlyList<Guid>?>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                Result(
+                    "The backend architecture uses ASP.NET Core.",
+                    0.95,
+                    "allowed.pdf",
+                    allowedDocumentId.ToString()),
+                Result(
+                    "INVALID NUMERIC CONTENT MUST NOT REACH PROMPT",
+                    0.99,
+                    "numeric.pdf",
+                    "1"),
+                Result(
+                    "OUT OF SESSION CONTENT MUST NOT REACH PROMPT",
+                    0.99,
+                    "other.pdf",
+                    outOfSessionDocumentId.ToString())
+            });
+        string? capturedPrompt = null;
+        var openAi = new Mock<IOpenAIService>();
+        openAi.Setup(service => service.SendMessageWithUsageAsync(It.IsAny<string>()))
+            .Callback<string>(prompt => capturedPrompt = prompt)
+            .ReturnsAsync(new TokenUsageResult("grounded answer", 10, 5));
+        var orchestrator = CreateOrchestrator(search.Object, openAi.Object);
+
+        var response = await orchestrator.AskWithTrackingAsync(
+            Guid.NewGuid(),
+            new[] { allowedDocumentId },
+            "Explain the backend architecture",
+            Array.Empty<ChatMessage>());
+
+        Assert.True(response.IsRelevant);
+        Assert.NotNull(capturedPrompt);
+        Assert.Contains("The backend architecture uses ASP.NET Core.", capturedPrompt);
+        Assert.DoesNotContain("INVALID NUMERIC CONTENT", capturedPrompt);
+        Assert.DoesNotContain("OUT OF SESSION CONTENT", capturedPrompt);
+        var citation = Assert.Single(response.Citations);
+        Assert.Equal(1, citation.CitationIndex);
+        Assert.Equal(allowedDocumentId, citation.DocumentId);
+    }
+
+    [Fact]
+    public async Task AskWithTrackingAsync_LowRelevance_ReturnsNoCitations()
+    {
+        var documentId = Guid.NewGuid();
+        var search = new Mock<IHybridSearchService>();
+        search.Setup(service => service.SearchAsync(
+                It.IsAny<string>(),
+                It.IsAny<Guid>(),
+                It.IsAny<IReadOnlyList<Guid>?>(),
+                It.IsAny<int>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                Result(
+                    "The backend uses ASP.NET Core.",
+                    0.1,
+                    "architecture.pdf",
+                    documentId.ToString())
+            });
+        var openAi = new Mock<IOpenAIService>();
+        openAi.Setup(service => service.SendMessageAsync(It.IsAny<string>()))
+            .ReturnsAsync("related topics");
+        var orchestrator = CreateOrchestrator(search.Object, openAi.Object);
+
+        var response = await orchestrator.AskWithTrackingAsync(
+            Guid.NewGuid(),
+            new[] { documentId },
+            "astronomy galaxies telescope",
+            Array.Empty<ChatMessage>());
+
+        Assert.False(response.IsRelevant);
+        Assert.Empty(response.Citations);
+        openAi.Verify(service => service.SendMessageWithUsageAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    private static SearchResult Result(
+        string content,
+        double score,
+        string source,
+        string documentId) =>
+        new(
+            content,
+            score,
+            source,
+            new Dictionary<string, string>
+            {
+                ["documentId"] = documentId,
+                ["chunkIndex"] = "0"
+            });
+
     private static SemanticKernelOrchestrator CreateOrchestrator(
         IHybridSearchService search,
         IOpenAIService openAi)

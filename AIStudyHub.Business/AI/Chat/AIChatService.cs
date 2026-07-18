@@ -146,12 +146,12 @@ public sealed class AIChatService : IAIChatService
                 UserId = userId,
                 SessionTitle = title
             };
-            await _unitOfWork.ChatSessions.AddAsync(session);
-            await _unitOfWork.SaveChangesAsync();
+            await _unitOfWork.ChatSessions.AddAsync(session, ct);
+            await _unitOfWork.SaveChangesAsync(ct);
         }
         else
         {
-            session = await _unitOfWork.ChatSessions.GetByIdAsync(request.SessionId.Value);
+            session = await _unitOfWork.ChatSessions.GetByIdAsync(request.SessionId.Value, ct);
             if (session is null || session.UserId != userId)
             {
                 throw new KeyNotFoundException($"Chat session with ID {request.SessionId} not found or access denied.");
@@ -164,8 +164,8 @@ public sealed class AIChatService : IAIChatService
             Sender = "user",
             Content = request.Message
         };
-        await _unitOfWork.ChatMessages.AddAsync(userMessage);
-        await _unitOfWork.SaveChangesAsync();
+        await _unitOfWork.ChatMessages.AddAsync(userMessage, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
 
         var history = await _unitOfWork.ChatMessages
             .Query()
@@ -256,7 +256,7 @@ public sealed class AIChatService : IAIChatService
             }).ToList()
         };
 
-        await _unitOfWork.ChatMessages.AddAsync(assistantMessage);
+        await _unitOfWork.ChatMessages.AddAsync(assistantMessage, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
         return _mapper.Map<ChatMessageResponseDto>(assistantMessage);
