@@ -201,9 +201,10 @@ public sealed class AIChatService : IAIChatService
             {
                 citations = ragResponse.Citations
                     .Select(c => new ChatCitationDto(
+                        c.CitationIndex,
                         c.DocumentId,
                         c.Source,
-                        c.Content.Length > 300 ? c.Content[..300] + "…" : c.Content,
+                        c.Content.Length > 300 ? c.Content[..300] : c.Content,
                         c.PageNumber,
                         c.Relevance,
                         c.MatchType,
@@ -229,9 +230,11 @@ public sealed class AIChatService : IAIChatService
             ChatSessionId = session.Id,
             Sender = "assistant",
             Content = aiResponse,
-            Citations = citations.Select((citation, index) =>
+            IsRelevant = isRelevant,
+            Citations = citations.Select(citation =>
             {
-                if (citation.DocumentId == Guid.Empty
+                if (citation.CitationIndex <= 0
+                    || citation.DocumentId == Guid.Empty
                     || string.IsNullOrWhiteSpace(citation.Source)
                     || string.IsNullOrWhiteSpace(citation.Snippet))
                 {
@@ -240,7 +243,7 @@ public sealed class AIChatService : IAIChatService
 
                 return new ChatMessageCitation
                 {
-                    CitationIndex = index + 1,
+                    CitationIndex = citation.CitationIndex,
                     DocumentId = citation.DocumentId,
                     Source = citation.Source,
                     Snippet = citation.Snippet,
@@ -256,20 +259,7 @@ public sealed class AIChatService : IAIChatService
         await _unitOfWork.ChatMessages.AddAsync(assistantMessage);
         await _unitOfWork.SaveChangesAsync(ct);
 
-        var created = await _unitOfWork.ChatMessages
-            .Query()
-            .AsNoTracking()
-            .FirstAsync(chatMessage => chatMessage.Id == assistantMessage.Id, ct);
-
-        return new ChatMessageResponseDto(
-            created.Id,
-            created.ChatSessionId,
-            created.Sender,
-            created.Content,
-            created.CreatedAt,
-            created.UpdatedAt,
-            isRelevant,
-            citations);
+        return _mapper.Map<ChatMessageResponseDto>(assistantMessage);
     }
 
     public async Task<ChatSessionDocumentResponseDto> AddDocumentAsync(Guid sessionId, Guid documentId, Guid userId, CancellationToken ct = default)

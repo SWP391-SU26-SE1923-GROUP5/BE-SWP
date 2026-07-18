@@ -14,6 +14,7 @@ public sealed record ChatMessageResponseDto(Guid Id, Guid ChatSessionId, string 
 /// Source (fileName) is kept as a display-friendly label but may not be unique.
 /// </summary>
 public sealed record ChatCitationDto(
+    int CitationIndex,
     Guid DocumentId,
     string Source,
     string Snippet,
