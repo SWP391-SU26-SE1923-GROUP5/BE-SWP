@@ -179,14 +179,6 @@ public class AdminController : ControllerBase
         return Ok(result);
     }
 
-    [HttpGet("revenue")]
-    public async Task<ActionResult<RevenueResultDto>> GetRevenue(
-        [FromQuery] RevenueRequestDto request, CancellationToken ct)
-    {
-        var result = await _adminService.GetRevenueAsync(request, ct);
-        return Ok(result);
-    }
-
     [HttpGet("documents/{documentId:guid}/reports")]
     public async Task<ActionResult<AdminDocumentReportsDto>> GetDocumentReports(
         Guid documentId, CancellationToken ct)

@@ -245,64 +245,29 @@ public sealed class AdminService : IAdminService
     public async Task<AdminDashboardDto> GetDashboardAsync(CancellationToken ct = default)
     {
         var totalUsers = await _unitOfWork.Users.Query().CountAsync(ct);
-        var documentsReported = await _unitOfWork.Reports.Query()
-            .Select(r => r.DocumentId)
-            .Distinct()
-            .CountAsync(ct);
+        var totalActiveUsers = await _unitOfWork.Users.Query()
+            .CountAsync(u => u.IsActive, ct);
+        var totalDocumentsUploaded = await _unitOfWork.Documents.Query().CountAsync(ct);
 
-        return new AdminDashboardDto(totalUsers, documentsReported);
-    }
-
-    public async Task<RevenueResultDto> GetRevenueAsync(RevenueRequestDto request, CancellationToken ct = default)
-    {
         var completedPayments = _unitOfWork.Payments.Query()
             .AsNoTracking()
             .Where(p => p.Status == PaymentStatus.Completed);
-
         var totalRevenue = await completedPayments.SumAsync(p => p.Amount, ct);
         var totalTransactions = await completedPayments.CountAsync(ct);
 
-        var now = DateTime.UtcNow;
-        IReadOnlyList<RevenueBreakdownDto> breakdown;
+        var tierBreakdown = (await _unitOfWork.Payments.Query()
+            .AsNoTracking()
+            .Where(p => p.Status == PaymentStatus.Completed)
+            .Include(p => p.TierMembership)
+            .ToListAsync(ct))
+            .GroupBy(p => new { p.TierId, TierName = p.TierMembership?.TierName ?? "Unknown", Price = p.TierMembership?.Price ?? 0m })
+            .Select(g => new TierRevenueDto(
+                g.Key.TierName,
+                g.Key.Price,
+                g.Count(),
+                g.Sum(p => p.Amount)))
+            .ToList();
 
-        switch (request.Duration)
-        {
-            case RevenueDuration.Day:
-                var dailyGroups = completedPayments
-                    .GroupBy(p => p.PaymentDate.Date)
-                    .Select(g => new RevenueBreakdownDto(g.Key, g.Sum(p => p.Amount), g.Count()))
-                    .OrderByDescending(b => b.Period)
-                    .Take(30)
-                    .ToList();
-                breakdown = dailyGroups;
-                break;
-
-            case RevenueDuration.Month:
-                var monthlyGroups = completedPayments
-                    .GroupBy(p => new { p.PaymentDate.Year, p.PaymentDate.Month })
-                    .Select(g => new RevenueBreakdownDto(
-                        new DateTime(g.Key.Year, g.Key.Month, 1), g.Sum(p => p.Amount), g.Count()))
-                    .OrderByDescending(b => b.Period)
-                    .Take(12)
-                    .ToList();
-                breakdown = monthlyGroups;
-                break;
-
-            case RevenueDuration.Year:
-                var yearlyGroups = completedPayments
-                    .GroupBy(p => p.PaymentDate.Year)
-                    .Select(g => new RevenueBreakdownDto(
-                        new DateTime(g.Key, 1, 1), g.Sum(p => p.Amount), g.Count()))
-                    .OrderByDescending(b => b.Period)
-                    .ToList();
-                breakdown = yearlyGroups;
-                break;
-
-            default:
-                breakdown = [];
-                break;
-        }
-
-        return new RevenueResultDto(totalRevenue, totalTransactions, request.Duration, breakdown);
+        return new AdminDashboardDto(totalUsers, totalActiveUsers, totalDocumentsUploaded, totalRevenue, totalTransactions, tierBreakdown);
     }
 }
