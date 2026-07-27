@@ -1,5 +1,6 @@
 using AIStudyHub.Business.AI.LLM;
 using AIStudyHub.Business.AI.Chat;
+using AIStudyHub.Business.AI.Orchestration;
 using AIStudyHub.Business.Interfaces.AI.Chat;
 using AIStudyHub.Business.Interfaces.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.Tracking;
@@ -9,6 +10,7 @@ using AIStudyHub.Business.Exceptions;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
+using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Builder;
 using AIStudyHub.Business.Interfaces.AI.Orchestration;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +24,7 @@ public sealed class AIChatService : IAIChatService
     private readonly IOpenAIService _openAIService;
     private readonly ISemanticKernelOrchestrator _orchestrator;
     private readonly ITokenTrackerService _tokenTracker;
+    private readonly ILogger<AIChatService> _logger;
 
     private const int EstimatedChatTokens = 1500;
 
@@ -30,13 +33,15 @@ public sealed class AIChatService : IAIChatService
         IMapper mapper,
         IOpenAIService openAiService,
         ISemanticKernelOrchestrator orchestrator,
-        ITokenTrackerService tokenTracker)
+        ITokenTrackerService tokenTracker,
+        ILogger<AIChatService> logger)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _openAIService = openAiService;
         _orchestrator = orchestrator;
         _tokenTracker = tokenTracker;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<ChatSessionResponseDto>> GetSessionsAsync()
@@ -187,7 +192,8 @@ public sealed class AIChatService : IAIChatService
         int inputTokens = 0;
         int outputTokens = 0;
         bool isRelevant = false;
-        IReadOnlyList<ChatCitationDto> citations = Array.Empty<ChatCitationDto>();
+        IReadOnlyList<CitationInfo> ragCitations = Array.Empty<CitationInfo>();
+        Dictionary<Guid, string> docIdToFileName = new();
 
         if (docIds != null && docIds.Count > 0)
         {
@@ -196,22 +202,101 @@ public sealed class AIChatService : IAIChatService
             inputTokens = ragResponse.InputTokens;
             outputTokens = ragResponse.OutputTokens;
             isRelevant = ragResponse.IsRelevant;
+            ragCitations = ragResponse.Citations;
+            // Step 1: fetch real file names from DB so we verify against actual file names
+            var citationDocIds = ragCitations.Select(c => c.DocumentId).Distinct().ToList();
+            var docNames = await _unitOfWork.Documents.Query()
+                .Where(d => citationDocIds.Contains(d.Id))
+                .Select(d => new { d.Id, d.FileName })
+                .AsNoTracking()
+                .ToListAsync(ct);
+            docIdToFileName = docNames.ToDictionary(x => x.Id, x => x.FileName ?? "Tài liệu");
 
-            if (ragResponse.Citations is { Count: > 0 })
+            // Step 2: normalize AI response for citation lookup
+            var normalizedResponse = aiResponse.ToLowerInvariant();
+            var isExhaustive = RagContextExpander.IsExhaustiveQuery(request.Message);
+
+            // Pre-compute response keywords once; used for both per-chunk match and ranking.
+            var responseWords = normalizedResponse
+                .Split(new[] { ' ', '\n', '\r', '.', ',', ';', ':', '!', '?', '(', ')', '[', ']' },
+                    StringSplitOptions.RemoveEmptyEntries)
+                .Where(w => w.Length >= 4)
+                .Distinct()
+                .ToList();
+
+            // Penalize only chunks whose first line is a clear TOC entry.
+            // 'Tóm tắt', 'SUMMARY', 'giới thiệu', 'introduction' are NOT auto-rejected
+            // because they often hold the actual answer (e.g. team-member list, requirements list).
+            static bool IsTocOrSummary(CitationInfo c)
             {
-                citations = ragResponse.Citations
-                    .Select(c => new ChatCitationDto(
-                        c.CitationIndex,
-                        c.DocumentId,
-                        c.Source,
-                        c.Content.Length > 300 ? c.Content[..300] : c.Content,
-                        c.PageNumber,
-                        c.Relevance,
-                        c.MatchType,
-                        c.IsHighlightable,
-                        c.Reason))
-                    .ToList();
+                var content = (c.Content ?? "").TrimStart();
+                if (string.IsNullOrWhiteSpace(content)) return true;
+                var firstLineEnd = content.IndexOfAny(new[] { '\n', '\r' });
+                var firstLine = firstLineEnd > 0 ? content[..firstLineEnd] : content;
+                if (!System.Text.RegularExpressions.Regex.IsMatch(
+                        firstLine,
+                        @"^(Mục\s?lục|TABLE\s?OF\s?CONTENTS)\b",
+                        System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                    return false;
+                return firstLine.Length < 200;
             }
+
+            // Step 3: keep only citations whose real file name appears in the response,
+            // or whose content shares keywords with the response.
+            // Exhaustive queries already fall back to keyword match; non-exhaustive queries
+            // now also fall back to content-keyword match when relevance was high enough
+            // to reach the LLM (otherwise Step 3 would strip every citation for chunk-rich
+            // answers that don't mention the file name by literal string).
+            ragCitations = ragCitations
+                .Where(c =>
+                {
+                    if (string.IsNullOrWhiteSpace(c.Source)) return false;
+                    var realFileName = docIdToFileName.GetValueOrDefault(c.DocumentId, c.Source);
+                    if (string.IsNullOrWhiteSpace(realFileName)) return false;
+                    if (normalizedResponse.Contains(realFileName.ToLowerInvariant())) return true;
+                    // Content-keyword fallback: if AI's response shares words with the chunk
+                    // content, the chunk almost certainly grounded the answer.
+                    if (!string.IsNullOrWhiteSpace(c.Content))
+                    {
+                        var contentLower = c.Content.ToLowerInvariant();
+                        return responseWords.Any(word => contentLower.Contains(word));
+                    }
+                    return false;
+                })
+                // Keep only 1 citation per document:
+                // prefer chunks with real content over TOC entries;
+                // for exhaustive queries also rank by keyword overlap with the response.
+                .GroupBy(c => c.DocumentId)
+                .Select(g =>
+                {
+                    return g
+                        .OrderByDescending(c => IsTocOrSummary(c) ? 0 : 1)
+                        .ThenByDescending(c =>
+                        {
+                            if (!isExhaustive || string.IsNullOrWhiteSpace(c.Content)) return c.Relevance;
+                            var contentLower = c.Content.ToLowerInvariant();
+                            return responseWords.Count(word => contentLower.Contains(word));
+                        })
+                        .First();
+                })
+                .ToList();
+
+            // Post-LLM guard: if AI produced a real answer but Step 3 stripped all citations,
+            // surface that the answer cannot be grounded.
+            if (isRelevant && !ragCitations.Any())
+            {
+                _logger.LogWarning(
+                    "Post-LLM guard: AI returned IsRelevant=true but Step 3 removed all citations. Forcing no-answer.");
+                aiResponse = "Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.";
+                isRelevant = false;
+            }
+
+            // Step 4: strip any "Nguồn" paragraph AI may have added — citations are already in the UI
+            aiResponse = System.Text.RegularExpressions.Regex.Replace(
+                aiResponse,
+                @"[\n\r]*Nguồn.*",
+                string.Empty,
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Singleline).Trim();
         }
         else
         {
@@ -231,29 +316,20 @@ public sealed class AIChatService : IAIChatService
             Sender = "assistant",
             Content = aiResponse,
             IsRelevant = isRelevant,
-            Citations = citations.Select(citation =>
-            {
-                if (citation.CitationIndex <= 0
-                    || citation.DocumentId == Guid.Empty
-                    || string.IsNullOrWhiteSpace(citation.Source)
-                    || string.IsNullOrWhiteSpace(citation.Snippet))
+            Citations = ragCitations
+                .Select(c => new ChatMessageCitation
                 {
-                    throw new InvalidOperationException("Citation snapshot is missing required source metadata.");
-                }
-
-                return new ChatMessageCitation
-                {
-                    CitationIndex = citation.CitationIndex,
-                    DocumentId = citation.DocumentId,
-                    Source = citation.Source,
-                    Snippet = citation.Snippet,
-                    PageNumber = citation.PageNumber,
-                    Relevance = citation.Relevance,
-                    MatchType = citation.MatchType,
-                    IsHighlightable = citation.IsHighlightable,
-                    Reason = citation.Reason
-                };
-            }).ToList()
+                    CitationIndex = c.CitationIndex,
+                    DocumentId = c.DocumentId,
+                    Source = docIdToFileName.GetValueOrDefault(c.DocumentId, c.Source),
+                    Snippet = c.Content,
+                    PageNumber = c.PageNumber,
+                    Relevance = c.Relevance,
+                    MatchType = c.MatchType,
+                    IsHighlightable = c.IsHighlightable,
+                    Reason = c.Reason
+                })
+                .ToList()
         };
 
         await _unitOfWork.ChatMessages.AddAsync(assistantMessage, ct);

@@ -62,7 +62,13 @@ public class AIChatServiceTests : IDisposable
         _tokenTrackerMock.Setup(x => x.GetUsageInfoAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((0, 100000));
 
-        _service = new AIChatService(_unitOfWork, _mapper, null!, _orchestratorMock.Object, _tokenTrackerMock.Object);
+        _service = new AIChatService(
+            _unitOfWork,
+            _mapper,
+            null!,
+            _orchestratorMock.Object,
+            _tokenTrackerMock.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AIChatService>.Instance);
         _userId = Guid.NewGuid();
     }
 
@@ -357,7 +363,8 @@ public class AIChatServiceTests : IDisposable
             _mapper,
             null!,
             orchestrator.Object,
-            tokenTracker.Object);
+            tokenTracker.Object,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AIChatService>.Instance);
 
         await Assert.ThrowsAsync<DbUpdateException>(() => service.CreateMessageAsync(
             new CreateChatMessageRequestDto(session.Id, "question"),

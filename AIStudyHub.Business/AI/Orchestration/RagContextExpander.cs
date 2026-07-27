@@ -8,7 +8,15 @@ public sealed class RagContextExpander
 {
     private static readonly string[] ExhaustivePhrases =
     [
-        "toàn bộ", "tất cả", "đầy đủ", "liệt kê hết", "list all", "complete list"
+        "toàn bộ", "tất cả", "đầy đủ", "liệt kê hết", "list all", "complete list",
+        "các thành viên", "những ai", "những thành viên", "gồm những",
+        "bao gồm", "gồm các", "ai là", "kể tên", "thành viên nhóm",
+        "ai tham gia", "ai phát triển", "nhóm phát triển",
+        "có những gì", "gồm những gì", "bao gồm những gì",
+        "dùng gì", "sử dụng gì", "sài gì", "xài gì",
+        "stack", "tech stack", "công nghệ", "kiến trúc",
+        "backend có", "frontend có", "hệ thống có", "hệ thống gồm",
+        "phần mềm có", "phần mềm gồm", "cấu trúc hệ thống"
     ];
 
     private readonly IVectorStoreService _vectorStore;

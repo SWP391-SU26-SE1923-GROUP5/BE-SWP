@@ -76,7 +76,23 @@ public sealed class RagCitationFactory
                 highlight.Reason,
                 sources.Count + 1);
             sources.Add(new RagCitationSource(result, citation));
+
+            _logger.LogInformation(
+                "[CIT-{Index}] DocId={DocId} Score={Score:F4} Source={Source} Page={Page} ChunkIdx={ChunkIdx} MatchType={MatchType}\nContent: {Content}",
+                sources.Count,
+                documentId,
+                result.Score,
+                result.Source,
+                pageNumber ?? 0,
+                chunkIndex ?? -1,
+                result.MatchType,
+                result.Content);
         }
+
+        _logger.LogInformation(
+            "[CIT-STATS] {Total} citations created | Unique docs: {UniqueDocs}",
+            sources.Count,
+            sources.Select(s => s.Citation.DocumentId).Distinct().Count());
 
         return sources;
     }

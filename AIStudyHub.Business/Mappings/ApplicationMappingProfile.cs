@@ -129,16 +129,11 @@ public sealed class ApplicationMappingProfile : Profile
                 src.IsRelevant,
                 src.Citations
                     .OrderBy(citation => citation.CitationIndex)
-                    .Select(citation => new ChatCitationDto(
+                    .Select(citation => new ChatCitationResponseDto(
                         citation.CitationIndex,
                         citation.DocumentId,
-                        citation.Source,
                         citation.Snippet,
-                        citation.PageNumber,
-                        citation.Relevance,
-                        citation.MatchType,
-                        citation.IsHighlightable,
-                        citation.Reason))
+                        citation.PageNumber))
                     .ToList()))
             .ForMember(destination => destination.Citations, option => option.Ignore());
         CreateMap<CreateChatMessageRequestDto, ChatMessage>()
