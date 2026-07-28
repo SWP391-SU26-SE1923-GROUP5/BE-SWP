@@ -461,7 +461,6 @@ internal sealed class ChatMessageConfiguration : IEntityTypeConfiguration<ChatMe
         builder.Property(x => x.ChatSessionId).HasColumnName("session_id").IsRequired();
         builder.Property(x => x.Sender).HasColumnName("sender").HasMaxLength(20).IsRequired();
         builder.Property(x => x.Content).HasColumnName("content").IsRequired();
-        builder.Property(x => x.IsRelevant).HasColumnName("is_relevant").HasDefaultValue(false).IsRequired();
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.ChatSession).WithMany(x => x.ChatMessages).HasForeignKey(x => x.ChatSessionId).OnDelete(DeleteBehavior.Cascade);
@@ -472,15 +471,7 @@ internal sealed class ChatMessageCitationConfiguration : IEntityTypeConfiguratio
 {
     public void Configure(EntityTypeBuilder<ChatMessageCitation> builder)
     {
-        builder.ToTable("ChatMessageCitation", table =>
-        {
-            table.HasCheckConstraint(
-                "CK_ChatMessageCitation_CitationIndex_Positive",
-                "[citation_index] > 0");
-            table.HasCheckConstraint(
-                "CK_ChatMessageCitation_DocumentId_NotEmpty",
-                "[document_id] <> '00000000-0000-0000-0000-000000000000'");
-        });
+        builder.ToTable("ChatMessageCitation");
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).HasColumnName("citation_id");
         builder.Property(x => x.ChatMessageId).HasColumnName("message_id").IsRequired();

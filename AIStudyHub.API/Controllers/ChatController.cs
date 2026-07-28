@@ -66,13 +66,11 @@ public sealed class ChatController : ControllerBase
     }
 
     [HttpGet("sessions/{sessionId:guid}/messages")]
-    public async Task<ActionResult<IReadOnlyList<ChatMessageResponseDto>>> GetMessages(
-        Guid sessionId,
-        CancellationToken ct)
+    public async Task<ActionResult<IReadOnlyList<ChatMessageResponseDto>>> GetMessages(Guid sessionId)
     {
         try
         {
-            var result = await _chatService.GetMessagesAsync(sessionId, GetCurrentUserId(), ct);
+            var result = await _chatService.GetMessagesAsync(sessionId, GetCurrentUserId());
             return Ok(result);
         }
         catch (KeyNotFoundException ex)
@@ -82,12 +80,10 @@ public sealed class ChatController : ControllerBase
     }
 
     [HttpPost("messages")]
-    public async Task<ActionResult<ChatMessageResponseDto>> CreateMessage(
-        CreateChatMessageRequestDto request,
-        CancellationToken ct)
+    public async Task<ActionResult<ChatMessageResponseDto>> CreateMessage(CreateChatMessageRequestDto request)
     {
         var userId = GetCurrentUserId();
-        var result = await _chatService.CreateMessageAsync(request, userId, ct);
+        var result = await _chatService.CreateMessageAsync(request, userId);
         return Ok(result);
     }
 

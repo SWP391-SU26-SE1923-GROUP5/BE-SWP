@@ -23,8 +23,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
     private readonly IConfidenceScorer _confidenceScorer;
     private readonly SemanticKernelOptions _options;
     private readonly IOpenAIService _openAiService;
-    private readonly RagCitationFactory _citationFactory;
-    private readonly RetrievalOptions _retrievalOptions;
     private readonly ILogger<SemanticKernelOrchestrator> _logger;
 
     public SemanticKernelOrchestrator(
@@ -35,8 +33,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         IConfidenceScorer confidenceScorer,
         IOptions<SemanticKernelOptions> options,
         IOpenAIService openAiService,
-        RagCitationFactory citationFactory,
-        IOptions<RetrievalOptions> retrievalOptions,
         ILogger<SemanticKernelOrchestrator> logger)
     {
         _retrievalPipeline = retrievalPipeline;
@@ -46,8 +42,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _confidenceScorer = confidenceScorer;
         _options = options.Value;
         _openAiService = openAiService;
-        _citationFactory = citationFactory;
-        _retrievalOptions = retrievalOptions.Value;
         _logger = logger;
     }
 
@@ -56,33 +50,14 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _logger.LogInformation("Processing RAG query for user {UserId}", userId);
 
         // L3: Retrieval with hybrid search and reranking
-        var candidates = (await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct)).ToList();
-        var citationSources = _citationFactory.Create(candidates, documentIds);
-        var resultList = citationSources.Select(source => source.Result).ToList();
-        var isExhaustive = RagContextExpander.IsExhaustiveQuery(question);
-        var maxCitations = isExhaustive
-            ? Math.Max(_retrievalOptions.MaxCitations, candidates.Count)
-            : _retrievalOptions.MaxCitations;
-        var minScore = isExhaustive ? 0.0 : _retrievalOptions.CitationMinScore;
-        var citations = citationSources
-            .Select(source => source.Citation)
-            .Where(c => c.Relevance >= minScore)
-            .Take(maxCitations)
-            .ToList();
-        _logger.LogInformation(
-            "Citation filter: {TotalCandidates} candidates → {FilteredCount} citations (minScore={MinScore}{OverrideTag}, maxCitations={MaxCitations}{ExhaustiveTag})",
-            citationSources.Count, citations.Count, minScore,
-            isExhaustive ? " [OVERRIDE]" : "",
-            maxCitations,
-            isExhaustive ? " [EXHAUSTIVE]" : "");
-        _logger.LogInformation(
-            "Citation filter: {TotalCandidates} candidates → {FilteredCount} citations (minScore={MinScore}, maxCitations={MaxCitations}{ExhaustiveTag})",
-            citationSources.Count, citations.Count, _retrievalOptions.CitationMinScore, maxCitations,
-            isExhaustive ? " [EXHAUSTIVE]" : "");
-        _logger.LogInformation(
-            "RAG retrieval produced {CandidateCount} candidates and {ValidCount} valid citation sources",
-            candidates.Count,
-            resultList.Count);
+        var rerankedResults = await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct);
+        _logger.LogInformation("After 1st rerank ({Count}): {Chunks}",
+            rerankedResults.Count(),
+            string.Join("\n===\n", rerankedResults.Take(5).Select(r => r.Content.Length > 250 ? r.Content[..250] + "..." : r.Content)));
+
+        var resultList = rerankedResults.ToList();
+        _logger.LogInformation("Ask query: '{Question}' | Retrieved chunks: {Chunks}",
+            question, string.Join("\n---\n", resultList.Select(r => r.Content.Length > 200 ? r.Content[..200] + "..." : r.Content)));
         if (!resultList.Any())
         {
             return new RagResponse("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", new(), 0.0, IsRelevant: false);
@@ -106,6 +81,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var contextBuilder = RagPromptContextBuilder.Build(resultList);
         var exhaustiveInstruction = GetExhaustiveInstruction(question);
 
+        _logger.LogInformation("RAG Context being fed to AI:\n{Context}", contextBuilder.ToString());
+
         var systemPrompt = """
             You are 'AIStudyHub Assistant', a helpful and friendly AI tutor for AIStudyHub.
 
@@ -122,7 +99,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             6. Answer in Vietnamese by default unless the user asks in English.
             7. For page citations, use only AUTHORITATIVE_CITATION_PAGE. If PAGE_CITATION_AVAILABLE is false, do not mention a page and never print metadata field names or placeholders. Never infer a page number from CONTENT.
             8. Answer only the user's current request. Do not append follow-up offers, suggested actions, or claims about additional capabilities. Never offer functionality that is not explicitly available in the current workflow. End the response after the grounded answer and citations.
-            9. CITATION MANDATORY: You MUST cite your sources inline in the answer text (e.g. "Theo [DocumentName], ..."). This information is displayed in the UI. If no relevant source exists, say so clearly in Vietnamese.
             """;
 
         var userPrompt = $"""
@@ -147,7 +123,22 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
         var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
 
-        return new RagResponse(StripMarkdownBold(answer), citations, confidence, IsRelevant: true);
+        // Build citations
+        var citations = resultList.Select(r =>
+        {
+            var highlight = CitationHighlightability.FromMetadata(r.Metadata);
+            return new CitationInfo(
+                DocumentId: r.Metadata.TryGetValue("documentId", out var docIdStr) && Guid.TryParse(docIdStr, out var docId) ? docId : Guid.Empty,
+                Source: r.Source,
+                Content: r.Content,
+                Relevance: r.Score,
+                PageNumber: r.Metadata.TryGetValue("pageNumber", out var pgStr) && int.TryParse(pgStr, out var pg) ? pg : null,
+                MatchType: r.MatchType,
+                IsHighlightable: highlight.IsHighlightable,
+                Reason: highlight.Reason);
+        }).ToList();
+
+        return new RagResponse(answer, citations, confidence, IsRelevant: true);
     }
 
 
@@ -156,36 +147,9 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _logger.LogInformation("Processing RAG query with tracking for user {UserId}", userId);
 
         // L3: Retrieval with hybrid search and reranking
-        var candidates = (await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct)).ToList();
-        var citationSources = _citationFactory.Create(candidates, documentIds);
-        var resultList = citationSources.Select(source => source.Result).ToList();
-        var isExhaustive = RagContextExpander.IsExhaustiveQuery(question);
-        var maxCitations = isExhaustive
-            ? Math.Max(_retrievalOptions.MaxCitations, candidates.Count)
-            : _retrievalOptions.MaxCitations;
-        var minScore = isExhaustive ? 0.0 : _retrievalOptions.CitationMinScore;
-        var citations = citationSources
-            .Select(source => source.Citation)
-            .Where(c => c.Relevance >= minScore)
-            .Take(maxCitations)
-            .ToList();
-        _logger.LogInformation(
-            "Citation filter: {TotalCandidates} candidates → {FilteredCount} citations (minScore={MinScore}{OverrideTag}, maxCitations={MaxCitations}{ExhaustiveTag})",
-            citationSources.Count, citations.Count, minScore,
-            isExhaustive ? " [OVERRIDE]" : "",
-            maxCitations,
-            isExhaustive ? " [EXHAUSTIVE]" : "");
-        for (var i = 0; i < citations.Count; i++)
-        {
-            _logger.LogInformation(
-                "[CIT-{Index}] DocId={DocId} Score={Score:F4} Source={Source} Page={Page}\nContent: {Content}",
-                citations[i].CitationIndex,
-                citations[i].DocumentId,
-                citations[i].Relevance,
-                citations[i].Source,
-                citations[i].PageNumber ?? 0,
-                citations[i].Content);
-        }
+        var rerankedResults = await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct);
+
+        var resultList = rerankedResults.ToList();
         if (!resultList.Any())
         {
             return new RagResponseWithUsage("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", new(), 0.0, 0, 0, IsRelevant: false);
@@ -209,30 +173,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         if (TryDetectNoAnswer(question, resultList, out var noAnswer))
         {
             _logger.LogInformation("Yes/No shortcut triggered: {Answer}", noAnswer);
-            // Guard: yes/no shortcut must still be backed by at least one citation
-            if (!citations.Any())
-            {
-                _logger.LogInformation(
-                    "Pre-LLM guard (yes/no): no citations, refusing short-circuit answer");
-                var suggestions = await BuildFallbackSuggestionsAsync(question, resultList, ct);
-                return new RagResponseWithUsage(
-                    $"Tài liệu không đề cập đến chủ đề này.\n\n{suggestions}",
-                    new(), 0.0, 0, 0, IsRelevant: false);
-            }
-            return new RagResponseWithUsage(noAnswer, citations, 1.0, 0, 0, IsRelevant: true);
-        }
-
-        // Guard: no citations means no grounded answer is possible.
-        // Exhaustive queries already set minScore=0 → never empty here.
-        if (!citations.Any())
-        {
-            _logger.LogInformation(
-                "Pre-LLM guard: no citations passed filter (minScore={MinScore}), refusing to answer",
-                minScore);
-            var suggestions = await BuildFallbackSuggestionsAsync(question, resultList, ct);
-            return new RagResponseWithUsage(
-                $"Tài liệu không đề cập đến chủ đề này.\n\n{suggestions}",
-                new(), 0.0, 0, 0, IsRelevant: false);
+            return new RagResponseWithUsage(noAnswer, new(), 1.0, 0, 0, IsRelevant: true);
         }
 
         // L4: Generate answer using Custom LLM Prompt
@@ -255,7 +196,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             6. Answer in Vietnamese by default unless the user asks in English.
             7. For page citations, use only AUTHORITATIVE_CITATION_PAGE. If PAGE_CITATION_AVAILABLE is false, do not mention a page and never print metadata field names or placeholders. Never infer a page number from CONTENT.
             8. Answer only the user's current request. Do not append follow-up offers, suggested actions, or claims about additional capabilities. Never offer functionality that is not explicitly available in the current workflow. End the response after the grounded answer and citations.
-            9. CITATION MANDATORY: You MUST cite your sources inline in the answer text (e.g. "Theo [DocumentName], ..."). This information is displayed in the UI. If no relevant source exists, say so clearly in Vietnamese.
             """;
 
         var userPrompt = $"""
@@ -283,7 +223,22 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
         var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
 
-        return new RagResponseWithUsage(StripMarkdownBold(answer), citations, confidence, totalInputTokens, totalOutputTokens, IsRelevant: true);
+        // Build citations
+        var citations = resultList.Select(r =>
+        {
+            var highlight = CitationHighlightability.FromMetadata(r.Metadata);
+            return new CitationInfo(
+                DocumentId: r.Metadata.TryGetValue("documentId", out var docIdStr) && Guid.TryParse(docIdStr, out var docId) ? docId : Guid.Empty,
+                Source: r.Source,
+                Content: r.Content,
+                Relevance: r.Score,
+                PageNumber: r.Metadata.TryGetValue("pageNumber", out var pgStr) && int.TryParse(pgStr, out var pg) ? pg : null,
+                MatchType: r.MatchType,
+                IsHighlightable: highlight.IsHighlightable,
+                Reason: highlight.Reason);
+        }).ToList();
+
+        return new RagResponseWithUsage(answer, citations, confidence, totalInputTokens, totalOutputTokens, IsRelevant: true);
     }
 
     public async Task<string> SummarizeAsync(Guid documentId, Guid userId, CancellationToken ct = default)
@@ -350,76 +305,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var summary = usageResult.Text ?? "Không thể tóm tắt tài liệu.";
 
         return new SummarizeResult(summary, usageResult.InputTokens, usageResult.OutputTokens);
-    }
-
-    /// <summary>
-    /// Strip markdown bold markers (**) from LLM output so the chat bubble renders plain text.
-    /// Handles both **inline** and **block** forms without altering surrounding whitespace.
-    /// </summary>
-    private static string StripMarkdownBold(string text)
-    {
-        if (string.IsNullOrEmpty(text) || !text.Contains('*'))
-            return text;
-
-        // Drop the ** wrappers (paired or unpaired). Collapse repeated *** runs.
-        // e.g. "**foo**" → "foo", "**foo bar**" → "foo bar", "**foo** and **bar**" → "foo and bar"
-        return System.Text.RegularExpressions.Regex.Replace(text, @"\*+", string.Empty);
-    }
-
-    /// <summary>
-    /// Build a numbered list of suggested questions based on a single retrieved chunk.
-    /// Used as a user-facing fallback when the guard refuses to answer for lack of citations.
-    /// The suggestions are constrained so the LLM can only reuse phrases found verbatim in the chunk.
-    /// </summary>
-    private async Task<string> BuildFallbackSuggestionsAsync(
-        string question,
-        IReadOnlyList<SearchResult> chunks,
-        CancellationToken ct)
-    {
-        if (chunks.Count == 0) return string.Empty;
-
-        var sample = chunks[0];
-        var fallbackPrompt = $"""
-            The user asked: "{question}"
-
-            A short excerpt retrieved from the document the user is reading:
-            ---
-            [{sample.Source}]
-            {sample.Content}
-            ---
-
-            IMPORTANT: You may ONLY suggest questions whose topics are clearly supported
-            by phrases that appear verbatim in the excerpt above. Do NOT use your own
-            knowledge to add topics not present in the document.
-
-            Based on what appears in the excerpt, suggest exactly 4 specific questions
-            the user could ask that ARE answered by the document. Each suggestion must
-            reference at least one phrase that appears verbatim in the excerpt.
-
-            Respond in Vietnamese using the exact format below (no extra text):
-
-            Chào bạn! Dựa trên tài liệu, bạn có thể hỏi những câu hỏi sau đây:
-
-            1. "..."
-            2. "..."
-            3. "..."
-            4. "..."
-
-            Hy vọng những câu hỏi này sẽ giúp bạn tìm được thông tin cần thiết!
-            """;
-
-        try
-        {
-            var raw = await _openAiService.SendMessageAsync(fallbackPrompt);
-            return string.IsNullOrWhiteSpace(raw)
-                ? string.Empty
-                : raw.Trim();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to generate fallback suggestions");
-            return string.Empty;
-        }
     }
 
     /// <summary>
@@ -565,6 +450,23 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         await Task.CompletedTask;
         return relevance;
     }
+
+    private static List<CitationInfo> BuildCitations(IEnumerable<SearchResult> results) =>
+        results.Select(result =>
+        {
+            var highlight = CitationHighlightability.FromMetadata(result.Metadata);
+            return new CitationInfo(
+                DocumentId: result.Metadata.TryGetValue("documentId", out var documentIdValue)
+                    && Guid.TryParse(documentIdValue, out var documentId) ? documentId : Guid.Empty,
+                Source: result.Source,
+                Content: result.Content,
+                Relevance: result.Score,
+                PageNumber: result.Metadata.TryGetValue("pageNumber", out var pageValue)
+                    && int.TryParse(pageValue, out var page) ? page : null,
+                MatchType: result.MatchType,
+                IsHighlightable: highlight.IsHighlightable,
+                Reason: highlight.Reason);
+        }).ToList();
 
     private static string GetExhaustiveInstruction(string question) =>
         RagContextExpander.IsExhaustiveQuery(question)

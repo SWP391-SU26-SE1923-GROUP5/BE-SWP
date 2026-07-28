@@ -100,7 +100,6 @@ public static class BusinessServiceExtensions
         services.AddScoped<IRerankingService, RerankingService>();
         services.AddScoped<RagContextExpander>();
         services.AddScoped<RagRetrievalPipeline>();
-        services.AddScoped<RagCitationFactory>();
 
         // L4: SK Orchestrator
         services.Configure<SemanticKernelOptions>(configuration.GetSection("SemanticKernel"));

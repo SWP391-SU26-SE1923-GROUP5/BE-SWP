@@ -78,41 +78,6 @@ public sealed class UserController : ControllerBase
         return NoContent();
     }
 
-    /// <summary>Admin: Tạo người dùng mới (thay thế luồng register).</summary>
-    [HttpPost]
-    [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<UserResponseDto>> Create(
-        [FromBody] CreateUserRequestDto request,
-        CancellationToken cancellationToken)
-    {
-        var result = await _mediator.Send(new CreateUserCommand(request), cancellationToken);
-        return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
-    }
-
-    /// <summary>Admin: Cập nhật toàn phần thông tin người dùng (Full update).</summary>
-    [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<UserResponseDto>> Update(
-        Guid id,
-        [FromBody] UpdateUserRequestDto request,
-        CancellationToken cancellationToken)
-    {
-        var result = await _mediator.Send(new UpdateUserCommand(id, request), cancellationToken);
-        return Ok(result);
-    }
-
-    /// <summary>Admin: Cập nhật một phần thông tin người dùng (Partial update).</summary>
-    [HttpPatch("{id:guid}")]
-    [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<UserResponseDto>> Patch(
-        Guid id,
-        [FromBody] PatchUserRequestDto request,
-        CancellationToken cancellationToken)
-    {
-        var result = await _mediator.Send(new PatchUserCommand(id, request), cancellationToken);
-        return Ok(result);
-    }
-
     /// <summary>Người dùng tự cập nhật thông tin cá nhân (Profile).</summary>
     [HttpPut("me")]
     public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequestDto request, CancellationToken cancellationToken)

@@ -55,8 +55,6 @@ public sealed class SemanticKernelStructuredExhaustiveTests
             scorer.Object,
             Options.Create(new SemanticKernelOptions()),
             openAi.Object,
-            new RagCitationFactory(
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<RagCitationFactory>.Instance),
             Mock.Of<ILogger<SemanticKernelOrchestrator>>());
 
         var response = await orchestrator.AskWithTrackingAsync(

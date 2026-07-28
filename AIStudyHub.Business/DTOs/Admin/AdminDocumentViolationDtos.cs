@@ -61,19 +61,16 @@ public sealed record UnbanDocumentResultDto(
 
 public sealed record AdminDashboardDto(
     int TotalUsers,
-    int TotalActiveUsers,
-    int TotalDocumentsUploaded,
-    decimal TotalRevenue,
-    int TotalTransactions,
-    IReadOnlyList<TierRevenueDto> TierBreakdown);
+    int DocumentsReported);
 
-public sealed record TierRevenueDto(
-    string TierName,
-    decimal Price,
-    int TransactionCount,
-    decimal TotalRevenue);
+public enum RevenueDuration { Day = 1, Month = 2, Year = 3 }
+
+public sealed record RevenueRequestDto(RevenueDuration Duration);
+
+public sealed record RevenueBreakdownDto(DateTime Period, decimal Revenue, int TransactionCount);
 
 public sealed record RevenueResultDto(
     decimal TotalRevenue,
     int TotalTransactions,
-    IReadOnlyList<TierRevenueDto> TierBreakdown);
+    RevenueDuration Duration,
+    IReadOnlyList<RevenueBreakdownDto> Breakdown);

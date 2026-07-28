@@ -201,12 +201,6 @@ namespace AIStudyHub.Data.Migrations
                         .HasColumnType("datetime")
                         .HasColumnName("create_at");
 
-                    b.Property<bool>("IsRelevant")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false)
-                        .HasColumnName("is_relevant");
-
                     b.Property<string>("Sender")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -290,12 +284,7 @@ namespace AIStudyHub.Data.Migrations
                     b.HasIndex("ChatMessageId", "CitationIndex")
                         .IsUnique();
 
-                    b.ToTable("ChatMessageCitation", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_ChatMessageCitation_CitationIndex_Positive", "[citation_index] > 0");
-
-                            t.HasCheckConstraint("CK_ChatMessageCitation_DocumentId_NotEmpty", "[document_id] <> '00000000-0000-0000-0000-000000000000'");
-                        });
+                    b.ToTable("ChatMessageCitation", (string)null);
                 });
 
             modelBuilder.Entity("AIStudyHub.Data.Entities.ChatSession", b =>

@@ -68,16 +68,6 @@ public class HybridSearchService : IHybridSearchService
         _logger.LogInformation("HybridSearch: After rerank: {Count} results | Sources: {Sources}",
             rerankedResults.Count(), string.Join(" | ", rerankedResults.Select(r => r.Source)));
 
-        // DEBUG: Log chunk content preview
-        var debugIndex = 0;
-        foreach (var r in rerankedResults)
-        {
-            var preview = r.Content.Length > 300 ? r.Content[..300] + "..." : r.Content;
-            preview = preview.Replace("\n", "\\n");
-            Console.WriteLine($"[DEBUG-CHUNK-{debugIndex++}] Source={r.Source} Score={r.Score:F4} ContentLen={r.Content.Length}");
-            Console.WriteLine($"[DEBUG-CHUNK-{debugIndex - 1}-PREVIEW] {preview}");
-        }
-
         return rerankedResults;
     }
 }

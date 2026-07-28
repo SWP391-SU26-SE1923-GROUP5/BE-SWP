@@ -24,10 +24,8 @@ public sealed class HybridSearchResponseDtoTests
             },
             "hybrid");
 
-        var success = HybridSearchResultDto.TryFromSearchResult(result, out var dto);
+        var dto = HybridSearchResultDto.FromSearchResult(result);
 
-        Assert.True(success);
-        Assert.NotNull(dto);
         Assert.Equal("Relevant content", dto.Content);
         Assert.Equal(0.91, dto.Score);
         Assert.Equal(documentId, dto.DocumentId);
@@ -36,26 +34,5 @@ public sealed class HybridSearchResponseDtoTests
         Assert.Equal(22, dto.ChunkIndex);
         Assert.Equal("hybrid", dto.MatchType);
         Assert.True(dto.IsHighlightable);
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("1")]
-    [InlineData("00000000-0000-0000-0000-000000000000")]
-    public void TryFromSearchResult_InvalidDocumentId_ReturnsFalse(string? rawId)
-    {
-        var metadata = new Dictionary<string, string>();
-        if (rawId is not null)
-        {
-            metadata["documentId"] = rawId;
-        }
-
-        var result = new SearchResult("content", 0.9, "doc.pdf", metadata);
-
-        var success = HybridSearchResultDto.TryFromSearchResult(result, out var dto);
-
-        Assert.False(success);
-        Assert.Null(dto);
     }
 }

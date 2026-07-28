@@ -18,7 +18,6 @@ using AIStudyHub.Data.Repositories;
 using AutoMapper;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Xunit;
@@ -62,13 +61,7 @@ public class AIChatServiceTests : IDisposable
         _tokenTrackerMock.Setup(x => x.GetUsageInfoAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((0, 100000));
 
-        _service = new AIChatService(
-            _unitOfWork,
-            _mapper,
-            null!,
-            _orchestratorMock.Object,
-            _tokenTrackerMock.Object,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<AIChatService>.Instance);
+        _service = new AIChatService(_unitOfWork, _mapper, null!, _orchestratorMock.Object, _tokenTrackerMock.Object);
         _userId = Guid.NewGuid();
     }
 
@@ -199,8 +192,8 @@ public class AIChatServiceTests : IDisposable
                 "answer",
                 new List<CitationInfo>
                 {
-                    new(firstDocumentId, "abc.pdf", longContent, 0.91, 3, "hybrid", true, null, 1),
-                    new(secondDocumentId, "abc (1).pdf", "short", 0.82, null, "semantic", false, "legacy_unclassified", 2)
+                    new(firstDocumentId, "abc.pdf", longContent, 0.91, 3, "hybrid", true, null),
+                    new(secondDocumentId, "abc (1).pdf", "short", 0.82, null, "semantic", false, "legacy_unclassified")
                 },
                 0.9,
                 10,
@@ -214,10 +207,9 @@ public class AIChatServiceTests : IDisposable
         Assert.Collection(result.Citations,
             first =>
             {
-                Assert.Equal(1, first.CitationIndex);
                 Assert.Equal(firstDocumentId, first.DocumentId);
                 Assert.Equal("abc.pdf", first.Source);
-                Assert.Equal(new string('x', 300), first.Snippet);
+                Assert.Equal(new string('x', 300) + "…", first.Snippet);
                 Assert.Equal(3, first.PageNumber);
                 Assert.Equal(0.91, first.Relevance);
                 Assert.Equal("hybrid", first.MatchType);
@@ -226,7 +218,6 @@ public class AIChatServiceTests : IDisposable
             },
             second =>
             {
-                Assert.Equal(2, second.CitationIndex);
                 Assert.Equal(secondDocumentId, second.DocumentId);
                 Assert.Equal("abc (1).pdf", second.Source);
                 Assert.Equal("short", second.Snippet);
@@ -261,19 +252,9 @@ public class AIChatServiceTests : IDisposable
 
         var history = await _service.GetMessagesAsync(session.Id, _userId);
         var reloadedAssistant = Assert.Single(history, message => message.Sender == "assistant");
-        Assert.True(result.IsRelevant);
-        Assert.True(reloadedAssistant.IsRelevant);
         Assert.Collection(reloadedAssistant.Citations,
-            first =>
-            {
-                Assert.Equal(1, first.CitationIndex);
-                Assert.Equal(firstDocumentId, first.DocumentId);
-            },
-            second =>
-            {
-                Assert.Equal(2, second.CitationIndex);
-                Assert.Equal(secondDocumentId, second.DocumentId);
-            });
+            first => Assert.Equal(firstDocumentId, first.DocumentId),
+            second => Assert.Equal(secondDocumentId, second.DocumentId));
     }
 
     [Fact]
@@ -290,93 +271,6 @@ public class AIChatServiceTests : IDisposable
 
         await Assert.ThrowsAsync<KeyNotFoundException>(() =>
             _service.GetMessagesAsync(session.Id, _userId));
-    }
-
-    [Fact]
-    public async Task CreateMessageAsync_CitationSaveFails_DoesNotPersistPartialAssistantMessage()
-    {
-        await using var connection = new SqliteConnection("DataSource=:memory:;Foreign Keys=False");
-        await connection.OpenAsync();
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite(connection)
-            .AddInterceptors(new FailCitationSaveInterceptor())
-            .Options;
-        await using var db = new ApplicationDbContext(options);
-        await db.Database.EnsureCreatedAsync();
-        var unitOfWork = new UnitOfWork(db);
-        var userId = Guid.NewGuid();
-        var documentId = Guid.NewGuid();
-        var session = new ChatSession
-        {
-            Id = Guid.NewGuid(),
-            UserId = userId,
-            SessionTitle = "Atomic citation"
-        };
-        var document = new Document
-        {
-            Id = documentId,
-            UserId = userId,
-            Title = "Source"
-        };
-        session.ChatSessionDocuments.Add(new ChatSessionDocument
-        {
-            Id = Guid.NewGuid(),
-            ChatSessionId = session.Id,
-            DocumentId = documentId,
-            CreatedAt = DateTime.UtcNow
-        });
-        await db.AddRangeAsync(session, document);
-        await db.SaveChangesAsync();
-
-        var orchestrator = new Mock<ISemanticKernelOrchestrator>();
-        orchestrator.Setup(service => service.AskWithTrackingAsync(
-                userId,
-                It.IsAny<IReadOnlyList<Guid>>(),
-                It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<ChatMessage>>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new RagResponseWithUsage(
-                "answer",
-                new List<CitationInfo>
-                {
-                    new(documentId, "source.pdf", "exact", 0.9, 1, "hybrid", true, null, 1)
-                },
-                0.9,
-                10,
-                5,
-                true));
-        var tokenTracker = new Mock<ITokenTrackerService>();
-        tokenTracker.Setup(service => service.HasQuotaAsync(
-                userId,
-                It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
-        tokenTracker.Setup(service => service.RecordUsageAsync(
-                userId,
-                It.IsAny<int>(),
-                It.IsAny<int>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        var service = new AIChatService(
-            unitOfWork,
-            _mapper,
-            null!,
-            orchestrator.Object,
-            tokenTracker.Object,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<AIChatService>.Instance);
-
-        await Assert.ThrowsAsync<DbUpdateException>(() => service.CreateMessageAsync(
-            new CreateChatMessageRequestDto(session.Id, "question"),
-            userId));
-
-        Assert.Single(await db.ChatMessages
-            .Where(message => message.Sender == "user")
-            .ToListAsync());
-        Assert.Empty(await db.ChatMessages
-            .Where(message => message.Sender == "assistant")
-            .ToListAsync());
-        Assert.Empty(await db.ChatMessageCitations.ToListAsync());
     }
 
     [Fact]
@@ -473,47 +367,5 @@ public class AIChatServiceTests : IDisposable
 
         // Act & Assert
         await Assert.ThrowsAsync<QuotaExceededException>(() => _service.CreateMessageAsync(request, _userId));
-    }
-
-    [Fact]
-    public async Task CreateMessageAsync_CanceledBeforeSessionLookup_DoesNotPersistMessage()
-    {
-        var session = new ChatSession
-        {
-            Id = Guid.NewGuid(),
-            UserId = _userId,
-            SessionTitle = "Canceled request"
-        };
-        await _dbContext.ChatSessions.AddAsync(session);
-        await _dbContext.SaveChangesAsync();
-        _dbContext.ChangeTracker.Clear();
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
-
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            _service.CreateMessageAsync(
-                new CreateChatMessageRequestDto(session.Id, "question"),
-                _userId,
-                cts.Token));
-
-        _dbContext.ChangeTracker.Clear();
-        Assert.Empty(await _dbContext.ChatMessages.ToListAsync());
-    }
-
-    private sealed class FailCitationSaveInterceptor : SaveChangesInterceptor
-    {
-        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
-            DbContextEventData eventData,
-            InterceptionResult<int> result,
-            CancellationToken cancellationToken = default)
-        {
-            if (eventData.Context!.ChangeTracker.Entries<ChatMessageCitation>()
-                .Any(entry => entry.State == EntityState.Added))
-            {
-                throw new DbUpdateException("Injected citation save failure");
-            }
-
-            return base.SavingChangesAsync(eventData, result, cancellationToken);
-        }
     }
 }
