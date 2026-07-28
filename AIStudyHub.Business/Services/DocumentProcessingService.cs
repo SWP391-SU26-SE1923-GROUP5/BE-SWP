@@ -477,12 +477,25 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
             using var stream = new MemoryStream(fileContent);
             using var document = PdfDocument.Open(stream);
 
-            int pageNum = 1;
+            var mergedTables = MultiPageTableMerger.MergeAllTablesAcrossPages(document, TessDataPath);
+            int currentPage = 1;
             foreach (var page in document.GetPages())
             {
-                text.AppendLine($"[--- Page {pageNum} ---]");
+                text.AppendLine($"[--- Page {currentPage} ---]");
                 text.AppendLine(page.Text);
-                pageNum++;
+
+                // Only emit a merged table at the page where it starts.
+                // Appending for every spanned page would create duplicate table
+                // blocks that downstream SplitPreservingTables treats as separate.
+                var tablesStartingHere = mergedTables
+                    .Where(t => t.StartPage == currentPage)
+                    .SelectMany(t => t.Rows)
+                    .ToList();
+
+                if (tablesStartingHere.Count > 0)
+                    text.AppendLine(PdfTableExtractor.ToMarkdown(tablesStartingHere));
+
+                currentPage++;
             }
 
             var extractedText = text.ToString().Trim();
@@ -739,6 +752,10 @@ private static string ExtractTextFromPdfViaOcr(byte[] fileContent)
 
         using var engine = new TesseractEngine(TessDataPath, "eng+vie", EngineMode.Default);
 
+        // Collect per-page OCR text and table rows for merging.
+        var perPageText = new List<(int Page, string Text)>();
+        var perPageTables = new List<IReadOnlyList<List<string>>>();
+
         for (int pageIndex = 1; pageIndex <= pageCount; pageIndex++)
         {
             try
@@ -748,15 +765,18 @@ private static string ExtractTextFromPdfViaOcr(byte[] fileContent)
                 using var pngMs = new MemoryStream();
                 skBitmap.Encode(pngMs, SKEncodedImageFormat.Png, 100);
                 pngMs.Position = 0;
-                using var pix = Pix.LoadFromMemory(pngMs.ToArray());
+                var imageBytes = pngMs.ToArray();
+
+                using var pix = Pix.LoadFromMemory(imageBytes);
                 using var page = engine.Process(pix, PageSegMode.Auto);
                 var pageText = page.GetText();
 
                 if (!string.IsNullOrWhiteSpace(pageText))
-                {
-                    allText.AppendLine($"[--- Page {pageIndex} ---]");
-                    allText.AppendLine(pageText);
-                }
+                    perPageText.Add((pageIndex, pageText));
+
+                // Extract tables from the rendered image.
+                var tableRows = PdfTableExtractor.ExtractFromOcrPage(imageBytes, TessDataPath);
+                perPageTables.Add(tableRows);
 
                 Console.WriteLine($"[PDF-OCR] Page {pageIndex}/{pageCount}: "
                     + $"{pageText.Length} chars extracted");
@@ -764,7 +784,27 @@ private static string ExtractTextFromPdfViaOcr(byte[] fileContent)
             catch (Exception pageEx)
             {
                 Console.WriteLine($"[PDF-OCR] Failed on page {pageIndex}: {pageEx.Message}");
+                perPageTables.Add([]);
             }
+        }
+
+        // Merge tables across consecutive pages.
+        var mergedTables = MultiPageTableMerger.MergeFromOcrPages(perPageTables);
+
+        // Append merged output with page markers.
+        foreach (var (pageIdx, pageText) in perPageText)
+        {
+            allText.AppendLine($"[--- Page {pageIdx} ---]");
+            allText.AppendLine(pageText);
+
+            // Only emit a merged table at the page where it starts.
+            var tablesStartingHere = mergedTables
+                .Where(t => t.StartPage == pageIdx)
+                .SelectMany(t => t.Rows)
+                .ToList();
+
+            if (tablesStartingHere.Count > 0)
+                allText.AppendLine(PdfTableExtractor.ToMarkdown(tablesStartingHere));
         }
 
         Console.WriteLine($"[PDF-OCR] Total extracted: {allText.Length} chars from {pageCount} pages");

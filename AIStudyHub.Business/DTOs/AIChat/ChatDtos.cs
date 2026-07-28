@@ -1,19 +1,10 @@
 namespace AIStudyHub.Business.DTOs.AIChat;
 
-public sealed record ChatSessionResponseDto(Guid Id, Guid UserId, string SessionTitle, DateTime CreatedAt, DateTime? UpdatedAt);
-
-public sealed record CreateChatSessionRequestDto(string SessionTitle);
-
-public sealed record UpdateChatSessionRequestDto(string SessionTitle);
-
-public sealed record ChatMessageResponseDto(Guid Id, Guid ChatSessionId, string Sender, string Content, DateTime CreatedAt, DateTime? UpdatedAt, bool IsRelevant, IReadOnlyList<ChatCitationDto> Citations);
-
 /// <summary>
-/// Represents a single citation source from the RAG pipeline.
-/// FE uses DocumentId to identify the document, PageNumber to navigate the viewer, and Snippet to highlight text.
-/// Source (fileName) is kept as a display-friendly label but may not be unique.
+/// Full citation entity stored in the database — contains all RAG metadata.
 /// </summary>
 public sealed record ChatCitationDto(
+    int CitationIndex,
     Guid DocumentId,
     string Source,
     string Snippet,
@@ -22,6 +13,23 @@ public sealed record ChatCitationDto(
     string MatchType,
     bool IsHighlightable = false,
     string? Reason = "legacy_unclassified");
+
+/// <summary>
+/// Lightweight citation returned to the frontend — contains only what the UI needs.
+/// </summary>
+public sealed record ChatCitationResponseDto(
+    int CitationIndex,
+    Guid DocumentId,
+    string Snippet,
+    int? PageNumber);
+
+public sealed record ChatSessionResponseDto(Guid Id, Guid UserId, string SessionTitle, DateTime CreatedAt, DateTime? UpdatedAt);
+
+public sealed record CreateChatSessionRequestDto(string SessionTitle);
+
+public sealed record UpdateChatSessionRequestDto(string SessionTitle);
+
+public sealed record ChatMessageResponseDto(Guid Id, Guid ChatSessionId, string Sender, string Content, DateTime CreatedAt, DateTime? UpdatedAt, bool IsRelevant, IReadOnlyList<ChatCitationResponseDto> Citations);
 
 public sealed record CreateChatMessageRequestDto(Guid? SessionId, string Message);
 

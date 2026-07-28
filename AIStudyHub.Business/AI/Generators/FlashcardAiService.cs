@@ -76,7 +76,17 @@ public sealed class FlashcardAiService : IFlashcardAiService
         _logger.LogInformation("Generating {Num} flashcards for document {DocId} using OpenAI", request.NumberOfFlashcards, documentId);
 
         var payloads = await _vectorStoreService.GetPayloadsByDocumentIdAsync(documentId);
-        var context = BuildContextFromPayloads(payloads);
+
+        var sortedChunks = payloads
+            .OrderBy(p => int.TryParse(p.GetValueOrDefault("chunkIndex", "0"), out var idx) ? idx : 0)
+            .Select(p => FixMojibake(p.GetValueOrDefault("text", "")))
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .ToList();
+
+        var context = BuildContextFromPayloads(sortedChunks);
+
+        _logger.LogInformation("Flashcard context length: {Length} chars from {ChunkCount} chunks",
+            context.Length, sortedChunks.Count);
         var flashcards = new List<FlashcardResponseAiDto>(request.NumberOfFlashcards);
         var seenFronts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -357,20 +367,24 @@ RULES:
             : null;
     }
 
-    private static string BuildContextFromPayloads(List<Dictionary<string, string>> payloads)
+    private static string BuildContextFromPayloads(List<string> sortedChunks)
     {
-        var sb = new System.Text.StringBuilder();
-        foreach (var payload in payloads)
+        var context = string.Join("\n\n", sortedChunks);
+
+        if (context.Length > 20000)
         {
-            if (payload.TryGetValue("text", out var text) && !string.IsNullOrWhiteSpace(text))
+            context = context.Substring(0, 20000);
+            var lastPeriod = context.LastIndexOf('.');
+            if (lastPeriod > 10000)
             {
-                sb.AppendLine(text);
-                sb.AppendLine();
+                context = context.Substring(0, lastPeriod + 1);
             }
-            if (sb.Length > 20_000) return sb.ToString();
         }
-        return sb.ToString();
+
+        return context;
     }
+
+    private static string FixMojibake(string input) => TextSanitizer.FixMojibake(input);
 
     private static string Clean(string s) => TextSanitizer.CleanBracketedReferences(s);
 }

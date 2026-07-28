@@ -126,18 +126,14 @@ public sealed class ApplicationMappingProfile : Profile
                 src.Content,
                 src.CreatedAt,
                 src.UpdatedAt,
-                false, // IsRelevant is only meaningful for assistant messages; set in service
+                src.IsRelevant,
                 src.Citations
                     .OrderBy(citation => citation.CitationIndex)
-                    .Select(citation => new ChatCitationDto(
+                    .Select(citation => new ChatCitationResponseDto(
+                        citation.CitationIndex,
                         citation.DocumentId,
-                        citation.Source,
                         citation.Snippet,
-                        citation.PageNumber,
-                        citation.Relevance,
-                        citation.MatchType,
-                        citation.IsHighlightable,
-                        citation.Reason))
+                        citation.PageNumber))
                     .ToList()))
             .ForMember(destination => destination.Citations, option => option.Ignore());
         CreateMap<CreateChatMessageRequestDto, ChatMessage>()

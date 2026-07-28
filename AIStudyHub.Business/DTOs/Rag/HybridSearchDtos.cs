@@ -23,22 +23,29 @@ public sealed record HybridSearchResultDto(
     string MatchType,
     bool IsHighlightable)
 {
-    public static HybridSearchResultDto FromSearchResult(SearchResult result)
+    public static bool TryFromSearchResult(
+        SearchResult result,
+        out HybridSearchResultDto? dto)
     {
+        dto = null;
+        if (!Guid.TryParse(result.Metadata.GetValueOrDefault("documentId"), out var documentId)
+            || documentId == Guid.Empty)
+        {
+            return false;
+        }
+
         var highlight = CitationHighlightability.FromMetadata(result.Metadata);
-        return new HybridSearchResultDto(
+        dto = new HybridSearchResultDto(
             result.Content,
             result.Score,
-            ParseGuid(result.Metadata.GetValueOrDefault("documentId")),
+            documentId,
             result.Metadata.GetValueOrDefault("fileName", result.Source),
             ParseInt(result.Metadata.GetValueOrDefault("pageNumber")),
             ParseInt(result.Metadata.GetValueOrDefault("chunkIndex")),
             result.MatchType,
             highlight.IsHighlightable);
+        return true;
     }
-
-    private static Guid ParseGuid(string? value) =>
-        Guid.TryParse(value, out var result) ? result : Guid.Empty;
 
     private static int? ParseInt(string? value) =>
         int.TryParse(value, out var result) ? result : null;
