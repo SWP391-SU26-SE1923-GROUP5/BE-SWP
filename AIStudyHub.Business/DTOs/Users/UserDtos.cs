@@ -35,15 +35,6 @@ public sealed record UpdateUserRequestDto(
     string Status,
     string Role);
 
-/// <summary>DTO for partial user update (PATCH) — all fields are optional.</summary>
-public sealed record PatchUserRequestDto(
-    string? FullName,
-    DateOnly? DateOfBirth,
-    int? CurrentStorageCapacity,
-    int? CurrentAiTokenUsage,
-    string? Status,
-    string? Role);
-
 public sealed record UpdateProfileRequestDto(
     string FullName,
     DateOnly? DateOfBirth);

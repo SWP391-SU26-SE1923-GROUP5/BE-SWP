@@ -302,10 +302,6 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             review.Interval = Math.Max(review.Interval, (int)Math.Round(review.Interval * factor));
         }
 
-        // Hard cap: keep intervals from compounding beyond SQL Server's datetime range
-        // and from blowing past practical review horizons.
-        review.Interval = Math.Min(review.Interval, 15);
-
         review.NextReviewDate = DateTime.UtcNow.AddDays(review.Interval);
     }
 }

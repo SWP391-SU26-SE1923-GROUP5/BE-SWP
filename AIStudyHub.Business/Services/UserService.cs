@@ -144,13 +144,6 @@ public sealed class UserService : IUserService
         }
 
         var normalizedRole = request.Role.Trim().ToLowerInvariant();
-        if (normalizedRole is not ("admin" or "student"))
-            throw new ArgumentException("Role must be 'admin' or 'student'.");
-
-        var normalizedStatus = request.Status.Trim().ToLowerInvariant();
-        if (normalizedStatus is not "active")
-            throw new ArgumentException("Status must be 'active'.");
-
         var user = new User
         {
             Id = Guid.NewGuid(),
@@ -160,9 +153,9 @@ public sealed class UserService : IUserService
             DateOfBirth = request.DateOfBirth,
             CurrentStorageCapacity = request.CurrentStorageCapacity,
             CurrentAiTokenUsage = request.CurrentAiTokenUsage,
-            Status = normalizedStatus,
+            Status = request.Status.Trim().ToLowerInvariant(),
             Role = normalizedRole,
-            IsActive = true,
+            IsActive = string.Equals(request.Status, "active", StringComparison.OrdinalIgnoreCase),
             EmailConfirmed = true
         };
 
@@ -182,20 +175,14 @@ public sealed class UserService : IUserService
 
         var previousRole = user.Role;
         var normalizedRole = request.Role.Trim().ToLowerInvariant();
-        if (normalizedRole is not ("admin" or "student"))
-            throw new ArgumentException("Role must be 'admin' or 'student'.");
-
-        var normalizedStatus = request.Status.Trim().ToLowerInvariant();
-        if (normalizedStatus is not "active")
-            throw new ArgumentException("Status must be 'active'.");
 
         user.FullName = request.FullName.Trim();
         user.DateOfBirth = request.DateOfBirth;
         user.CurrentStorageCapacity = request.CurrentStorageCapacity;
         user.CurrentAiTokenUsage = request.CurrentAiTokenUsage;
-        user.Status = normalizedStatus;
+        user.Status = request.Status.Trim().ToLowerInvariant();
         user.Role = normalizedRole;
-        user.IsActive = true;
+        user.IsActive = string.Equals(user.Status, "active", StringComparison.OrdinalIgnoreCase);
 
         var updateResult = await _userManager.UpdateAsync(user);
         EnsureIdentitySucceeded(updateResult);
