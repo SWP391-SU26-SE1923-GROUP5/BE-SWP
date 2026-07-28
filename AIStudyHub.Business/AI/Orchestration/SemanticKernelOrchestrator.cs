@@ -23,6 +23,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
     private readonly IConfidenceScorer _confidenceScorer;
     private readonly SemanticKernelOptions _options;
     private readonly IOpenAIService _openAiService;
+    private readonly RagCitationFactory _citationFactory;
     private readonly ILogger<SemanticKernelOrchestrator> _logger;
 
     public SemanticKernelOrchestrator(
@@ -33,6 +34,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         IConfidenceScorer confidenceScorer,
         IOptions<SemanticKernelOptions> options,
         IOpenAIService openAiService,
+        RagCitationFactory citationFactory,
         ILogger<SemanticKernelOrchestrator> logger)
     {
         _retrievalPipeline = retrievalPipeline;
@@ -42,6 +44,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _confidenceScorer = confidenceScorer;
         _options = options.Value;
         _openAiService = openAiService;
+        _citationFactory = citationFactory;
         _logger = logger;
     }
 
@@ -50,14 +53,14 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _logger.LogInformation("Processing RAG query for user {UserId}", userId);
 
         // L3: Retrieval with hybrid search and reranking
-        var rerankedResults = await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct);
-        _logger.LogInformation("After 1st rerank ({Count}): {Chunks}",
-            rerankedResults.Count(),
-            string.Join("\n===\n", rerankedResults.Take(5).Select(r => r.Content.Length > 250 ? r.Content[..250] + "..." : r.Content)));
-
-        var resultList = rerankedResults.ToList();
-        _logger.LogInformation("Ask query: '{Question}' | Retrieved chunks: {Chunks}",
-            question, string.Join("\n---\n", resultList.Select(r => r.Content.Length > 200 ? r.Content[..200] + "..." : r.Content)));
+        var candidates = (await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct)).ToList();
+        var citationSources = _citationFactory.Create(candidates, documentIds);
+        var resultList = citationSources.Select(source => source.Result).ToList();
+        var citations = citationSources.Select(source => source.Citation).ToList();
+        _logger.LogInformation(
+            "RAG retrieval produced {CandidateCount} candidates and {ValidCount} valid citation sources",
+            candidates.Count,
+            resultList.Count);
         if (!resultList.Any())
         {
             return new RagResponse("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", new(), 0.0, IsRelevant: false);
@@ -80,8 +83,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         // L4: Generate answer using Custom LLM Prompt (Avoids duplicate KernelMemory search)
         var contextBuilder = RagPromptContextBuilder.Build(resultList);
         var exhaustiveInstruction = GetExhaustiveInstruction(question);
-
-        _logger.LogInformation("RAG Context being fed to AI:\n{Context}", contextBuilder.ToString());
 
         var systemPrompt = """
             You are 'AIStudyHub Assistant', a helpful and friendly AI tutor for AIStudyHub.
@@ -123,21 +124,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
         var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
 
-        // Build citations
-        var citations = resultList.Select(r =>
-        {
-            var highlight = CitationHighlightability.FromMetadata(r.Metadata);
-            return new CitationInfo(
-                DocumentId: r.Metadata.TryGetValue("documentId", out var docIdStr) && Guid.TryParse(docIdStr, out var docId) ? docId : Guid.Empty,
-                Source: r.Source,
-                Content: r.Content,
-                Relevance: r.Score,
-                PageNumber: r.Metadata.TryGetValue("pageNumber", out var pgStr) && int.TryParse(pgStr, out var pg) ? pg : null,
-                MatchType: r.MatchType,
-                IsHighlightable: highlight.IsHighlightable,
-                Reason: highlight.Reason);
-        }).ToList();
-
         return new RagResponse(answer, citations, confidence, IsRelevant: true);
     }
 
@@ -147,9 +133,10 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _logger.LogInformation("Processing RAG query with tracking for user {UserId}", userId);
 
         // L3: Retrieval with hybrid search and reranking
-        var rerankedResults = await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct);
-
-        var resultList = rerankedResults.ToList();
+        var candidates = (await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct)).ToList();
+        var citationSources = _citationFactory.Create(candidates, documentIds);
+        var resultList = citationSources.Select(source => source.Result).ToList();
+        var citations = citationSources.Select(source => source.Citation).ToList();
         if (!resultList.Any())
         {
             return new RagResponseWithUsage("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", new(), 0.0, 0, 0, IsRelevant: false);
@@ -173,7 +160,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         if (TryDetectNoAnswer(question, resultList, out var noAnswer))
         {
             _logger.LogInformation("Yes/No shortcut triggered: {Answer}", noAnswer);
-            return new RagResponseWithUsage(noAnswer, new(), 1.0, 0, 0, IsRelevant: true);
+            return new RagResponseWithUsage(noAnswer, citations, 1.0, 0, 0, IsRelevant: true);
         }
 
         // L4: Generate answer using Custom LLM Prompt
@@ -222,21 +209,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         // TODO: GroundingVerifier is too strict for short/Vietnamese answers - disabled temporarily
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
         var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
-
-        // Build citations
-        var citations = resultList.Select(r =>
-        {
-            var highlight = CitationHighlightability.FromMetadata(r.Metadata);
-            return new CitationInfo(
-                DocumentId: r.Metadata.TryGetValue("documentId", out var docIdStr) && Guid.TryParse(docIdStr, out var docId) ? docId : Guid.Empty,
-                Source: r.Source,
-                Content: r.Content,
-                Relevance: r.Score,
-                PageNumber: r.Metadata.TryGetValue("pageNumber", out var pgStr) && int.TryParse(pgStr, out var pg) ? pg : null,
-                MatchType: r.MatchType,
-                IsHighlightable: highlight.IsHighlightable,
-                Reason: highlight.Reason);
-        }).ToList();
 
         return new RagResponseWithUsage(answer, citations, confidence, totalInputTokens, totalOutputTokens, IsRelevant: true);
     }
@@ -450,23 +422,6 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         await Task.CompletedTask;
         return relevance;
     }
-
-    private static List<CitationInfo> BuildCitations(IEnumerable<SearchResult> results) =>
-        results.Select(result =>
-        {
-            var highlight = CitationHighlightability.FromMetadata(result.Metadata);
-            return new CitationInfo(
-                DocumentId: result.Metadata.TryGetValue("documentId", out var documentIdValue)
-                    && Guid.TryParse(documentIdValue, out var documentId) ? documentId : Guid.Empty,
-                Source: result.Source,
-                Content: result.Content,
-                Relevance: result.Score,
-                PageNumber: result.Metadata.TryGetValue("pageNumber", out var pageValue)
-                    && int.TryParse(pageValue, out var page) ? page : null,
-                MatchType: result.MatchType,
-                IsHighlightable: highlight.IsHighlightable,
-                Reason: highlight.Reason);
-        }).ToList();
 
     private static string GetExhaustiveInstruction(string question) =>
         RagContextExpander.IsExhaustiveQuery(question)

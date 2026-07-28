@@ -146,12 +146,12 @@ public sealed class AIChatService : IAIChatService
                 UserId = userId,
                 SessionTitle = title
             };
-            await _unitOfWork.ChatSessions.AddAsync(session);
-            await _unitOfWork.SaveChangesAsync();
+            await _unitOfWork.ChatSessions.AddAsync(session, ct);
+            await _unitOfWork.SaveChangesAsync(ct);
         }
         else
         {
-            session = await _unitOfWork.ChatSessions.GetByIdAsync(request.SessionId.Value);
+            session = await _unitOfWork.ChatSessions.GetByIdAsync(request.SessionId.Value, ct);
             if (session is null || session.UserId != userId)
             {
                 throw new KeyNotFoundException($"Chat session with ID {request.SessionId} not found or access denied.");
@@ -164,8 +164,8 @@ public sealed class AIChatService : IAIChatService
             Sender = "user",
             Content = request.Message
         };
-        await _unitOfWork.ChatMessages.AddAsync(userMessage);
-        await _unitOfWork.SaveChangesAsync();
+        await _unitOfWork.ChatMessages.AddAsync(userMessage, ct);
+        await _unitOfWork.SaveChangesAsync(ct);
 
         var history = await _unitOfWork.ChatMessages
             .Query()
@@ -201,9 +201,10 @@ public sealed class AIChatService : IAIChatService
             {
                 citations = ragResponse.Citations
                     .Select(c => new ChatCitationDto(
+                        c.CitationIndex,
                         c.DocumentId,
                         c.Source,
-                        c.Content.Length > 300 ? c.Content[..300] + "…" : c.Content,
+                        c.Content.Length > 300 ? c.Content[..300] : c.Content,
                         c.PageNumber,
                         c.Relevance,
                         c.MatchType,
@@ -229,9 +230,11 @@ public sealed class AIChatService : IAIChatService
             ChatSessionId = session.Id,
             Sender = "assistant",
             Content = aiResponse,
-            Citations = citations.Select((citation, index) =>
+            IsRelevant = isRelevant,
+            Citations = citations.Select(citation =>
             {
-                if (citation.DocumentId == Guid.Empty
+                if (citation.CitationIndex <= 0
+                    || citation.DocumentId == Guid.Empty
                     || string.IsNullOrWhiteSpace(citation.Source)
                     || string.IsNullOrWhiteSpace(citation.Snippet))
                 {
@@ -240,7 +243,7 @@ public sealed class AIChatService : IAIChatService
 
                 return new ChatMessageCitation
                 {
-                    CitationIndex = index + 1,
+                    CitationIndex = citation.CitationIndex,
                     DocumentId = citation.DocumentId,
                     Source = citation.Source,
                     Snippet = citation.Snippet,
@@ -253,23 +256,10 @@ public sealed class AIChatService : IAIChatService
             }).ToList()
         };
 
-        await _unitOfWork.ChatMessages.AddAsync(assistantMessage);
+        await _unitOfWork.ChatMessages.AddAsync(assistantMessage, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
-        var created = await _unitOfWork.ChatMessages
-            .Query()
-            .AsNoTracking()
-            .FirstAsync(chatMessage => chatMessage.Id == assistantMessage.Id, ct);
-
-        return new ChatMessageResponseDto(
-            created.Id,
-            created.ChatSessionId,
-            created.Sender,
-            created.Content,
-            created.CreatedAt,
-            created.UpdatedAt,
-            isRelevant,
-            citations);
+        return _mapper.Map<ChatMessageResponseDto>(assistantMessage);
     }
 
     public async Task<ChatSessionDocumentResponseDto> AddDocumentAsync(Guid sessionId, Guid documentId, Guid userId, CancellationToken ct = default)

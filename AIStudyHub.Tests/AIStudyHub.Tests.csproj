@@ -22,8 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\AIStudyHub.Business\AIStudyHub.Business.csproj" />
-    <ProjectReference Include="..\AIStudyHub.Data\AIStudyHub.Data.csproj" />
+    <ProjectReference Include="..\AIStudyHub.API\AIStudyHub.API.csproj" />
   </ItemGroup>
 
 </Project>

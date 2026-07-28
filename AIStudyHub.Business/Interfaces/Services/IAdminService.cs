@@ -21,6 +21,4 @@ public interface IAdminService
         Guid documentId, Guid deletedByUserId, CancellationToken ct = default);
 
     Task<AdminDashboardDto> GetDashboardAsync(CancellationToken ct = default);
-
-    Task<RevenueResultDto> GetRevenueAsync(RevenueRequestDto request, CancellationToken ct = default);
 }

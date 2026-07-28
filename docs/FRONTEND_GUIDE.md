@@ -13,17 +13,33 @@ GET /api/Chat/sessions/{sessionId}/documents
 
 Backend tra `404` neu session khong ton tai hoac khong thuoc user dang dang nhap. Khong tu dong chon Notebook moi nhat khi URL da co `sessionId`.
 
-Moi assistant message tra `citations` la mot array khong null. Thu tu array tuong ung citation marker: phan tu dau tien la `[1]`, phan tu thu hai la `[2]`.
+Moi assistant message tra `citations` la mot array khong null. Marker `[n]` duoc tra bang truong `citationIndex`, khong suy ra tu vi tri phan tu trong array. Khi click `[n]`, Frontend tim citation co `citationIndex === n`, sau do dung `documentId` cua citation do de mo tai lieu.
 
-Khi click citation, Frontend mo `documentId`, chuyen den `pageNumber` neu co, va chi highlight `snippet` khi `isHighlightable` la `true`. Neu khong highlight duoc, van mo dung tai lieu/trang va co the hien thi `reason`.
+Contract citation giong nhau cho ca response tao message va response lich su:
+
+```json
+{
+  "citationIndex": 1,
+  "documentId": "d9b8775b-45f4-4a4d-a257-43ea7e730fda",
+  "source": "document.pdf",
+  "snippet": "Exact source text",
+  "pageNumber": 12,
+  "relevance": 0.91,
+  "matchType": "hybrid",
+  "isHighlightable": true,
+  "reason": null
+}
+```
+
+Sau khi tim dung citation, Frontend chuyen den `pageNumber` neu co va chi highlight `snippet` khi `isHighlightable` la `true`. Neu khong highlight duoc, van mo dung tai lieu/trang va co the hien thi `reason`. `documentId` luon la GUID tai lieu that, khong phai so marker nhu `"1"`.
 
 Message tao truoc migration persistent citations khong duoc backfill va se tra `citations: []`.
 
-> **Phiên bản**: cập nhật 2026-06-28
+> **Phiên bản**: cập nhật 2026-07-18
 > **Backend**: ASP.NET Core 8 Web API
 > **Auth**: JWT Bearer (access + refresh) + External (Google, GitHub)
 > **Real-time**: SignalR tại `/hubs/notifications`
-> **Database**: EF Core (mới nhất: 21 migration cũ + 4 migration mới về tier/flashcard-review/gamification/user-stats)
+> **Database**: EF Core (citation contract mới nhất: `20260718140849_CompleteChatCitationFlow`)
 
 Document này chia làm 3 phần:
 1. **Phần 1 (mục 1-5)**: Mô tả luồng nghiệp vụ bằng ngôn ngữ dễ hiểu cho BA/QC/Frontend dev.
@@ -294,7 +310,7 @@ sequenceDiagram
 | **Danh sách chat session (sidebar)** | `GET /api/Chat/sessions` | |
 | **Tạo session mới** | `POST /api/Chat/sessions { sessionTitle }` | |
 | **Mở 1 session, xem messages** | `GET /api/Chat/sessions/{sessionId}/messages` | |
-| **Gửi message trong session** | `POST /api/Chat/messages { sessionId, documentId, message }` | Response là message AI |
+| **Gửi message trong session** | `POST /api/Chat/messages { sessionId, message }` | Response là message AI; citation marker dùng `citationIndex`, viewer dùng `documentId` |
 
 ### 5.5.4. Flashcard & Spaced Repetition
 
@@ -1189,11 +1205,11 @@ Lấy lịch sử messages của 1 session.
 
 ### 17.4. POST `/api/Chat/messages`
 
-Gửi message mới (user message + AI response được tạo đồng thời).
+Gửi message mới theo hai giai đoạn: backend lưu user message trước khi gọi AI; sau đó lưu assistant message và toàn bộ citation snapshots trong cùng một `SaveChangesAsync`.
 
-**Body**: `{ "sessionId": "guid", "documentId": "guid", "message": "string" }`
+**Body**: `{ "sessionId": "guid", "message": "string" }`
 
-**Response 200**: `ChatMessageResponseDto` (AI response).
+**Response 200**: `ChatMessageResponseDto` (AI response). `citations` dùng cùng contract đã mô tả ở đầu tài liệu: tìm marker `[n]` bằng `citationIndex == n`, rồi mở file bằng GUID `documentId`.
 
 ---
 
