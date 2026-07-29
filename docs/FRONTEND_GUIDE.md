@@ -369,7 +369,7 @@ sequenceDiagram
 
 | Tính năng UI | Gọi API | Ghi chú |
 |---|---|---|
-| **Danh sách / dropdown Subject của tôi** | `GET /api/Subject?pageIndex=1&pageSize=100` | Chỉ trả về Subject của user trong JWT; cache 5 phút |
+| **Danh sách / dropdown Subject của tôi** | `GET /api/Subject?offset=0&limit=100` | Chỉ trả về Subject của user trong JWT; cache 5 phút |
 | **Tạo Subject** | `POST /api/Subject` | Subject được gán cho user trong JWT; cùng mã Subject có thể tồn tại cho student khác |
 | **Chi tiết / sửa / xóa Subject** | `GET`, `PUT`, `DELETE /api/Subject/{id}` | Chỉ Subject của user trong JWT; Subject thiếu hoặc của user khác trả 404; xóa Subject đang được Document tham chiếu trả 409 |
 
@@ -1289,7 +1289,7 @@ Mark tất cả. **Response**: 204.
 
 | Method | Endpoint | Auth | Mô tả |
 |---|---|---|---|
-| GET | `/api/Subject?pageIndex=1&pageSize=20` | Authenticated student | Danh sách Subject của chính user (phân trang) |
+| GET | `/api/Subject?offset=0&limit=20` | Authenticated student | Danh sách Subject của chính user (phân trang) |
 | GET | `/api/Subject/{id}` | Authenticated student | Chi tiết Subject của chính user |
 | POST | `/api/Subject` | Authenticated student | Tạo Subject cho chính user |
 | PUT | `/api/Subject/{id}` | Authenticated student | Cập nhật Subject của chính user |

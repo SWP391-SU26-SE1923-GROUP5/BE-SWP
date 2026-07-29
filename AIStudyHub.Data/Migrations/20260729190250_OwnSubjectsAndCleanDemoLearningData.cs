@@ -171,6 +171,30 @@ namespace AIStudyHub.Data.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.Sql(
+                """
+                DELETE FROM [Notification];
+                DELETE FROM [Recommendations];
+                DELETE FROM [UserBadge];
+                DELETE FROM [StudyLogs];
+                DELETE FROM [TokenLedger];
+                DELETE FROM [ChatSession];
+                DELETE FROM [Document];
+                DELETE FROM [Subjects];
+
+                UPDATE [UserStats]
+                SET [total_xp] = 0,
+                    [current_level] = 1,
+                    [current_streak] = 0,
+                    [best_streak] = 0,
+                    [last_activity_date] = NULL,
+                    [total_study_seconds] = 0;
+
+                UPDATE [Users]
+                SET [current_storage_capacity] = 0,
+                    [current_ai_token_usage] = 0;
+                """);
+
             migrationBuilder.DropForeignKey(
                 name: "FK_Subjects_Users_owner_user_id",
                 table: "Subjects");

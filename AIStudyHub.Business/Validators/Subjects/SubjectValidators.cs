@@ -9,7 +9,7 @@ public sealed class CreateSubjectRequestValidator : AbstractValidator<CreateSubj
     {
         RuleFor(x => x.SubjectCode)
             .NotEmpty().WithMessage("Subject code is required.")
-            .MaximumLength(50).WithMessage("Subject code must not exceed 50 characters.");
+            .MaximumLength(20).WithMessage("Subject code must not exceed 20 characters.");
 
         RuleFor(x => x.SubjectName)
             .NotEmpty().WithMessage("Subject name is required.")
@@ -26,7 +26,7 @@ public sealed class UpdateSubjectRequestValidator : AbstractValidator<UpdateSubj
     {
         RuleFor(x => x.SubjectCode)
             .NotEmpty().WithMessage("Subject code is required.")
-            .MaximumLength(50).WithMessage("Subject code must not exceed 50 characters.");
+            .MaximumLength(20).WithMessage("Subject code must not exceed 20 characters.");
 
         RuleFor(x => x.SubjectName)
             .NotEmpty().WithMessage("Subject name is required.")
