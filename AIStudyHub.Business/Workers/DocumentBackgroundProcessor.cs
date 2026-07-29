@@ -339,6 +339,17 @@ public class DocumentBackgroundProcessor : BackgroundService
                 return;
             }
 
+            if (request.IsReprocess)
+            {
+                var vectorStore =
+                    services.GetRequiredService<IVectorStoreService>();
+                await vectorStore.DeleteVectorsByDocumentIdAsync(
+                    request.DocumentId);
+                logger.LogInformation(
+                    "Removed existing vectors before reprocessing document {DocumentId}",
+                    request.DocumentId);
+            }
+
             var extension = Path.GetExtension(request.FileName).ToLowerInvariant();
             var isTextDocument = new[] { ".pdf", ".docx", ".txt", ".md" }.Contains(extension);
             var isImageFile = new[] { ".jpg", ".png", ".jpeg", ".webp", ".gif" }.Contains(extension);

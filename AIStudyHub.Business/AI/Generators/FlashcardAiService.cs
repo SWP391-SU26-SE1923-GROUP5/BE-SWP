@@ -55,6 +55,8 @@ public sealed class FlashcardAiService : IFlashcardAiService
         Guid userId,
         CancellationToken cancellationToken = default)
     {
+        var accountingOperationId = Guid.NewGuid();
+
         if (request.NumberOfFlashcards <= 0 || request.NumberOfFlashcards > 20)
             throw new ArgumentOutOfRangeException(nameof(request.NumberOfFlashcards), "Request between 1 and 20 flashcards.");
 
@@ -98,47 +100,80 @@ public sealed class FlashcardAiService : IFlashcardAiService
         var totalInputTokens = 0;
         var totalOutputTokens = 0;
 
-        for (var modelCall = 1;
-             modelCall <= MaxModelCalls && flashcards.Count < request.NumberOfFlashcards;
-             modelCall++)
+        try
         {
-            var remaining = request.NumberOfFlashcards - flashcards.Count;
-            var wantThisBatch = Math.Min(batchSize, remaining);
-
-            var (batchCards, inputTokens, outputTokens) = await RunBatchWithTrackingAsync(
-                context, flashcards, wantThisBatch, modelCall, cancellationToken);
-
-            totalInputTokens += inputTokens;
-            totalOutputTokens += outputTokens;
-
-            var added = 0;
-            foreach (var card in batchCards)
+            for (var modelCall = 1;
+                 modelCall <= MaxModelCalls
+                 && flashcards.Count < request.NumberOfFlashcards;
+                 modelCall++)
             {
-                if (flashcards.Count >= request.NumberOfFlashcards) break;
-                
-                var normalizedFront = new string(card.Front.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
-                if (normalizedFront.Length < 5) continue;
+                if (cancellationToken.IsCancellationRequested)
+                    break;
 
-                if (!seenFronts.Add(normalizedFront))
-                {
-                    _logger.LogInformation(
-                        "Flashcard model call {ModelCall} produced duplicate, skipping",
+                var remaining =
+                    request.NumberOfFlashcards - flashcards.Count;
+                var wantThisBatch =
+                    Math.Min(batchSize, remaining);
+
+                var (batchCards, inputTokens, outputTokens) =
+                    await RunBatchWithTrackingAsync(
+                        context,
+                        flashcards,
+                        wantThisBatch,
                         modelCall);
-                    continue;
+
+                totalInputTokens += inputTokens;
+                totalOutputTokens += outputTokens;
+
+                var added = 0;
+                foreach (var card in batchCards)
+                {
+                    if (flashcards.Count
+                        >= request.NumberOfFlashcards)
+                    {
+                        break;
+                    }
+
+                    var normalizedFront = new string(
+                            card.Front
+                                .Where(char.IsLetterOrDigit)
+                                .ToArray())
+                        .ToLowerInvariant();
+                    if (normalizedFront.Length < 5)
+                        continue;
+
+                    if (!seenFronts.Add(normalizedFront))
+                    {
+                        _logger.LogInformation(
+                            "Flashcard model call {ModelCall} produced duplicate, skipping",
+                            modelCall);
+                        continue;
+                    }
+
+                    flashcards.Add(card);
+                    added++;
                 }
 
-                flashcards.Add(card);
-                added++;
+                _logger.LogInformation(
+                    "Flashcard model call {ModelCall}: wanted {Want}, accepted {Accepted}, total {Total}/{Requested}",
+                    modelCall,
+                    wantThisBatch,
+                    added,
+                    flashcards.Count,
+                    request.NumberOfFlashcards);
             }
-
-            _logger.LogInformation(
-                "Flashcard model call {ModelCall}: wanted {Want}, accepted {Accepted}, total {Total}/{Requested}",
-                modelCall,
-                wantThisBatch,
-                added,
-                flashcards.Count,
-                request.NumberOfFlashcards);
         }
+        finally
+        {
+            await RecordConsumedTokensAsync(
+                accountingOperationId,
+                userId,
+                documentId,
+                totalInputTokens,
+                totalOutputTokens);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         _logger.LogInformation(
             "Finished flashcard generation: {Got}/{Requested}",
@@ -147,11 +182,6 @@ public sealed class FlashcardAiService : IFlashcardAiService
 
         if (flashcards.Count != request.NumberOfFlashcards)
         {
-            await RecordConsumedTokensAsync(
-                userId,
-                totalInputTokens,
-                totalOutputTokens,
-                cancellationToken);
             throw new ExactGenerationCountException(
                 request.NumberOfFlashcards,
                 flashcards.Count);
@@ -170,12 +200,6 @@ public sealed class FlashcardAiService : IFlashcardAiService
         }
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        await RecordConsumedTokensAsync(
-            userId,
-            totalInputTokens,
-            totalOutputTokens,
-            cancellationToken);
-
         var result = entities.Select(e => new FlashcardResponseDto(
             e.Id,
             e.DocumentId,
@@ -192,8 +216,7 @@ public sealed class FlashcardAiService : IFlashcardAiService
         string context,
         IReadOnlyList<FlashcardResponseAiDto> existing,
         int wantThisBatch,
-        int modelCall,
-        CancellationToken cancellationToken)
+        int modelCall)
     {
         var avoidBlock = existing.Count == 0
             ? string.Empty
@@ -222,8 +245,6 @@ RULES:
 - All facts MUST come from the TEXT above. Do not invent information.
 - Output ONLY the JSON array. Start with '[' and end with ']'.
 """;
-
-        cancellationToken.ThrowIfCancellationRequested();
 
         TokenUsageResult usageResult;
         try
@@ -260,17 +281,19 @@ RULES:
     }
 
     private Task RecordConsumedTokensAsync(
+        Guid operationId,
         Guid userId,
+        Guid documentId,
         int inputTokens,
-        int outputTokens,
-        CancellationToken cancellationToken)
+        int outputTokens)
     {
-        return _tokenTracker.RecordUsageAsync(
+        return _tokenTracker.RecordGenerationUsageAsync(
+            operationId,
             userId,
+            documentId,
             inputTokens,
             outputTokens,
-            "flashcard",
-            cancellationToken);
+            "GenerateFlashcards");
     }
 
     private static List<FlashcardResponseAiDto> ParseFlashcardArray(string aiText)

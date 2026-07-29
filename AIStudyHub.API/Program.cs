@@ -11,9 +11,13 @@ using AIStudyHub.Data.Extensions;
 using CloudinaryDotNet;
 using FluentValidation;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Mvc;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+var uploadFileSizeLimitBytes =
+    builder.Configuration.GetValue<long?>("DocumentStorage:MaxFileSizeBytes")
+    ?? 5L * 1024 * 1024;
 
 builder.Host.UseSerilog((context, loggerConfiguration) =>
 {
@@ -22,6 +26,29 @@ builder.Host.UseSerilog((context, loggerConfiguration) =>
 builder.Services.AddControllers(options =>
 {
     options.Filters.Add<FluentValidationFilter>();
+});
+builder.Services.Configure<ApiBehaviorOptions>(options =>
+{
+    var defaultInvalidModelStateResponseFactory =
+        options.InvalidModelStateResponseFactory;
+
+    options.InvalidModelStateResponseFactory = actionContext =>
+    {
+        if (!IsMultipartBodyLengthLimitFailure(actionContext))
+            return defaultInvalidModelStateResponseFactory(actionContext);
+
+        return new ObjectResult(new
+        {
+            statusCode = StatusCodes.Status413PayloadTooLarge,
+            message =
+                $"File size limit exceeded. Limit: {uploadFileSizeLimitBytes} bytes.",
+            error = "FileSizeLimitExceeded",
+            limitBytes = uploadFileSizeLimitBytes
+        })
+        {
+            StatusCode = StatusCodes.Status413PayloadTooLarge
+        };
+    };
 });
 builder.Services.Configure<FormOptions>(options =>
 {
@@ -132,3 +159,47 @@ app.MapControllers();
 app.MapHub<NotificationsHub>("/hubs/notifications");
 
 app.Run();
+
+static bool IsMultipartBodyLengthLimitFailure(ActionContext actionContext)
+{
+    var request = actionContext.HttpContext.Request;
+    if (request.ContentType is null
+        || !request.ContentType.StartsWith(
+            "multipart/",
+            StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    return actionContext.ModelState.Values
+        .SelectMany(entry => entry.Errors)
+        .Any(error =>
+            ContainsMultipartBodyLengthLimitMessage(error.ErrorMessage)
+            || ExceptionContainsMultipartBodyLengthLimitMessage(
+                error.Exception));
+}
+
+static bool ExceptionContainsMultipartBodyLengthLimitMessage(
+    Exception? exception)
+{
+    for (var current = exception;
+         current is not null;
+         current = current.InnerException)
+    {
+        if (ContainsMultipartBodyLengthLimitMessage(current.Message))
+            return true;
+    }
+
+    return false;
+}
+
+static bool ContainsMultipartBodyLengthLimitMessage(string? message)
+{
+    return !string.IsNullOrWhiteSpace(message)
+        && message.Contains(
+            "Multipart body length limit",
+            StringComparison.OrdinalIgnoreCase)
+        && message.Contains(
+            "exceeded",
+            StringComparison.OrdinalIgnoreCase);
+}

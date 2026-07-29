@@ -52,6 +52,8 @@ public sealed class QuizAiService : IQuizAiService
         Guid userId,
         CancellationToken cancellationToken = default)
     {
+        var accountingOperationId = Guid.NewGuid();
+
         if (request.NumberOfQuestions <= 0 || request.NumberOfQuestions > 20)
             throw new ArgumentOutOfRangeException(
                 nameof(request.NumberOfQuestions),
@@ -104,50 +106,84 @@ public sealed class QuizAiService : IQuizAiService
         var totalInputTokens = 0;
         var totalOutputTokens = 0;
 
-        for (var modelCall = 1;
-             modelCall <= MaxModelCalls && allQuestions.Count < request.NumberOfQuestions;
-             modelCall++)
+        try
         {
-            var remaining = request.NumberOfQuestions - allQuestions.Count;
-            var wantThisBatch = Math.Min(batchSize, remaining + 2);
-
-            var prompt = BuildBatchPrompt(
-                wantThisBatch,
-                context,
-                allQuestions,
-                startingPosition: allQuestions.Count + 1);
-
-            var (batchQuestions, inputTokens, outputTokens) = await RunBatchWithTrackingAsync(
-                prompt, modelCall, cancellationToken);
-
-            totalInputTokens += inputTokens;
-            totalOutputTokens += outputTokens;
-
-            var added = 0;
-            foreach (var q in batchQuestions)
+            for (var modelCall = 1;
+                 modelCall <= MaxModelCalls
+                 && allQuestions.Count < request.NumberOfQuestions;
+                 modelCall++)
             {
-                if (allQuestions.Count >= request.NumberOfQuestions)
+                if (cancellationToken.IsCancellationRequested)
                     break;
 
-                var normalized = NormalizeQuestion(q, allQuestions.Count + 1);
-                if (normalized is null) continue;
+                var remaining =
+                    request.NumberOfQuestions - allQuestions.Count;
+                var wantThisBatch =
+                    Math.Min(batchSize, remaining + 2);
 
-                var normalizedTitleText = new string(normalized.QuestionTitle.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
-                if (normalizedTitleText.Length < 5) continue;
+                var prompt = BuildBatchPrompt(
+                    wantThisBatch,
+                    context,
+                    allQuestions,
+                    startingPosition: allQuestions.Count + 1);
 
-                if (!seenTitles.Add(normalizedTitleText))
+                var (batchQuestions, inputTokens, outputTokens) =
+                    await RunBatchWithTrackingAsync(prompt, modelCall);
+
+                totalInputTokens += inputTokens;
+                totalOutputTokens += outputTokens;
+
+                var added = 0;
+                foreach (var q in batchQuestions)
                 {
-                    continue;
+                    if (allQuestions.Count
+                        >= request.NumberOfQuestions)
+                    {
+                        break;
+                    }
+
+                    var normalized = NormalizeQuestion(
+                        q,
+                        allQuestions.Count + 1);
+                    if (normalized is null)
+                        continue;
+
+                    var normalizedTitleText = new string(
+                            normalized.QuestionTitle
+                                .Where(char.IsLetterOrDigit)
+                                .ToArray())
+                        .ToLowerInvariant();
+                    if (normalizedTitleText.Length < 5)
+                        continue;
+
+                    if (!seenTitles.Add(normalizedTitleText))
+                        continue;
+
+                    allQuestions.Add(normalized);
+                    added++;
                 }
 
-                allQuestions.Add(normalized);
-                added++;
+                _logger.LogInformation(
+                    "Quiz model call {ModelCall}: wanted {Want}, parsed {Parsed}, accepted {Accepted}, total {Total}/{Requested}",
+                    modelCall,
+                    wantThisBatch,
+                    batchQuestions.Count,
+                    added,
+                    allQuestions.Count,
+                    request.NumberOfQuestions);
             }
-
-            _logger.LogInformation(
-                "Quiz model call {ModelCall}: wanted {Want}, parsed {Parsed}, accepted {Accepted}, total {Total}/{Requested}",
-                modelCall, wantThisBatch, batchQuestions.Count, added, allQuestions.Count, request.NumberOfQuestions);
         }
+        finally
+        {
+            await RecordConsumedTokensAsync(
+                accountingOperationId,
+                userId,
+                documentId,
+                totalInputTokens,
+                totalOutputTokens);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (allQuestions.Count != request.NumberOfQuestions)
         {
@@ -156,11 +192,6 @@ public sealed class QuizAiService : IQuizAiService
                 allQuestions.Count,
                 request.NumberOfQuestions,
                 documentId);
-            await RecordConsumedTokensAsync(
-                userId,
-                totalInputTokens,
-                totalOutputTokens,
-                cancellationToken);
             throw new ExactGenerationCountException(
                 request.NumberOfQuestions,
                 allQuestions.Count);
@@ -173,12 +204,6 @@ public sealed class QuizAiService : IQuizAiService
         _logger.LogInformation(
             "Generated {Count}/{Requested} quiz questions for document {DocumentId}",
             allQuestions.Count, request.NumberOfQuestions, documentId);
-
-        await RecordConsumedTokensAsync(
-            userId,
-            totalInputTokens,
-            totalOutputTokens,
-            cancellationToken);
 
         return new QuizResponseDto(
             quiz.Id,
@@ -248,11 +273,8 @@ IMPORTANT:
 
     private async Task<(List<AiGeneratedQuestionDto> questions, int inputTokens, int outputTokens)> RunBatchWithTrackingAsync(
         string prompt,
-        int modelCall,
-        CancellationToken cancellationToken)
+        int modelCall)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-
         TokenUsageResult usageResult;
         try
         {
@@ -288,17 +310,19 @@ IMPORTANT:
     }
 
     private Task RecordConsumedTokensAsync(
+        Guid operationId,
         Guid userId,
+        Guid documentId,
         int inputTokens,
-        int outputTokens,
-        CancellationToken cancellationToken)
+        int outputTokens)
     {
-        return _tokenTracker.RecordUsageAsync(
+        return _tokenTracker.RecordGenerationUsageAsync(
+            operationId,
             userId,
+            documentId,
             inputTokens,
             outputTokens,
-            "quiz",
-            cancellationToken);
+            "GenerateQuiz");
     }
 
     private static List<AiGeneratedQuestionDto> ParseQuizPayload(string aiText)

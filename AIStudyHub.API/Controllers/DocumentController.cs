@@ -3,7 +3,6 @@ using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.Services;
-using AIStudyHub.Business.Options;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
@@ -11,7 +10,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using System.Text.Json;
 
 namespace AIStudyHub.API.Controllers;
@@ -27,7 +25,7 @@ public sealed class DocumentController : ControllerBase
     private readonly IDocumentService _service;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IVectorStoreService _vectorStoreService;
-    private readonly DocumentStorageOptions _storageOptions;
+    private readonly IFileStorageService _fileStorage;
     private readonly ILogger<DocumentController> _logger;
     private readonly IDocumentUploadService _uploadService;
 
@@ -35,14 +33,14 @@ public sealed class DocumentController : ControllerBase
         IDocumentService service,
         IUnitOfWork unitOfWork,
         IVectorStoreService vectorStoreService,
-        IOptions<DocumentStorageOptions> storageOptions,
+        IFileStorageService fileStorage,
         ILogger<DocumentController> logger,
         IDocumentUploadService uploadService)
     {
         _service = service;
         _unitOfWork = unitOfWork;
         _vectorStoreService = vectorStoreService;
-        _storageOptions = storageOptions.Value;
+        _fileStorage = fileStorage;
         _logger = logger;
         _uploadService = uploadService;
     }
@@ -261,8 +259,13 @@ public sealed class DocumentController : ControllerBase
         if (string.IsNullOrEmpty(document.FileLink))
             return NotFound("No file associated with this document");
 
-        var relativePath = document.FileLink.Replace("/uploads/", "");
-        var fullPath = Path.GetFullPath(Path.Combine(_storageOptions.BasePath ?? string.Empty, relativePath));
+        if (!TryResolveStoredFilePath(
+                document.FileLink,
+                out var relativePath,
+                out var fullPath))
+        {
+            return NotFound("File not found on disk");
+        }
 
         if (!System.IO.File.Exists(fullPath))
             return NotFound("File not found on disk");
@@ -292,8 +295,13 @@ public sealed class DocumentController : ControllerBase
         if (string.IsNullOrEmpty(document.FileLink))
             return NotFound("No file associated with this document");
 
-        var relativePath = document.FileLink.Replace("/uploads/", "");
-        var fullPath = Path.GetFullPath(Path.Combine(_storageOptions.BasePath ?? string.Empty, relativePath));
+        if (!TryResolveStoredFilePath(
+                document.FileLink,
+                out var relativePath,
+                out var fullPath))
+        {
+            return NotFound("File not found on disk");
+        }
 
         if (!System.IO.File.Exists(fullPath))
             return NotFound("File not found on disk");
@@ -363,6 +371,61 @@ public sealed class DocumentController : ControllerBase
         return MimeTypeMap.TryGetValue(ext, out var mime) ? mime : "application/octet-stream";
     }
 
+    private bool TryResolveStoredFilePath(
+        string fileLink,
+        out string relativePath,
+        out string fullPath)
+    {
+        const string uploadPrefix = "/uploads/";
+
+        relativePath = string.Empty;
+        fullPath = string.Empty;
+
+        if (!fileLink.StartsWith(uploadPrefix, StringComparison.Ordinal)
+            || fileLink.Length == uploadPrefix.Length)
+        {
+            return false;
+        }
+
+        relativePath = fileLink[uploadPrefix.Length..];
+        if (string.IsNullOrWhiteSpace(relativePath)
+            || Path.IsPathRooted(relativePath))
+        {
+            relativePath = string.Empty;
+            return false;
+        }
+
+        try
+        {
+            fullPath = _fileStorage.ResolveFullPath(relativePath);
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            relativePath = string.Empty;
+            fullPath = string.Empty;
+            return false;
+        }
+        catch (ArgumentException)
+        {
+            relativePath = string.Empty;
+            fullPath = string.Empty;
+            return false;
+        }
+        catch (NotSupportedException)
+        {
+            relativePath = string.Empty;
+            fullPath = string.Empty;
+            return false;
+        }
+        catch (IOException)
+        {
+            relativePath = string.Empty;
+            fullPath = string.Empty;
+            return false;
+        }
+    }
+
     [HttpGet("{id:guid}/status")]
     public async Task<ActionResult> GetUploadStatus(Guid id, CancellationToken cancellationToken)
     {
@@ -411,6 +474,15 @@ public sealed class DocumentController : ControllerBase
         [FromForm] UploadDocumentFileRequestDto request,
         CancellationToken cancellationToken)
     {
+        if (request.File is null || request.File.Length <= 0)
+        {
+            return BadRequest(new
+            {
+                statusCode = StatusCodes.Status400BadRequest,
+                message = "A non-empty file is required."
+            });
+        }
+
         await using var content = request.File.OpenReadStream();
         var result = await _uploadService.UploadAsync(
             new DocumentUploadRequest(

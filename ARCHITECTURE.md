@@ -492,7 +492,7 @@ sequenceDiagram
     participant Client
     participant Controller as DocumentController
     participant Storage as LocalFileStorageService
-    participant DocSvc as DocumentService
+    participant UploadSvc as IDocumentUploadService
     participant Queue as DocumentProcessingQueue
     participant Processor as DocumentBackgroundProcessor
     participant Extract as IDocumentProcessingService
@@ -503,15 +503,13 @@ sequenceDiagram
     participant DB as DbContext
 
     Client->>Controller: POST /api/Document/upload/file (multipart/form-data)
-    Controller->>Storage: SaveFileAsync(file)
-    Storage-->>Controller: filePath
-
-    Controller->>DocSvc: CreateAsync(dto)
-    DocSvc->>DB: Insert Document (Status=Processing)
-    DocSvc-->>Controller: documentId
-
-    Controller->>Queue: EnqueueAsync(request)
-    Note over Controller,DB: File and Processing document are durable before acceptance
+    Controller->>UploadSvc: UploadAsync(stream request)
+    UploadSvc->>Storage: SaveFileAsync(stream)
+    Storage-->>UploadSvc: stored path + exact bytes
+    UploadSvc->>DB: Insert Document (Status=Processing)
+    UploadSvc->>Queue: TryEnqueue(request)
+    UploadSvc-->>Controller: documentId
+    Note over UploadSvc,DB: File and Processing document are durable before acceptance
     Controller-->>Client: 202 Accepted (documentId)
 
     par Async Background Processing

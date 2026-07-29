@@ -89,9 +89,11 @@ public sealed class LocalFileStorageService : IFileStorageService
                 return new StoredFileResult(relativePath, actualBytes);
             }
             catch (IOException) when (!outputCreated
-                && File.Exists(fullPath)
-                && attempt < FileCreateAttempts)
+                && File.Exists(fullPath))
             {
+                if (attempt == FileCreateAttempts)
+                    break;
+
                 _logger.LogWarning(
                     "Generated storage path collided on attempt {Attempt}; retrying",
                     attempt);

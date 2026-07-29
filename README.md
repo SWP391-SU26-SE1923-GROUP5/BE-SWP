@@ -78,7 +78,7 @@ sequenceDiagram
     participant Client
     participant Ctrl as DocumentController
     participant Storage as LocalFileStorageService
-    participant DocSvc as DocumentService
+    participant UploadSvc as IDocumentUploadService
     participant Queue as DocumentProcessingQueue
     participant Proc as DocumentBackgroundProcessor
     participant Extract as IDocumentProcessingService
@@ -89,12 +89,12 @@ sequenceDiagram
     participant DB as DbContext
 
     Client->>Ctrl: POST /api/Document/upload/file (multipart/form-data)
-    Ctrl->>Storage: SaveFileAsync(file)
-    Storage-->>Ctrl: filePath
-    Ctrl->>DocSvc: CreateAsync(dto)
-    DocSvc->>DB: Insert Document (Status=Processing)
-    DocSvc-->>Ctrl: documentId
-    Ctrl->>Queue: EnqueueAsync(request)
+    Ctrl->>UploadSvc: UploadAsync(stream request)
+    UploadSvc->>Storage: SaveFileAsync(stream)
+    Storage-->>UploadSvc: stored path + exact bytes
+    UploadSvc->>DB: Insert Document (Status=Processing)
+    UploadSvc->>Queue: TryEnqueue(request)
+    UploadSvc-->>Ctrl: documentId
     Ctrl-->>Client: 202 Accepted
 
     par Async Background Processing
