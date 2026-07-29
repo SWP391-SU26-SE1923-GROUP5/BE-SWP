@@ -87,7 +87,7 @@ sequenceDiagram
     participant Qdrant as QdrantVectorService
     participant DB as DbContext
 
-    Client->>Ctrl: POST /api/Document/upload (multipart/form-data)
+    Client->>Ctrl: POST /api/Document/upload/file (multipart/form-data)
     Ctrl->>Storage: SaveFileAsync(file)
     Storage-->>Ctrl: filePath
     Ctrl->>DocSvc: CreateAsync(dto)
@@ -185,7 +185,7 @@ sequenceDiagram
     participant LLM as LocalAIService
     participant DB as DbContext
 
-    Client->>Ctrl: POST /api/Flashcard/generate-ai { numberOfFlashcards }
+    Client->>Ctrl: POST /api/AI/flashcards/generate?docId={guid} { numberOfFlashcards }
     Ctrl->>Svc: GenerateFlashcardsAsync(docId, request, userId)
     Svc->>KM: SearchAsync("", filter=documentId, limit=1000)
     KM-->>Svc: MemoryAnswer.Results[]
@@ -214,7 +214,7 @@ sequenceDiagram
     participant LLM as LocalAIService
     participant DB as DbContext
 
-    Client->>Ctrl: POST /api/Quiz/generate-ai { numberOfQuestions }
+    Client->>Ctrl: POST /api/AI/quizzes/generate?docId={guid} { numberOfQuestions }
     Ctrl->>Svc: GenerateAndPersistQuizAsync(docId, request, userId)
     Svc->>Qdrant: GetPayloadsByDocumentIdAsync(documentId)
     Note over Qdrant: REST scroll API → all chunks
@@ -577,11 +577,35 @@ Create `AIStudyHub.API/appsettings.json` from the example. Key sections:
 
 ### Document upload limit
 
+File content is capped at exactly `5,242,880` bytes (5 MiB); an upload above
+that limit returns `413 Payload Too Large`. The API returns `202 Accepted` only
+after the file and its `Processing` document record have been persisted and the
+processing work has been queued. It does not wait for extraction or embedding.
+
+The background processor transitions the document to `Done` or `Failed`. On
+application startup, it resumes active `Processing` documents from their
+persisted records; if a stored source file is missing, the document is marked
+`Failed`.
+
 Copy or merge the `DocumentStorage` section from
 `AIStudyHub.API/appsettings.DocumentStorage.example.json` into your ignored runtime
 `AIStudyHub.API/appsettings.json`. The maximum file size is exactly 5 MiB
 (`5242880` bytes); the API permits a 6 MiB multipart request body for form-data
 overhead.
+
+### AI generation contract
+
+`POST /api/AI/flashcards/generate?docId={guid}` requires the integer body field
+`numberOfFlashcards`; `POST /api/AI/quizzes/generate?docId={guid}` likewise
+requires `numberOfQuestions`. Each value is inclusive from `1` through `20`—no
+default count is applied. Generation is allowed only for the caller's own
+document when its status is `Done` and its processed context is nonempty.
+
+On success, flashcard generation persists and returns exactly the requested
+number of flashcards, and quiz generation persists and returns a quiz containing
+exactly the requested number of questions. If bounded AI generation cannot
+produce that exact count, the API returns `422 Unprocessable Entity` and
+persists no partial flashcard, quiz, question, or answer rows.
 
 ## Getting Started
 

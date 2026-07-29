@@ -199,7 +199,7 @@ Core entities:
 
 Enums (7+):
 
-`DocumentStatus` (Draft/Published/Archived/Banned/Processing/Failed), `NotificationType`, `PaymentStatus`, `QuestionType` (SingleChoice/MultipleChoice/TrueFalse), `UserRole` (Student/Admin), `ReportStatus`, `VoteType` (Upvote/Downvote), `ActivityType` (FlashcardReview/QuizSubmit/DocumentUpload/ChatMessage), `ShareStatus` (Private/Public).
+`DocumentStatus` (Draft/Done/Archived/Banned/Processing/Failed), `NotificationType`, `PaymentStatus`, `QuestionType` (SingleChoice/MultipleChoice/TrueFalse), `UserRole` (Student/Admin), `ReportStatus`, `VoteType` (Upvote/Downvote), `ActivityType` (FlashcardReview/QuizSubmit/DocumentUpload/ChatMessage), `ShareStatus` (Private/Public).
 
 ## API Design Rules
 
@@ -295,10 +295,11 @@ Enums (7+):
 - Hybrid search: use `IHybridSearchService` — combines dense + sparse (BM25) via RRF.
 - Reranking: use `IRerankingService` — applies positional decay after initial retrieval.
 - RAG orchestration: use `ISemanticKernelOrchestrator` — handles L3-L5 pipeline.
-- AI generators: `IQuizAiService` and `IFlashcardAiService` auto-persist results.
+- AI generators: `IQuizAiService` and `IFlashcardAiService` require integer `numberOfQuestions` / `numberOfFlashcards` values from 1 through 20; they may generate only from the owner's `Done` document with nonempty processed context.
+- Generation is all-or-nothing: persist and return exactly the requested count, or return `422 Unprocessable Entity` with no partial rows.
 - Guardrails: `IFaithfulnessFilter`, `IGroundingVerifier`, `IConfidenceScorer` validate responses.
 - Document ingestion: `IDocumentProcessingService` extracts and chunks text.
-- Background processing: `DocumentBackgroundProcessor` drives the async pipeline via channel queue.
+- Background processing: an upload persists its file and `Processing` document before returning `202 Accepted`; `DocumentBackgroundProcessor` drives the async pipeline and recovers persisted active `Processing` documents at startup, marking a missing source `Failed`.
 - Never hardcode embedding dimensions — read from configuration (`VectorSize` / `VectorDimension`).
 
 ## Real-time Rules (SignalR)
@@ -338,7 +339,7 @@ Enums (7+):
 - Hash passwords before persistence when authentication logic is implemented.
 - Apply role checks to admin endpoints.
 - Enforce ownership checks in services for student-owned resources.
-- Validate uploaded document metadata and file constraints before persistence.
+- Validate uploaded document metadata and file constraints before persistence. File content is capped at exactly 5,242,880 bytes; exceeding it returns `413 Payload Too Large`.
 - VNPay webhook signature must be validated in `VnPayService.ValidateSignature`.
 - Treat AI chat content and generated learning content as user data.
 

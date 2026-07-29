@@ -490,7 +490,7 @@ erDiagram
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Controller as DocumentUploadController
+    participant Controller as DocumentController
     participant Storage as LocalFileStorageService
     participant DocSvc as DocumentService
     participant Queue as DocumentProcessingQueue
@@ -501,7 +501,7 @@ sequenceDiagram
     participant Qdrant as QdrantVectorService
     participant DB as DbContext
 
-    Client->>Controller: POST /api/Document/upload (multipart/form-data)
+    Client->>Controller: POST /api/Document/upload/file (multipart/form-data)
     Controller->>Storage: SaveFileAsync(file)
     Storage-->>Controller: filePath
 
@@ -510,6 +510,7 @@ sequenceDiagram
     DocSvc-->>Controller: documentId
 
     Controller->>Queue: EnqueueAsync(request)
+    Note over Controller,DB: File and Processing document are durable before acceptance
     Controller-->>Client: 202 Accepted (documentId)
 
     par Async Background Processing
@@ -639,10 +640,11 @@ sequenceDiagram
     participant LLM as LocalAIService
     participant DB as DbContext
 
-    Client->>Controller: POST /api/Flashcard/generate-ai { numberOfFlashcards }
+    Client->>Controller: POST /api/AI/flashcards/generate?docId={guid} { numberOfFlashcards }
     Controller->>FlashSvc: GenerateFlashcardsAsync(docId, request, userId)
 
-    FlashSvc->>FlashSvc: Validate document ownership
+    FlashSvc->>FlashSvc: Require owner, Done status, and nonempty processed context
+    Note over Controller,FlashSvc: numberOfFlashcards is required integer 1..20
 
     FlashSvc->>KM: SearchAsync("", filter=documentId, limit=1000)
     Note over KM: Retrieves all chunks for document
@@ -663,7 +665,8 @@ sequenceDiagram
         FlashSvc->>FlashSvc: Normalize & dedupe<br/>Enforce: front=question, back=answer<br/>Reject placeholders
     end
 
-    FlashSvc->>DB: Insert Flashcard entities
+    Note over FlashSvc,DB: Require exactly requested count; otherwise 422 and no rows
+    FlashSvc->>DB: Insert exactly requested Flashcard entities
     FlashSvc-->>Controller: FlashcardResponseDto[]
     Controller-->>Client: 200 OK
 ```
@@ -679,10 +682,11 @@ sequenceDiagram
     participant LLM as LocalAIService
     participant DB as DbContext
 
-    Client->>Controller: POST /api/Quiz/generate-ai { numberOfQuestions }
+    Client->>Controller: POST /api/AI/quizzes/generate?docId={guid} { numberOfQuestions }
     Controller->>QuizSvc: GenerateAndPersistQuizAsync(docId, request, userId)
 
-    QuizSvc->>QuizSvc: Validate document + ownership
+    QuizSvc->>QuizSvc: Require owner, Done status, and nonempty processed context
+    Note over Controller,QuizSvc: numberOfQuestions is required integer 1..20
 
     QuizSvc->>Qdrant: GetPayloadsByDocumentIdAsync(documentId)
     Note over Qdrant: REST scroll API<br/>Returns all payload dicts for doc
@@ -706,6 +710,7 @@ sequenceDiagram
     end
 
     QuizSvc->>DB: Insert Quiz → Questions → Answers
+    Note over QuizSvc,DB: Require exactly requested count; otherwise 422 and no rows
     QuizSvc-->>Controller: QuizResponseDto
     Controller-->>Client: 200 OK
 ```
@@ -728,8 +733,8 @@ sequenceDiagram
 | `IQuizAiService` | `QuizAiService` | Batch-prompt quiz generation (3 questions/batch, 3 duplicate-then-abort policy, 3-stage JSON parser) |
 | `IFlashcardAiService` | `FlashcardAiService` | Batch-prompt flashcard generation (5 cards/batch, Kernel Memory context, deduplication) |
 | `IDocumentProcessingService` | `DocumentProcessingService` | Text extraction from PDF (PdfPig), DOCX (OpenXML), TXT/MD; sentence-split chunking with overlap |
-| `IDocumentProcessingQueue` | `DocumentProcessingQueue` | In-memory channel-based async job queue for document processing |
-| `DocumentBackgroundProcessor` | `DocumentBackgroundProcessor` | `BackgroundService` — dequeues jobs, calls KernelMemory import + generates dense/sparse vectors → Qdrant |
+| `IDocumentProcessingQueue` | `DocumentProcessingQueue` | Bounded in-process dispatch queue; durable `Processing` document records are recovered and re-enqueued at startup |
+| `DocumentBackgroundProcessor` | `DocumentBackgroundProcessor` | `BackgroundService` — resumes durable active `Processing` documents, dequeues jobs, calls KernelMemory import + generates dense/sparse vectors → Qdrant, then sets `Done` or `Failed` |
 
 ### AI / LLM Configuration
 
@@ -995,9 +1000,10 @@ Recommended log levels:
 ## Background Services
 
 1. **DocumentBackgroundProcessor** (`BackgroundService`)
-   - Reads from `IDocumentProcessingQueue` (bounded channel).
+   - Accepts uploads only after file and `Processing` document persistence; content above exactly 5,242,880 bytes is rejected with `413 Payload Too Large`.
+   - Reads from `IDocumentProcessingQueue` (bounded in-process dispatch queue) and recovers active `Processing` documents from persistence at startup.
    - Processes: text extraction, Kernel Memory import, embedding, Qdrant upsert.
-   - Updates document status to Published or Failed.
+   - Updates document status to `Done` or `Failed`; recovery marks the document `Failed` when its stored source file is missing.
    - Graceful error handling per job.
    - On completion, pushes `ReceiveNotification` with `type=Document` so FE can show "Document ready".
 
@@ -1028,7 +1034,7 @@ Recommended evolution paths:
 - Add observability with metrics (Prometheus) and distributed tracing.
 - Add object storage (Azure Blob / S3) for production file storage.
 - Add audit logging for admin and payment actions.
-- Add message queue (RabbitMQ / Azure Queue) for resilient background processing — the in-memory channel queue is single-process only.
+- Add an external message queue (RabbitMQ / Azure Queue) for multi-instance dispatch and coordination.
 - Replace the public `/api/Gamification/award-xp` endpoint with a server-to-server auth scheme (mTLS or shared HMAC) before going to production.
 - Split AI provider implementations behind interfaces for multi-provider support.
 - Keep the current 3-layer architecture unless scaling requirements justify a larger architecture.

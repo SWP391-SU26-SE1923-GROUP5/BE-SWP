@@ -167,7 +167,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     U->>FE: Chọn document → "Tạo Quiz"
-    FE->>API: POST /api/AI/quizzes/generate?docId=X { numberOfQuestions: 5..20 }
+    FE->>API: POST /api/AI/quizzes/generate?docId=X { numberOfQuestions: 1..20 }
     API-->>FE: QuizResponseDto { id, title, questions[] }
     U->>FE: Làm bài, chọn đáp án
     Note over FE: Score và answers do FE tính hoặc dùng API khác
@@ -489,6 +489,9 @@ await connection.invoke("JoinGroup", String(currentUserId));
 | `401 Unauthorized` | Token thiếu/hết hạn |
 | `403 Forbidden` | Token hợp lệ nhưng không đủ quyền (role/tier) |
 | `404 Not Found` | Resource không tồn tại |
+| `409 Conflict` | Document chưa sẵn sàng cho thao tác này |
+| `413 Payload Too Large` | File content vượt giới hạn upload |
+| `422 Unprocessable Entity` | AI không tạo được đúng số lượng item hợp lệ yêu cầu |
 | `500 Internal Server Error` | Lỗi backend, FE hiện "Đã có lỗi xảy ra" |
 
 ### Error body mẫu (400):
@@ -831,7 +834,9 @@ Lấy text chunks (sau khi xử lý xong) - dùng cho debug.
 **Errors**:
 | Status | Khi nào |
 |---|---|
-| 400 | File trống, thiếu title, subjectId không tồn tại, extension không hợp lệ, file quá lớn (>MaxFileSizeBytes, mặc định 20MB) |
+| 400 | File trống, thiếu title, hoặc extension không hợp lệ |
+| 404 | `subjectId` không tồn tại hoặc không thuộc user hiện tại |
+| 413 | File content vượt `5,242,880` bytes (5 MiB) |
 | 403 | Vượt quota storage của tier |
 | 202 | Accepted - xử lý bất đồng bộ |
 
@@ -839,6 +844,8 @@ Lấy text chunks (sau khi xử lý xong) - dùng cho debug.
 ```json
 { "documentId": "guid", "status": "processing", "chunkCount": 0, "message": "Document is being processed in the background" }
 ```
+
+`202` chỉ được trả sau khi file và Document `Processing` đã được lưu và queue; không chờ OCR/embed. Worker chuyển status sang `Done` hoặc `Failed`. Sau khi app restart, các Document active `Processing` được khôi phục; nếu file đã lưu bị mất thì Document chuyển sang `Failed`.
 
 ### 9.11. POST `/api/Document/{id}/reprocess`
 
@@ -893,9 +900,11 @@ Hybrid search trên các tài liệu của user. Endpoint này không gọi chat
 
 **Query**: `docId` (guid, required)
 
-**Body**: `{ "numberOfFlashcards": 10 }` (default 10)
+**Body**: `{ "numberOfFlashcards": 10 }`
 
 **Response 200**: `[ FlashcardResponseDto ]`
+
+`numberOfFlashcards` là integer **bắt buộc**, trong khoảng 1..20; không có default. Document phải thuộc user đang gọi, có status `Done`, và có processed context không rỗng. Thành công sẽ persist và trả **đúng** số flashcard yêu cầu. Thiếu/không phải integer/ngoài 1..20 trả 400; Document không tồn tại hoặc không thuộc user trả 404; chưa `Done` hoặc context rỗng trả 409. Nếu AI không tạo đủ đúng số item hợp lệ, trả 422 và không persist partial flashcard.
 
 > Sau khi sinh, hệ thống gửi SignalR `ReceiveNotification` với `payload = { documentId, title, count }` để FE refresh danh sách.
 
@@ -903,7 +912,7 @@ Hybrid search trên các tài liệu của user. Endpoint này không gọi chat
 
 **Query**: `docId` (guid, required)
 
-**Body**: `{ "numberOfQuestions": 5 }` (range 1..20, backend validate)
+**Body**: `{ "numberOfQuestions": 5 }`
 
 **Response 200**: `QuizResponseDto`
 ```json
@@ -925,6 +934,8 @@ Hybrid search trên các tài liệu của user. Endpoint này không gọi chat
   ]
 }
 ```
+
+`numberOfQuestions` là integer **bắt buộc**, trong khoảng 1..20; không có default. Document phải thuộc user đang gọi, có status `Done`, và có processed context không rỗng. Thành công sẽ persist và trả quiz có **đúng** số question yêu cầu. Thiếu/không phải integer/ngoài 1..20 trả 400; Document không tồn tại hoặc không thuộc user trả 404; chưa `Done` hoặc context rỗng trả 409. Nếu AI không tạo đủ đúng số question hợp lệ, trả 422 và không persist partial quiz, question, hoặc answer.
 
 > **`type` mapping**: 1=SingleChoice, 2=MultipleChoice, 3=TrueFalse.
 
@@ -1465,10 +1476,10 @@ Hệ thống sau migration `RemoveEducatorRole` chỉ còn `User` và `Admin`.
 | `dateOfBirth` | ISO date `YYYY-MM-DD`, phải là ngày quá khứ |
 | `fullName` | Không trống, độ dài 2-100 |
 | `documentTitle` | Không trống |
-| `numberOfFlashcards` | 1-20 |
-| `numberOfQuestions` | 1-20 |
+| `numberOfFlashcards` | Bắt buộc, integer 1-20 (không có default) |
+| `numberOfQuestions` | Bắt buộc, integer 1-20 (không có default) |
 | `quality` | Enum 0..3 |
-| File upload | `.pdf`, `.docx`, `.txt`, `.md`; max 20MB |
+| File upload | `.pdf`, `.docx`, `.txt`, `.md`; file content tối đa 5,242,880 bytes (5 MiB), vượt mức trả 413 |
 | `pageIndex` | >= 1 |
 | `pageSize` | 1-100 |
 
