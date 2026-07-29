@@ -9,5 +9,6 @@ public record DocumentProcessRequest(
     CancellationToken CancellationToken = default,
     Guid? IndexRunId = null,
     bool IsReindex = false,
-    Guid? ReindexClaimId = null
+    Guid? ReindexClaimId = null,
+    bool IsRecovery = false
 );

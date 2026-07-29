@@ -22,6 +22,8 @@ public class DocumentProcessingQueue : IDocumentProcessingQueue
                 SingleWriter = false
             });
     private readonly ConcurrentDictionary<Guid, byte> _queuedDocumentIds = new();
+    private readonly Dictionary<Guid, DocumentProcessRequest> _pendingRequests = new();
+    private readonly object _queueLock = new();
     private readonly ILogger<DocumentProcessingQueue> _logger;
 
     public DocumentProcessingQueue(ILogger<DocumentProcessingQueue> logger)
@@ -31,31 +33,66 @@ public class DocumentProcessingQueue : IDocumentProcessingQueue
 
     public bool TryEnqueue(DocumentProcessRequest request)
     {
-        if (!_queuedDocumentIds.TryAdd(request.DocumentId, 0))
+        lock (_queueLock)
         {
-            _logger.LogDebug(
-                "Document {DocumentId} is already queued for processing",
+            if (!_queuedDocumentIds.TryAdd(request.DocumentId, 0))
+            {
+                if (!request.IsReindex)
+                    _pendingRequests[request.DocumentId] = request;
+
+                _logger.LogDebug(
+                    "Document {DocumentId} is already queued for processing",
+                    request.DocumentId);
+                return false;
+            }
+
+            if (_channel.Writer.TryWrite(request))
+            {
+                _logger.LogInformation(
+                    "Document {DocumentId} queued for processing",
+                    request.DocumentId);
+                return true;
+            }
+
+            _queuedDocumentIds.TryRemove(request.DocumentId, out _);
+            _logger.LogWarning(
+                "Document {DocumentId} could not be queued for processing",
                 request.DocumentId);
             return false;
         }
-
-        if (_channel.Writer.TryWrite(request))
-        {
-            _logger.LogInformation(
-                "Document {DocumentId} queued for processing",
-                request.DocumentId);
-            return true;
-        }
-
-        _queuedDocumentIds.TryRemove(request.DocumentId, out _);
-        _logger.LogWarning(
-            "Document {DocumentId} could not be queued for processing",
-            request.DocumentId);
-        return false;
     }
 
-    public void Complete(Guid documentId) =>
-        _queuedDocumentIds.TryRemove(documentId, out _);
+    public void Complete(Guid documentId)
+    {
+        lock (_queueLock)
+        {
+            _queuedDocumentIds.TryRemove(documentId, out _);
+            if (!_pendingRequests.Remove(documentId, out var pendingRequest))
+                return;
+
+            if (!_queuedDocumentIds.TryAdd(documentId, 0))
+            {
+                _pendingRequests[documentId] = pendingRequest;
+                _logger.LogError(
+                    "Could not reserve document {DocumentId} for its pending processing request",
+                    documentId);
+                return;
+            }
+
+            if (_channel.Writer.TryWrite(pendingRequest))
+            {
+                _logger.LogInformation(
+                    "Document {DocumentId} requeued with its latest pending processing request",
+                    documentId);
+                return;
+            }
+
+            _queuedDocumentIds.TryRemove(documentId, out _);
+            _logger.LogWarning(
+                "Pending request for document {DocumentId} could not be queued for processing",
+                documentId);
+        }
+    }
 
     public async IAsyncEnumerable<DocumentProcessRequest> DequeueAsync(
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)

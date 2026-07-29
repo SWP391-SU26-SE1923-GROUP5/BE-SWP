@@ -577,8 +577,6 @@ public sealed class DocumentController : ControllerBase
         if (!System.IO.File.Exists(fullPath))
             return BadRequest("Source file is missing on disk; cannot re-process");
 
-        await _vectorStoreService.DeleteVectorsByDocumentIdAsync(id);
-
         document.Status = DocumentStatus.Processing;
         document.UpdatedAt = DateTime.UtcNow;
         _unitOfWork.Documents.Update(document);

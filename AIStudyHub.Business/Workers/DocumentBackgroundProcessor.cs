@@ -194,15 +194,27 @@ public class DocumentBackgroundProcessor : BackgroundService
             .AsNoTracking()
             .ToListAsync(ct);
 
-        foreach (var document in processingDocuments)
+        foreach (var processingDocument in processingDocuments)
         {
+            var document = await unitOfWork.Documents.Query()
+                .AsNoTracking()
+                .SingleOrDefaultAsync(
+                    candidate => candidate.Id == processingDocument.Id
+                        && candidate.Status == DocumentStatus.Processing
+                        && candidate.LifecycleStatus
+                            == DocumentLifecycleStatus.Active,
+                    ct);
+            if (document is null)
+                continue;
+
             string fullPath;
             try
             {
                 var relativePath = GetStoredRelativePath(document.FileLink);
                 fullPath = fileStorage.ResolveFullPath(relativePath);
             }
-            catch (InvalidOperationException)
+            catch (Exception exception)
+                when (IsInvalidSourcePathException(exception))
             {
                 await MarkRecoveryFailureAsync(
                     unitOfWork,
@@ -227,7 +239,8 @@ public class DocumentBackgroundProcessor : BackgroundService
                 document.UserId,
                 fullPath,
                 document.FileName ?? "unknown",
-                document.FileType ?? "application/octet-stream");
+                document.FileType ?? "application/octet-stream",
+                IsRecovery: true);
 
             _queue.TryEnqueue(request);
         }
@@ -250,6 +263,12 @@ public class DocumentBackgroundProcessor : BackgroundService
         return relativePath;
     }
 
+    private static bool IsInvalidSourcePathException(Exception exception) =>
+        exception is InvalidOperationException
+            or ArgumentException
+            or NotSupportedException
+            or PathTooLongException;
+
     private async Task MarkRecoveryFailureAsync(
         IUnitOfWork unitOfWork,
         Guid documentId,
@@ -257,8 +276,12 @@ public class DocumentBackgroundProcessor : BackgroundService
         CancellationToken ct)
     {
         var document = await unitOfWork.Documents.GetByIdAsync(documentId, ct);
-        if (document is null)
+        if (document is null
+            || document.Status != DocumentStatus.Processing
+            || document.LifecycleStatus != DocumentLifecycleStatus.Active)
+        {
             return;
+        }
 
         document.Status = DocumentStatus.Failed;
         document.ErrorMessage = error;
@@ -283,6 +306,20 @@ public class DocumentBackgroundProcessor : BackgroundService
         var unitOfWork = services.GetRequiredService<IUnitOfWork>();
         var logger = services.GetRequiredService<ILogger<DocumentBackgroundProcessor>>();
         var realTimeNotifier = services.GetService<IRealTimeNotificationService>();
+
+        var currentDocument = await unitOfWork.Documents.Query()
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                document => document.Id == request.DocumentId,
+                ct);
+        if (!IsCurrentRequest(currentDocument, request))
+        {
+            logger.LogInformation(
+                "Skipping stale processing request for document {DocumentId}",
+                request.DocumentId);
+            return;
+        }
+
         var indexRunId = request.IndexRunId ?? Guid.NewGuid();
         var indexed = false;
         string? extractedText = null;
@@ -573,6 +610,32 @@ public class DocumentBackgroundProcessor : BackgroundService
                 }
             }
         }
+    }
+
+    private static bool IsCurrentRequest(
+        Document? document,
+        DocumentProcessRequest request)
+    {
+        if (document is null
+            || document.LifecycleStatus != DocumentLifecycleStatus.Active)
+        {
+            return false;
+        }
+
+        if (request.IsReindex)
+        {
+            return request.ReindexClaimId.HasValue
+                && document.ReindexClaimId == request.ReindexClaimId
+                && document.Status is DocumentStatus.Done
+                    or DocumentStatus.Processing;
+        }
+
+        if (request.IsRecovery)
+            return document.Status == DocumentStatus.Processing;
+
+        return document.Status is DocumentStatus.Processing
+            or DocumentStatus.Done
+            or DocumentStatus.Failed;
     }
 
     private Task HandleFailureAsync(DocumentProcessRequest request, Exception ex)
