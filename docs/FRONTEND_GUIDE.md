@@ -168,7 +168,9 @@ sequenceDiagram
 sequenceDiagram
     U->>FE: Chọn document → "Tạo Quiz"
     FE->>API: POST /api/AI/quizzes/generate?docId=X { numberOfQuestions: 1..20 }
-    API-->>FE: QuizResponseDto { id, title, questions[] }
+    API-->>FE: QuizResponseDto { id, title, questions: null }
+    FE->>API: GET /api/Quiz/{id}
+    API-->>FE: QuizResponseDto { id, title, persisted questions }
     U->>FE: Làm bài, chọn đáp án
     Note over FE: Score và answers do FE tính hoặc dùng API khác
     FE->>API: (SubmitQuiz - xem mục 9.3)
@@ -922,20 +924,11 @@ Hybrid search trên các tài liệu của user. Endpoint này không gọi chat
   "title": "string",
   "createdAt": "...",
   "updatedAt": null,
-  "questions": [
-    {
-      "id": "guid", "quizId": "guid", "title": "string",
-      "type": 1, "position": 0,
-      "createdAt": "...", "updatedAt": null,
-      "answers": [
-        { "id": "guid", "questionId": "guid", "selectedOption": "string", "isCorrect": true, "createdAt": "..." }
-      ]
-    }
-  ]
+  "questions": null
 }
 ```
 
-`numberOfQuestions` là integer **bắt buộc**, trong khoảng 1..20; không có default. Document phải thuộc user đang gọi, có status `Done`, và có processed context không rỗng. Thành công sẽ persist và trả quiz có **đúng** số question yêu cầu. Thiếu/không phải integer/ngoài 1..20 trả 400; Document không tồn tại hoặc không thuộc user trả 404; chưa `Done` hoặc context rỗng trả 409. Nếu AI không tạo đủ đúng số question hợp lệ, trả 422 và không persist partial quiz, question, hoặc answer.
+`numberOfQuestions` là integer **bắt buộc**, trong khoảng 1..20; không có default. Document phải thuộc user đang gọi, có status `Done`, và có processed context không rỗng. Thành công sẽ persist **đúng** số question yêu cầu, nhưng response generate chỉ trả metadata quiz và hiện phát `"questions": null`. FE cần gọi `GET /api/Quiz/{id}` để lấy câu hỏi/đáp án đã persist trước khi hiển thị hoặc làm bài. Thiếu/không phải integer/ngoài 1..20 trả 400; Document không tồn tại hoặc không thuộc user trả 404; chưa `Done` hoặc context rỗng trả 409. Nếu AI không tạo đủ đúng số question hợp lệ, trả 422 và không persist partial quiz, question, hoặc answer.
 
 > **`type` mapping**: 1=SingleChoice, 2=MultipleChoice, 3=TrueFalse.
 

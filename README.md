@@ -76,13 +76,14 @@ See full sequence diagrams in [`ARCHITECTURE.md`](ARCHITECTURE.md). Key flows:
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Ctrl as DocumentUploadController
+    participant Ctrl as DocumentController
     participant Storage as LocalFileStorageService
     participant DocSvc as DocumentService
     participant Queue as DocumentProcessingQueue
     participant Proc as DocumentBackgroundProcessor
-    participant KM as KernelMemoryService
-    participant Embed as EmbeddingService
+    participant Extract as IDocumentProcessingService
+    participant Assemble as DocumentChunkAssembler
+    participant Embed as IEmbeddingService
     participant Sparse as Bm25SparseGenerator
     participant Qdrant as QdrantVectorService
     participant DB as DbContext
@@ -97,20 +98,18 @@ sequenceDiagram
     Ctrl-->>Client: 202 Accepted
 
     par Async Background Processing
-        Proc->>KM: ImportDocumentAsync(filePath, docId, userId, fileName)
-        Note over KM: PdfPig / OpenXML → raw text
-        Note over KM: Sentence-split chunking + overlapping
-        Note over KM: Tags: user_id, file_name
-
-        Proc->>KM: SearchAsync("", userId, limit=1000)
-        Proc->>Embed: GenerateEmbeddingAsync(chunk)
-        Note over Embed: OpenAI SDK → float[] dense vector
+        Proc->>Extract: ExtractSegmentsAsync(fileContent, extension)
+        Note over Extract: Extract text/OCR segments from the stored file
+        Proc->>Assemble: AssembleAsync(segments, summary, chunk options)
+        Note over Assemble: Produces ordered chunks with configured overlap
+        Proc->>Embed: GenerateEmbeddingsAsync(chunkTexts)
+        Note over Embed: Batch OpenAI embeddings → dense vectors
         Proc->>Sparse: GenerateSparseVector(chunk)
         Note over Sparse: FNV-1a word hashing + sub-linear TF
-        Proc->>Qdrant: UpsertVectorAsync(dense, sparse, metadata)
+        Proc->>Qdrant: UpsertVectorAsync(dense, sparse, metadata) for each chunk
         Note over Qdrant: Stores: "" dense + "sparse-text" named vector
 
-        Proc->>DB: Update Document (Status=Published)
+        Proc->>DB: Update Document (Status=Done or Failed)
     end
 ```
 
@@ -181,17 +180,17 @@ sequenceDiagram
     participant Client
     participant Ctrl as FlashcardController
     participant Svc as FlashcardAiService
-    participant KM as KernelMemoryService
+    participant Store as QdrantVectorService
     participant LLM as LocalAIService
     participant DB as DbContext
 
     Client->>Ctrl: POST /api/AI/flashcards/generate?docId={guid} { numberOfFlashcards }
     Ctrl->>Svc: GenerateFlashcardsAsync(docId, request, userId)
-    Svc->>KM: SearchAsync("", filter=documentId, limit=1000)
-    KM-->>Svc: MemoryAnswer.Results[]
-    Svc->>Svc: BuildContext(citations) — max 30k chars
+    Svc->>Store: GetPayloadsByDocumentIdAsync(documentId)
+    Store-->>Svc: ordered chunk payloads
+    Svc->>Svc: BuildContext(chunk payloads) — max 20k chars
 
-    loop Batch (batchSize=5, maxAttempts=80)
+    loop Up to four model calls (remaining requested cards; batch cap 20)
         Svc->>LLM: SendMessageAsync(batchPrompt, temp=0.2)
         Note over LLM: Extract N facts → JSON flashcards
         LLM-->>Svc: aiText (raw JSON)
@@ -221,7 +220,7 @@ sequenceDiagram
     Qdrant-->>Svc: List<Dictionary<string,string>>
     Svc->>Svc: Sort by chunkIndex + FixMojibake<br/>Concatenate chunks as context
 
-    loop Batch (batchSize=3, maxAttempts=60)
+    loop Up to four model calls (remaining count with bounded buffer; batch cap 15)
         Svc->>LLM: SendMessageAsync(batchPrompt, temp=0.2)
         Note over LLM: Read TEXT → JSON quiz<br/>N questions × 4 answers, 1 correct
         LLM-->>Svc: aiText (raw JSON)
@@ -515,7 +514,7 @@ erDiagram
 
 ## Background Workers
 
-1. **DocumentBackgroundProcessor** — dequeues uploaded documents, extracts text, chunks, embeds via OpenAI, upserts to Qdrant, updates DB status, and pushes a `ReceiveNotification` event when done.
+1. **DocumentBackgroundProcessor** — dequeues uploaded documents, extracts text/OCR segments, assembles chunks, generates batch embeddings and sparse vectors, upserts directly to Qdrant, updates DB status, and pushes a `ReceiveNotification` event when done.
 2. **TierExpirationCleanupService** — runs every 24h, downgrades expired subscriptions to Free tier.
 3. **UnverifiedAccountCleanupService** — runs daily, removes accounts older than 7 days that are still unverified.
 4. **DailyStreakResetWorker** — runs daily, resets `CurrentStreak` to 0 for users whose `LastActivityDate` is older than yesterday, and pushes a `StreakAtRisk` notification when a streak is about to lapse.

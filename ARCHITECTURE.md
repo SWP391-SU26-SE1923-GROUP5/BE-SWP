@@ -249,7 +249,7 @@ All entities inherit from `BaseEntity` (Id: Guid, CreatedAt, UpdatedAt), **excep
 
 ### Enums (8)
 
-`DocumentStatus` (Draft/Published/Archived/Banned/Processing/Failed), `NotificationType` (incl. Document/Quiz/FlashcardsReady/StreakAtRisk/TierUpgraded/Payment variants), `PaymentStatus`, `QuestionType` (SingleChoice/MultipleChoice/TrueFalse), `UserRole` (Student/Admin), `ReportStatus`, `VoteType` (Upvote/Downvote), **`ActivityType`** (FlashcardReview / QuizSubmit / DocumentUpload / ChatMessage), **`ShareStatus`** (Private / Public).
+`DocumentStatus` (Draft/Done/Archived/Banned/Processing/Failed), `NotificationType` (incl. Document/Quiz/FlashcardsReady/StreakAtRisk/TierUpgraded/Payment variants), `PaymentStatus`, `QuestionType` (SingleChoice/MultipleChoice/TrueFalse), `UserRole` (Student/Admin), `ReportStatus`, `VoteType` (Upvote/Downvote), **`ActivityType`** (FlashcardReview / QuizSubmit / DocumentUpload / ChatMessage), **`ShareStatus`** (Private / Public).
 
 ### Entity Relationships
 
@@ -495,8 +495,9 @@ sequenceDiagram
     participant DocSvc as DocumentService
     participant Queue as DocumentProcessingQueue
     participant Processor as DocumentBackgroundProcessor
-    participant KM as KernelMemoryService
-    participant EmbedSvc as EmbeddingService
+    participant Extract as IDocumentProcessingService
+    participant Assemble as DocumentChunkAssembler
+    participant EmbedSvc as IEmbeddingService
     participant SparseGen as Bm25SparseGenerator
     participant Qdrant as QdrantVectorService
     participant DB as DbContext
@@ -516,32 +517,22 @@ sequenceDiagram
     par Async Background Processing
         Processor->>Processor: DequeueAsync() — blocking loop
 
-        Processor->>KM: ImportDocumentAsync(filePath, docId, userId, fileName)
-        Note over KM: PdfPig / OpenXML<br/>Extracts raw text
-        Note over KM: Splits into chunks<br/>(sentence-split, overlapping)
-        Note over KM: Tags: user_id, file_name<br/>Stores in configured backend
+        Processor->>Extract: ExtractSegmentsAsync(fileContent, extension)
+        Note over Extract: Extracts text or OCR segments from the stored file
+        Processor->>Assemble: AssembleAsync(segments, summary, chunk options)
+        Note over Assemble: Builds ordered chunks with configured overlap
 
-        Processor->>KM: SearchAsync("", userId, limit=1000)
-        Note over KM: Returns Citation[] with<br/>DocumentId + Partitions[]
+        Processor->>Qdrant: EnsureCollectionExistsAsync()
+        Processor->>EmbedSvc: GenerateEmbeddingsAsync(chunkTexts)
+        Note over EmbedSvc: Batch OpenAI embeddings API call<br/>returns dense vectors
 
-        loop For each Citation (one per source file)
-            loop For each Partition (one per chunk)
-                Processor->>EmbedSvc: GenerateEmbeddingAsync(chunkText)
-                Note over EmbedSvc: Calls LocalAIService<br/>OpenAI embeddings API
-                Note over EmbedSvc: Returns float[] dense vector
-
-                Processor->>SparseGen: GenerateSparseVector(chunkText)
-                Note over SparseGen: FNV-1a word hashing<br/>Sub-linear TF scoring
-
-                Processor->>Qdrant: EnsureCollectionExistsAsync()
-                Note over Qdrant: Creates collection if missing<br/>Registers sparse-text named vector
-
-                Processor->>Qdrant: UpsertVectorAsync(id, dense, sparse, metadata)
-                Note over Qdrant: Stores: dense "" vector +<br/>sparse "sparse-text" named vector<br/>Payload: documentId, userId, text,<br/>fileName, chunkIndex
-            end
+        loop For each assembled chunk
+            Processor->>SparseGen: GenerateSparseVector(chunkText)
+            Processor->>Qdrant: UpsertVectorAsync(id, dense, sparse, metadata)
+            Note over Qdrant: Stores dense + sparse vectors and chunk metadata
         end
 
-        Processor->>DB: Update Document (Status=Published)
+        Processor->>DB: Update Document (Status=Done or Failed)
     end
 ```
 
@@ -636,7 +627,7 @@ sequenceDiagram
     participant Client
     participant Controller as FlashcardController
     participant FlashSvc as FlashcardAiService
-    participant KM as KernelMemoryService
+    participant Store as QdrantVectorService
     participant LLM as LocalAIService
     participant DB as DbContext
 
@@ -646,14 +637,14 @@ sequenceDiagram
     FlashSvc->>FlashSvc: Require owner, Done status, and nonempty processed context
     Note over Controller,FlashSvc: numberOfFlashcards is required integer 1..20
 
-    FlashSvc->>KM: SearchAsync("", filter=documentId, limit=1000)
-    Note over KM: Retrieves all chunks for document
-    KM-->>FlashSvc: MemoryAnswer.Results[]
+    FlashSvc->>Store: GetPayloadsByDocumentIdAsync(documentId)
+    Note over Store: Retrieves all chunk payloads for document
+    Store-->>FlashSvc: List<Dictionary<string,string>>
 
-    FlashSvc->>FlashSvc: BuildContext(citations)
-    Note over FlashSvc: Concatenates all partition.Text<br/>Limited to 30,000 chars
+    FlashSvc->>FlashSvc: BuildContext(chunk payloads)
+    Note over FlashSvc: Concatenates chunk text<br/>Limited to 20,000 chars
 
-    loop Batch generation (batchSize=5, maxAttempts=80)
+    loop Up to four model calls (remaining requested cards; batch cap 20)
         FlashSvc->>LLM: SendMessageAsync(batchPrompt, temp=0.2)
         Note over LLM: System: Extract N facts → JSON flashcards<br/>"front": question ending with ?<br/>"back": short factual answer
 
@@ -697,7 +688,7 @@ sequenceDiagram
 
     QuizSvc->>QuizSvc: Concatenate chunks as context
 
-    loop Batch generation (batchSize=3, maxAttempts=60)
+    loop Up to four model calls (remaining count with bounded buffer; batch cap 15)
         QuizSvc->>LLM: SendMessageAsync(batchPrompt, temp=0.2)
         Note over LLM: System: Read TEXT → JSON quiz<br/>Exactly N questions<br/>Each: questionTitle + 4 answers<br/>Exactly 1 isCorrect=true
 
@@ -730,11 +721,11 @@ sequenceDiagram
 | `IFaithfulnessFilter` | `FaithfulnessFilter` | Detects evasive answers ("cannot find", "I don't know") despite available context |
 | `IGroundingVerifier` | `GroundingVerifier` | Word-overlap grounding score (source words vs answer words coverage) |
 | `IConfidenceScorer` | `ConfidenceScorer` | Combined confidence: grounding × faithfulness × length × threshold bonus, clamped [0,1] |
-| `IQuizAiService` | `QuizAiService` | Batch-prompt quiz generation (3 questions/batch, 3 duplicate-then-abort policy, 3-stage JSON parser) |
-| `IFlashcardAiService` | `FlashcardAiService` | Batch-prompt flashcard generation (5 cards/batch, Kernel Memory context, deduplication) |
+| `IQuizAiService` | `QuizAiService` | Exact-count quiz generation with up to four model calls, a 15-question batch cap, validation, and deduplication |
+| `IFlashcardAiService` | `FlashcardAiService` | Exact-count flashcard generation with up to four model calls, a 20-card batch cap, validation, and deduplication |
 | `IDocumentProcessingService` | `DocumentProcessingService` | Text extraction from PDF (PdfPig), DOCX (OpenXML), TXT/MD; sentence-split chunking with overlap |
-| `IDocumentProcessingQueue` | `DocumentProcessingQueue` | Bounded in-process dispatch queue; durable `Processing` document records are recovered and re-enqueued at startup |
-| `DocumentBackgroundProcessor` | `DocumentBackgroundProcessor` | `BackgroundService` — resumes durable active `Processing` documents, dequeues jobs, calls KernelMemory import + generates dense/sparse vectors → Qdrant, then sets `Done` or `Failed` |
+| `IDocumentProcessingQueue` | `DocumentProcessingQueue` | Unbounded, single-reader/multi-writer in-process dispatch queue with document deduplication and coalesced pending reprocess requests; durable `Processing` records are recovered and re-enqueued at startup |
+| `DocumentBackgroundProcessor` | `DocumentBackgroundProcessor` | `BackgroundService` — resumes durable active `Processing` documents, extracts and assembles chunks, generates batch dense embeddings and sparse vectors, upserts directly to Qdrant, then sets `Done` or `Failed` |
 
 ### AI / LLM Configuration
 
@@ -1001,8 +992,8 @@ Recommended log levels:
 
 1. **DocumentBackgroundProcessor** (`BackgroundService`)
    - Accepts uploads only after file and `Processing` document persistence; content above exactly 5,242,880 bytes is rejected with `413 Payload Too Large`.
-   - Reads from `IDocumentProcessingQueue` (bounded in-process dispatch queue) and recovers active `Processing` documents from persistence at startup.
-   - Processes: text extraction, Kernel Memory import, embedding, Qdrant upsert.
+   - Reads from `IDocumentProcessingQueue`, an unbounded single-reader/multi-writer queue with document deduplication and coalesced pending reprocess requests, and recovers active `Processing` documents from persistence at startup.
+   - Processes: text/OCR extraction, chunk assembly, batch embeddings, sparse-vector generation, and direct Qdrant upsert.
    - Updates document status to `Done` or `Failed`; recovery marks the document `Failed` when its stored source file is missing.
    - Graceful error handling per job.
    - On completion, pushes `ReceiveNotification` with `type=Document` so FE can show "Document ready".
