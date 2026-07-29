@@ -54,6 +54,14 @@ public sealed class GlobalExceptionMiddleware
         {
             await WriteQuotaExceededResponseAsync(context, exception);
         }
+        catch (FileSizeLimitExceededException exception)
+        {
+            await WriteFileSizeLimitExceededResponseAsync(context, exception);
+        }
+        catch (StorageQuotaExceededException exception)
+        {
+            await WriteStorageQuotaExceededResponseAsync(context, exception);
+        }
         catch (Exception exception)
         {
             _logger.LogError(exception, "Unhandled exception: {Message}\nStackTrace: {StackTrace}", exception.Message, exception.StackTrace);
@@ -110,6 +118,45 @@ public sealed class GlobalExceptionMiddleware
             currentUsage = exception.CurrentUsage,
             limit = exception.Limit,
             requestedTokens = exception.RequestedTokens
+        };
+
+        await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
+    }
+
+    private static async Task WriteFileSizeLimitExceededResponseAsync(
+        HttpContext context,
+        FileSizeLimitExceededException exception)
+    {
+        context.Response.ContentType = "application/json";
+        context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+
+        var payload = new
+        {
+            statusCode = context.Response.StatusCode,
+            message = exception.Message,
+            error = "FileSizeLimitExceeded",
+            actualBytes = exception.ActualBytes,
+            limitBytes = exception.LimitBytes
+        };
+
+        await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
+    }
+
+    private static async Task WriteStorageQuotaExceededResponseAsync(
+        HttpContext context,
+        StorageQuotaExceededException exception)
+    {
+        context.Response.ContentType = "application/json";
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+
+        var payload = new
+        {
+            statusCode = context.Response.StatusCode,
+            message = exception.Message,
+            error = "StorageQuotaExceeded",
+            currentBytes = exception.CurrentBytes,
+            limitBytes = exception.LimitBytes,
+            requestedBytes = exception.RequestedBytes
         };
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(payload));

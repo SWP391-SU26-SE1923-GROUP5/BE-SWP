@@ -51,6 +51,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<IEmailService, EmailService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IDocumentService, DocumentService>();
+        services.AddScoped<IDocumentUploadService, DocumentUploadService>();
         services.AddScoped<ISubjectService, SubjectService>();
         services.AddScoped<IVoteService, VoteService>();
         services.AddScoped<IReportService, ReportService>();

@@ -7,6 +7,7 @@ namespace AIStudyHub.Business.Services;
 public interface IDocumentProcessingQueue
 {
     ValueTask EnqueueAsync(DocumentProcessRequest request, CancellationToken cancellationToken = default);
+    bool TryEnqueue(DocumentProcessRequest request);
     IAsyncEnumerable<DocumentProcessRequest> DequeueAsync(CancellationToken cancellationToken = default);
 }
 
@@ -28,6 +29,25 @@ public class DocumentProcessingQueue : IDocumentProcessingQueue
     {
         await _channel.Writer.WriteAsync(request, cancellationToken);
         _logger.LogInformation("Document {DocumentId} queued for processing", request.DocumentId);
+    }
+
+    public bool TryEnqueue(DocumentProcessRequest request)
+    {
+        var enqueued = _channel.Writer.TryWrite(request);
+        if (enqueued)
+        {
+            _logger.LogInformation(
+                "Document {DocumentId} queued for processing",
+                request.DocumentId);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "Document {DocumentId} could not be queued because the processing queue is full",
+                request.DocumentId);
+        }
+
+        return enqueued;
     }
 
     public async IAsyncEnumerable<DocumentProcessRequest> DequeueAsync(

@@ -1,10 +1,22 @@
 namespace AIStudyHub.Business.Interfaces.Services;
 
+public sealed record StoredFileResult(string RelativePath, long SizeBytes);
+
 public interface IFileStorageService
 {
-    Task<string> SaveFileAsync(Stream fileStream, string fileName, string extension, CancellationToken ct = default);
+    Task<StoredFileResult> SaveFileAsync(
+        Stream fileStream,
+        string fileName,
+        string extension,
+        long maxFileSizeBytes,
+        CancellationToken cancellationToken = default);
+
+    // Temporary compatibility overload for DocumentController. Task 4 removes it
+    // after the controller delegates uploads to IDocumentUploadService.
     Task<string> SaveFileAsync(byte[] fileContent, string fileName, string extension, CancellationToken ct = default);
+
     Task DeleteFileAsync(string relativePath, CancellationToken ct = default);
     string GetFileUrl(string relativePath);
+    string ResolveFullPath(string relativePath);
     bool IsValidExtension(string extension);
 }
