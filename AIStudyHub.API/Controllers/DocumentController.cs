@@ -29,6 +29,7 @@ public sealed class DocumentController : ControllerBase
         "Chào mừng bạn đến với AIStudyHub! Tôi có thể giúp bạn khám phá tài liệu này. "
         + "Hãy chọn một câu hỏi gợi ý bên dưới hoặc nhập câu hỏi của riêng bạn.";
     private readonly IDocumentService _service;
+    private readonly ISubjectService _subjectService;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IDocumentProcessingService _documentProcessing;
     private readonly IEmbeddingService _embeddingService;
@@ -41,6 +42,7 @@ public sealed class DocumentController : ControllerBase
 
     public DocumentController(
         IDocumentService service,
+        ISubjectService subjectService,
         IUnitOfWork unitOfWork,
         IDocumentProcessingService documentProcessing,
         IEmbeddingService embeddingService,
@@ -52,6 +54,7 @@ public sealed class DocumentController : ControllerBase
         IDocumentProcessingQueue processingQueue)
     {
         _service = service;
+        _subjectService = subjectService;
         _unitOfWork = unitOfWork;
         _documentProcessing = documentProcessing;
         _embeddingService = embeddingService;
@@ -437,9 +440,12 @@ public sealed class DocumentController : ControllerBase
         if (userId == Guid.Empty)
             return Unauthorized();
 
-        var subject = await _unitOfWork.Subjects.GetByIdAsync(request.SubjectId, cancellationToken);
-        if (subject == null)
-            return BadRequest($"Subject with ID {request.SubjectId} not found");
+        var subjectExists = await _subjectService.ExistsForOwnerAsync(
+            userId,
+            request.SubjectId,
+            cancellationToken);
+        if (!subjectExists)
+            return NotFound("Subject not found.");
 
         if (request.File.Length > _ragOptions.MaxFileSizeBytes)
             return BadRequest($"File exceeds maximum allowed size of {_ragOptions.MaxFileSizeBytes / (1024 * 1024)}MB");
