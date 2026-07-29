@@ -227,7 +227,7 @@ All entities inherit from `BaseEntity` (Id: Guid, CreatedAt, UpdatedAt), **excep
 | `User` | `Users` | FullName, DateOfBirth, CurrentStorageCapacity, CurrentAiTokenUsage, Status, Role, IsActive, TierId, TierExpireAt |
 | `RefreshToken` | `RefreshTokens` | TokenHash, ExpiresAt, RevokedAt, ReplacedByTokenHash |
 | `OtpRecord` | `OtpRecords` | Email, OtpHash, OtpType, ExpiresAt, UsedAt, FailedAttempts, LockedUntil |
-| `Subject` | `Subjects` | SubjectCode, SubjectName, Description |
+| `Subject` | `Subjects` | OwnerUserId (required), SubjectCode (unique per owner), SubjectName, Description |
 | `TierMembership` | `TierMembership` | TierName, StorageLimitMb, AiTokens |
 | `TierUser` | `TierUser` | UserId, TierMembershipId (join table) |
 | `Document` | `Document` | UserId, SubjectId, Title, FileLink, FileName, FileExtension, FileType, FileSizeBytes, SharedUsers, ShareStatus, Status |
@@ -289,7 +289,8 @@ erDiagram
 
     Subject {
         guid Id PK
-        string SubjectCode UK
+        guid OwnerUserId FK
+        string SubjectCode "unique per owner"
         string SubjectName
         string Description
     }
@@ -461,6 +462,7 @@ erDiagram
     User ||--o{ FlashcardReview : "tracks"
     User ||--o{ StudyLog : "logs"
     User }o--|| TierMembership : "subscribes_to"
+    User ||--o{ Subject : "owns"
 
     Subject ||--o{ Document : "categorizes"
     TierMembership ||--o{ Payment : "associated_with"
@@ -849,6 +851,12 @@ Client -> AuthController
 ```
 
 JWT tokens: short-lived access tokens (60 min default) + long-lived refresh tokens (7 days), stored as SHA-256 hashes in the database.
+
+## Subject Ownership Contract
+
+`GET`, `POST`, `PUT`, and `DELETE /api/Subject` are authenticated student operations. The current JWT user owns the results and all writes. Subject operations have no Admin override.
+
+Missing or foreign IDs return `404`. A Subject referenced by a Document cannot be deleted and returns `409`. Document creation accepts only a Subject owned by the requesting student.
 
 ## Payment Flow
 

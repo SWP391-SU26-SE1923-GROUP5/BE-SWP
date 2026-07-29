@@ -70,8 +70,8 @@ Hệ thống có 3 tier thành viên (mặc định `Free`, `Pro`) với quota s
 | Vai trò | Mô tả |
 |---|---|
 | **Guest** | Xem trang chủ, trang giới thiệu tier, đăng ký/đăng nhập, OAuth Google/GitHub. |
-| **User (thường)** | Upload tài liệu, chat AI, làm quiz, ôn flashcard, nâng cấp tier, vote/share tài liệu công khai. |
-| **Admin** | Quản lý Subject, TierMembership, Report, refund payment, reindex toàn bộ tài liệu. |
+| **User (thường)** | Upload tài liệu, quản lý Subject riêng, chat AI, làm quiz, ôn flashcard, nâng cấp tier, vote/share tài liệu công khai. |
+| **Admin** | Quản lý TierMembership, Report, refund payment, reindex toàn bộ tài liệu; không có quyền vượt phạm vi môn học riêng của student. |
 
 ---
 
@@ -369,8 +369,9 @@ sequenceDiagram
 
 | Tính năng UI | Gọi API | Ghi chú |
 |---|---|---|
-| **Dropdown chọn môn học (khi upload, tạo quiz, …)** | `GET /api/Subject?pageIndex=1&pageSize=100` | Cache 5 phút, ít thay đổi |
-| **Chi tiết 1 môn** | `GET /api/Subject/{id}` | |
+| **Danh sách / dropdown Subject của tôi** | `GET /api/Subject?pageIndex=1&pageSize=100` | Chỉ trả về Subject của user trong JWT; cache 5 phút |
+| **Tạo Subject** | `POST /api/Subject` | Subject được gán cho user trong JWT; cùng mã Subject có thể tồn tại cho student khác |
+| **Chi tiết / sửa / xóa Subject** | `GET`, `PUT`, `DELETE /api/Subject/{id}` | Chỉ Subject của user trong JWT; Subject thiếu hoặc của user khác trả 404; xóa Subject đang được Document tham chiếu trả 409 |
 
 ### 5.5.10. Vote & Share
 
@@ -400,7 +401,6 @@ sequenceDiagram
 
 | Tính năng UI | Gọi API | Ghi chú |
 |---|---|---|
-| **Trang quản lý Subject** | `GET /api/Subject`, `POST /api/Subject`, `PUT /api/Subject/{id}`, `DELETE /api/Subject/{id}` | |
 | **Trang quản lý Tier** | `GET /api/TierMembership`, `POST /api/TierMembership`, `PUT /api/TierMembership/{id}`, `DELETE /api/TierMembership/{id}` | |
 | **Trang quản lý User** | `GET /api/User`, `GET /api/User/{id}`, `PUT /api/User/{id}/tier` (gán tier) | |
 | **Trang quản lý Report** | `GET /api/Report/search?status=&category=&keyword=`, `PATCH /api/Report/{id}/status`, `POST /api/Report/bulk-status`, `POST /api/Report/documents/{id}/mark-non-flaggable` | |
@@ -520,8 +520,7 @@ await connection.invoke("JoinGroup", String(currentUserId));
 {
   "fullName": "Nguyễn Văn A",
   "email": "user@example.com",
-  "password": "Matkhau123",
-  "dateOfBirth": "2000-01-15"
+  "password": "Matkhau123"
 }
 ```
 
@@ -1290,13 +1289,17 @@ Mark tất cả. **Response**: 204.
 
 | Method | Endpoint | Auth | Mô tả |
 |---|---|---|---|
-| GET | `/api/Subject?pageIndex=1&pageSize=20` | User | Danh sách môn học (phân trang) |
-| GET | `/api/Subject/{id}` | User | Chi tiết |
-| POST | `/api/Subject` | Admin | Tạo |
-| PUT | `/api/Subject/{id}` | Admin | Cập nhật |
-| DELETE | `/api/Subject/{id}` | Admin | Xóa |
+| GET | `/api/Subject?pageIndex=1&pageSize=20` | Authenticated student | Danh sách Subject của chính user (phân trang) |
+| GET | `/api/Subject/{id}` | Authenticated student | Chi tiết Subject của chính user |
+| POST | `/api/Subject` | Authenticated student | Tạo Subject cho chính user |
+| PUT | `/api/Subject/{id}` | Authenticated student | Cập nhật Subject của chính user |
+| DELETE | `/api/Subject/{id}` | Authenticated student | Xóa Subject của chính user nếu chưa được Document tham chiếu |
 
 **Response mẫu**: `{ id, subjectCode, subjectName, description, createdAt, updatedAt }`
+
+Tất cả thao tác Subject được scope theo user trong JWT; quyền Admin không thay đổi phạm vi này.
+
+ID không tồn tại hoặc thuộc user khác trả `404`. Xóa Subject đang được Document tham chiếu trả `409`. Khi tạo Document, `subjectId` phải thuộc user đang đăng nhập; Subject của user khác bị từ chối với `404`.
 
 ---
 

@@ -51,6 +51,7 @@ Data access layer. Holds **21 entity classes** (all inheriting `BaseEntity`, exc
 | Module | Description |
 |--------|-------------|
 | **Authentication** | Register with email OTP verification, login with JWT + refresh tokens, password reset, Google/GitHub OAuth, logout |
+| **Subject Management** | Authenticated students create, list, update, and delete only their own Subjects |
 | **User Management** | CRUD, profile update, tier info, document sharing |
 | **Document Management** | Upload (multipart/form-data), text extraction (PDF/DOCX/TXT/MD), chunking, versioning, sharing, vote/report |
 | **RAG Pipeline** | Hybrid search (dense + sparse BM25 via Qdrant RRF), reranking, Semantic Kernel orchestration, guardrails (faithfulness, grounding, confidence), document Q&A, summarization |
@@ -329,7 +330,8 @@ erDiagram
 
     Subject {
         guid Id PK
-        string SubjectCode UK
+        guid OwnerUserId FK
+        string SubjectCode "unique per owner"
         string SubjectName
         string Description
     }
@@ -466,6 +468,7 @@ erDiagram
     User ||--o{ Payment : "makes"
     User ||--o{ QuizSubmission : "submits"
     User ||--o{ ChatSession : "initiates"
+    User ||--o{ Subject : "owns"
     User }o--|| TierMembership : "subscribes_to"
 
     Subject ||--o{ Document : "categorizes"
@@ -499,7 +502,7 @@ erDiagram
 | `VoteController` | `/api/Vote` | Upvote/downvote documents, ownership-protected |
 | `ReportController` | `/api/Report` | Document violation reports (workflow status) |
 | `NotificationController` | `/api/Notification` | User notifications |
-| `SubjectController` | `/api/Subject` | Academic subjects |
+| `SubjectController` | `/api/Subject` | Authenticated, student-owned Subject CRUD; no Admin override |
 | `PaymentController` | `/api/Payment` | VNPay checkout and webhook |
 | `TierMembershipController` | `/api/TierMembership` | Subscription tiers |
 | `AIController` | `/api/AI` | RAG query, summarization, AI flashcard/quiz generation |

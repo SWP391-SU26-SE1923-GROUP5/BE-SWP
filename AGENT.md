@@ -38,6 +38,7 @@ Technology stack:
 ## Main Features
 
 - Authentication (register with OTP, login, JWT refresh, OAuth, password reset)
+- Subject Management (authenticated students manage only their own Subjects)
 - User Management (profiles, tiers, sharing)
 - Document Management (upload, extract, chunk, vectorize, share, vote, report)
 - RAG Pipeline (hybrid search, reranking, LLM orchestration, guardrails)
@@ -63,6 +64,7 @@ Technology stack:
 
 **Student:**
 - Can manage own profile.
+- Can create, list, update, and delete own Subjects; Subject codes are unique per student.
 - Can upload and manage own documents.
 - Can vote and report documents.
 - Can use AI chat, flashcards, quizzes, submissions, notifications, payments.
@@ -75,6 +77,7 @@ Technology stack:
 - Can moderate users, documents, reports, and system data.
 - Can reindex documents and review platform-wide activity.
 - Can grant / change user tiers.
+- Does not have an override for another student's Subjects.
 
 ## Coding Rules
 
@@ -173,6 +176,7 @@ Technology stack:
 - User 1-N FlashcardReviews (SM-2 schedule, one per flashcard)
 - User 1-N StudyLogs (append-only learning activity)
 - User N-1 TierMembership (via TierUser join)
+- User 1-N Subjects (each Subject is private to its owner; `SubjectCode` is unique per owner)
 - Subject 1-N Documents
 - TierMembership 1-N TierUsers
 - TierMembership 1-N Payments
