@@ -66,7 +66,7 @@ public sealed class AuthService : IAuthService
             throw new InvalidOperationException("Email is already registered.");
         }
 
-        var user = await BuildStudentUserAsync(normalizedEmail, request.FullName, request.DateOfBirth, cancellationToken);
+        var user = await BuildStudentUserAsync(normalizedEmail, request.FullName, cancellationToken);
         var createResult = await _userManager.CreateAsync(user, request.Password);
         EnsureIdentitySucceeded(createResult);
 
@@ -169,7 +169,7 @@ public sealed class AuthService : IAuthService
                 ? normalizedEmail.Split('@')[0]
                 : request.FullName.Trim();
 
-            user = await BuildStudentUserAsync(normalizedEmail, fullName, null, cancellationToken);
+            user = await BuildStudentUserAsync(normalizedEmail, fullName, cancellationToken);
             user.EmailConfirmed = true; // OAuth provider verified email
             var tempPassword = $"Ext#{Guid.NewGuid():N}aA1!";
             var createResult = await _userManager.CreateAsync(user, tempPassword);
@@ -439,7 +439,7 @@ public sealed class AuthService : IAuthService
         return new AuthResponseDto(response, accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt);
     }
 
-    private async Task<User> BuildStudentUserAsync(string normalizedEmail, string fullName, DateOnly? dateOfBirth, CancellationToken cancellationToken = default)
+    private async Task<User> BuildStudentUserAsync(string normalizedEmail, string fullName, CancellationToken cancellationToken)
     {
         var freeTier = await _unitOfWork.TierMemberships
             .Query()
@@ -455,7 +455,6 @@ public sealed class AuthService : IAuthService
             FullName = fullName.Trim(),
             UserName = normalizedEmail,
             Email = normalizedEmail,
-            DateOfBirth = dateOfBirth,
             TierId = freeTier.Id,
             CurrentStorageCapacity = 0,
             CurrentAiTokenUsage = 0,

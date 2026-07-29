@@ -5,8 +5,7 @@ namespace AIStudyHub.Business.DTOs.Authentication;
 public sealed record RegisterRequestDto(
     string FullName,
     string Email,
-    string Password,
-    DateOnly? DateOfBirth);
+    string Password);
 
 public sealed record LoginRequestDto(string Email, string Password);
 

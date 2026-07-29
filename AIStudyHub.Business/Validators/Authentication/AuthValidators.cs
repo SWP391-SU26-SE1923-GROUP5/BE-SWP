@@ -12,15 +12,6 @@ public sealed class RegisterRequestDtoValidator : AbstractValidator<RegisterRequ
             .NotEmpty()
             .MaximumLength(255);
 
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var minDate = today.AddYears(-120);
-        var maxDate = today.AddYears(-18);
-
-        RuleFor(x => x.DateOfBirth)
-            .NotEmpty().WithMessage("Date of birth is required.")
-            .GreaterThanOrEqualTo(minDate).WithMessage("User cannot be older than 120 years.")
-            .LessThanOrEqualTo(maxDate).WithMessage("User must be at least 18 years old.");
-
         RuleFor(x => x.Email)
             .NotEmpty()
             .MaximumLength(255)
