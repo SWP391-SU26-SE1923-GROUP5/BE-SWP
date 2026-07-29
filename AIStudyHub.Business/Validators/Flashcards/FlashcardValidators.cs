@@ -21,3 +21,12 @@ public sealed class UpdateFlashcardRequestDtoValidator : AbstractValidator<Updat
         RuleFor(x => x.Back).NotEmpty();
     }
 }
+
+public sealed class CreateFlashcardsViaAiValidator : AbstractValidator<CreateFlashcardsViaAiRequestDto>
+{
+    public CreateFlashcardsViaAiValidator()
+    {
+        RuleFor(request => request.NumberOfFlashcards)
+            .InclusiveBetween(1, 20);
+    }
+}

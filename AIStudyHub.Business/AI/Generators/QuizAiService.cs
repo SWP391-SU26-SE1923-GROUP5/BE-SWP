@@ -46,13 +46,13 @@ public sealed class QuizAiService : IQuizAiService
 
     public async Task<QuizResponseDto> GenerateAndPersistQuizAsync(
         Guid documentId,
-        CreateQuizRequestViaAIDto request,
+        CreateQuizRequestViaAiDto request,
         Guid userId,
         CancellationToken cancellationToken = default)
     {
-        if (request.numberOfQuestions <= 0 || request.numberOfQuestions > 20)
+        if (request.NumberOfQuestions <= 0 || request.NumberOfQuestions > 20)
             throw new ArgumentOutOfRangeException(
-                nameof(request.numberOfQuestions),
+                nameof(request.NumberOfQuestions),
                 "Number of questions must be between 1 and 20.");
 
         var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken);
@@ -60,7 +60,7 @@ public sealed class QuizAiService : IQuizAiService
             throw new KeyNotFoundException("Document not found");
 
         // Check AI token quota before processing
-        var estimatedBatches = (int)Math.Ceiling((double)request.numberOfQuestions / 15);
+        var estimatedBatches = (int)Math.Ceiling((double)request.NumberOfQuestions / 15);
         var estimatedTokens = estimatedBatches * EstimatedTokensPerBatch;
         if (!await _tokenTracker.HasQuotaAsync(userId, estimatedTokens, cancellationToken))
         {
@@ -92,12 +92,12 @@ public sealed class QuizAiService : IQuizAiService
             context.Length, sortedChunks.Count);
 
         const int batchSize = 15;
-        var allQuestions = new List<AiGeneratedQuestionDto>(request.numberOfQuestions);
+        var allQuestions = new List<AiGeneratedQuestionDto>(request.NumberOfQuestions);
         var seenTitles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var remaining = request.numberOfQuestions;
+        var remaining = request.NumberOfQuestions;
         var batchNumber = 0;
-        var maxBatches = request.numberOfQuestions * 3;
+        var maxBatches = request.NumberOfQuestions * 3;
         var consecutiveZeroAdded = 0;
         var runningTitle = string.Empty;
 
@@ -125,7 +125,7 @@ public sealed class QuizAiService : IQuizAiService
             var added = 0;
             foreach (var q in batchQuestions)
             {
-                if (allQuestions.Count >= request.numberOfQuestions)
+                if (allQuestions.Count >= request.NumberOfQuestions)
                     break;
 
                 var normalized = NormalizeQuestion(q, allQuestions.Count + 1);
@@ -145,7 +145,7 @@ public sealed class QuizAiService : IQuizAiService
 
             _logger.LogInformation(
                 "Quiz batch {Batch}: wanted {Want}, parsed {Parsed}, accepted {Accepted}, total {Total}/{Requested}",
-                batchNumber, wantThisBatch, batchQuestions.Count, added, allQuestions.Count, request.numberOfQuestions);
+                batchNumber, wantThisBatch, batchQuestions.Count, added, allQuestions.Count, request.NumberOfQuestions);
 
             if (added == 0)
             {
@@ -161,7 +161,7 @@ public sealed class QuizAiService : IQuizAiService
                 consecutiveZeroAdded = 0;
             }
 
-            remaining = request.numberOfQuestions - allQuestions.Count;
+            remaining = request.NumberOfQuestions - allQuestions.Count;
         }
 
         if (allQuestions.Count == 0)
@@ -181,7 +181,7 @@ public sealed class QuizAiService : IQuizAiService
 
         _logger.LogInformation(
             "Generated {Count}/{Requested} quiz questions for document {DocumentId}",
-            allQuestions.Count, request.numberOfQuestions, documentId);
+            allQuestions.Count, request.NumberOfQuestions, documentId);
 
         // Record token usage
         if (totalInputTokens > 0 || totalOutputTokens > 0)

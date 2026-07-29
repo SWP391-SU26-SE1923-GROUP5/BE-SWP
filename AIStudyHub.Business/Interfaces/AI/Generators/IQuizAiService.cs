@@ -11,7 +11,7 @@ public interface IQuizAiService
     /// </summary>
     Task<QuizResponseDto> GenerateAndPersistQuizAsync(
         Guid documentId,
-        CreateQuizRequestViaAIDto request,
+        CreateQuizRequestViaAiDto request,
         Guid userId,
         CancellationToken cancellationToken = default);
 }
