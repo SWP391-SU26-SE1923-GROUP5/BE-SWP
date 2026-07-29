@@ -601,10 +601,12 @@ default count is applied. Generation is allowed only for the caller's own
 document when its status is `Done` and its processed context is nonempty.
 
 On success, flashcard generation persists and returns exactly the requested
-number of flashcards, and quiz generation persists and returns a quiz containing
-exactly the requested number of questions. If bounded AI generation cannot
-produce that exact count, the API returns `422 Unprocessable Entity` and
-persists no partial flashcard, quiz, question, or answer rows.
+number of flashcards. Quiz generation persists exactly the requested number of
+questions, but its create response contains quiz metadata with `questions: null`
+rather than question items; clients fetch `GET /api/Quiz/{id}` for the persisted
+questions and answers. If bounded AI generation cannot produce the exact count,
+the API returns `422 Unprocessable Entity` and persists no partial flashcard,
+quiz, question, or answer rows.
 
 ## Getting Started
 

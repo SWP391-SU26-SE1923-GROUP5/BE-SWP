@@ -296,7 +296,7 @@ Enums (7+):
 - Reranking: use `IRerankingService` — applies positional decay after initial retrieval.
 - RAG orchestration: use `ISemanticKernelOrchestrator` — handles L3-L5 pipeline.
 - AI generators: `IQuizAiService` and `IFlashcardAiService` require integer `numberOfQuestions` / `numberOfFlashcards` values from 1 through 20; they may generate only from the owner's `Done` document with nonempty processed context.
-- Generation is all-or-nothing: persist and return exactly the requested count, or return `422 Unprocessable Entity` with no partial rows.
+- Generation is all-or-nothing: persist exactly the requested flashcards or quiz questions, or return `422 Unprocessable Entity` with no partial rows. Flashcard generation returns the persisted cards; quiz generation returns metadata with `Questions` null, so clients fetch `GET /api/Quiz/{id}` for persisted question items.
 - Guardrails: `IFaithfulnessFilter`, `IGroundingVerifier`, `IConfidenceScorer` validate responses.
 - Document ingestion: `IDocumentProcessingService` extracts and chunks text.
 - Background processing: an upload persists its file and `Processing` document before returning `202 Accepted`; `DocumentBackgroundProcessor` drives the async pipeline and recovers persisted active `Processing` documents at startup, marking a missing source `Failed`.
