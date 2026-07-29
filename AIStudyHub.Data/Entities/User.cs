@@ -19,6 +19,7 @@ public sealed class User : IdentityUser<Guid>
     public TierMembership TierMembership { get; set; } = null!;
 
     public ICollection<Document> Documents { get; set; } = new List<Document>();
+    public ICollection<Subject> Subjects { get; set; } = new List<Subject>();
     public ICollection<Vote> Votes { get; set; } = new List<Vote>();
     public ICollection<Report> Reports { get; set; } = new List<Report>();
     public ICollection<Notification> Notifications { get; set; } = new List<Notification>();

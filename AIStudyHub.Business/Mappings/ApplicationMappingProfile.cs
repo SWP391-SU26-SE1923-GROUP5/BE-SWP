@@ -113,8 +113,12 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<UpdateTierMembershipRequestDto, TierMembership>();
 
         CreateMap<Subject, SubjectResponseDto>();
-        CreateMap<CreateSubjectRequestDto, Subject>();
-        CreateMap<UpdateSubjectRequestDto, Subject>();
+        CreateMap<CreateSubjectRequestDto, Subject>()
+            .ForMember(destination => destination.OwnerUserId, option => option.Ignore())
+            .ForMember(destination => destination.OwnerUser, option => option.Ignore());
+        CreateMap<UpdateSubjectRequestDto, Subject>()
+            .ForMember(destination => destination.OwnerUserId, option => option.Ignore())
+            .ForMember(destination => destination.OwnerUser, option => option.Ignore());
 
         CreateMap<ChatSession, ChatSessionResponseDto>();
         CreateMap<CreateChatSessionRequestDto, ChatSession>();
