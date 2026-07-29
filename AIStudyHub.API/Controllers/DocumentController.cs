@@ -587,7 +587,8 @@ public sealed class DocumentController : ControllerBase
             userId,
             fullPath,
             document.FileName ?? "unknown",
-            document.FileType ?? "application/octet-stream");
+            document.FileType ?? "application/octet-stream",
+            IsReprocess: true);
         if (!_processingQueue.TryEnqueue(processRequest))
         {
             _logger.LogWarning(

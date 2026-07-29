@@ -37,7 +37,7 @@ public class DocumentProcessingQueue : IDocumentProcessingQueue
         {
             if (!_queuedDocumentIds.TryAdd(request.DocumentId, 0))
             {
-                if (!request.IsReindex)
+                if (request.IsReprocess)
                     _pendingRequests[request.DocumentId] = request;
 
                 _logger.LogDebug(

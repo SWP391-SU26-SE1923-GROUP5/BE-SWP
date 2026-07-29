@@ -306,26 +306,39 @@ public class DocumentBackgroundProcessor : BackgroundService
         var unitOfWork = services.GetRequiredService<IUnitOfWork>();
         var logger = services.GetRequiredService<ILogger<DocumentBackgroundProcessor>>();
         var realTimeNotifier = services.GetService<IRealTimeNotificationService>();
-
-        var currentDocument = await unitOfWork.Documents.Query()
-            .AsNoTracking()
-            .SingleOrDefaultAsync(
-                document => document.Id == request.DocumentId,
-                ct);
-        if (!IsCurrentRequest(currentDocument, request))
-        {
-            logger.LogInformation(
-                "Skipping stale processing request for document {DocumentId}",
-                request.DocumentId);
-            return;
-        }
-
         var indexRunId = request.IndexRunId ?? Guid.NewGuid();
         var indexed = false;
         string? extractedText = null;
 
         try
         {
+            var currentDocument = await unitOfWork.Documents.Query()
+                .SingleOrDefaultAsync(
+                    document => document.Id == request.DocumentId,
+                    ct);
+
+            if (request.IsReprocess
+                && currentDocument is
+                {
+                    LifecycleStatus: DocumentLifecycleStatus.Active,
+                    Status: DocumentStatus.Done or DocumentStatus.Failed
+                })
+            {
+                currentDocument.Status = DocumentStatus.Processing;
+                currentDocument.ErrorMessage = null;
+                currentDocument.UpdatedAt = DateTime.UtcNow;
+                unitOfWork.Documents.Update(currentDocument);
+                await unitOfWork.SaveChangesAsync(ct);
+            }
+
+            if (!IsCurrentRequest(currentDocument, request))
+            {
+                logger.LogInformation(
+                    "Skipping stale processing request for document {DocumentId}",
+                    request.DocumentId);
+                return;
+            }
+
             var extension = Path.GetExtension(request.FileName).ToLowerInvariant();
             var isTextDocument = new[] { ".pdf", ".docx", ".txt", ".md" }.Contains(extension);
             var isImageFile = new[] { ".jpg", ".png", ".jpeg", ".webp", ".gif" }.Contains(extension);
@@ -630,7 +643,7 @@ public class DocumentBackgroundProcessor : BackgroundService
                     or DocumentStatus.Processing;
         }
 
-        if (request.IsRecovery)
+        if (request.IsRecovery || request.IsReprocess)
             return document.Status == DocumentStatus.Processing;
 
         return document.Status is DocumentStatus.Processing

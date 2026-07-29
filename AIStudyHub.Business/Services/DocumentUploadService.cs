@@ -202,7 +202,8 @@ public sealed class DocumentUploadService : IDocumentUploadService
             userId,
             fullPath,
             document.FileName ?? "unknown",
-            document.FileType ?? "application/octet-stream");
+            document.FileType ?? "application/octet-stream",
+            IsReprocess: true);
 
         if (!_processingQueue.TryEnqueue(processRequest))
         {

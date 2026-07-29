@@ -10,5 +10,6 @@ public record DocumentProcessRequest(
     Guid? IndexRunId = null,
     bool IsReindex = false,
     Guid? ReindexClaimId = null,
-    bool IsRecovery = false
+    bool IsRecovery = false,
+    bool IsReprocess = false
 );
