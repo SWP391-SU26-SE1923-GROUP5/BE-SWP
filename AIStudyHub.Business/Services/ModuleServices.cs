@@ -2279,95 +2279,148 @@ public sealed class SubjectService : ISubjectService
         _mapper = mapper;
     }
 
-    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<SubjectResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken = default)
+    public async Task<PagedResultDto<SubjectResponseDto>> GetMineAsync(
+        Guid ownerUserId,
+        PaginationParams pagination,
+        CancellationToken cancellationToken = default)
     {
-        var query = _unitOfWork.Subjects.Query().AsNoTracking();
+        var query = _unitOfWork.Subjects.Query()
+            .Where(subject => subject.OwnerUserId == ownerUserId)
+            .AsNoTracking();
 
-        if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
+        if (!string.IsNullOrWhiteSpace(pagination.SearchTerm))
         {
-            var search = @params.SearchTerm.ToLower();
+            var search = pagination.SearchTerm.ToLower();
             query = query.Where(s => s.SubjectName.ToLower().Contains(search) || s.SubjectCode.ToLower().Contains(search));
         }
 
         var totalCount = await query.CountAsync(cancellationToken);
 
-        if (!string.IsNullOrWhiteSpace(@params.SortBy))
+        if (!string.IsNullOrWhiteSpace(pagination.SortBy))
         {
-            query = @params.IsDescending 
-                ? query.OrderByDescending(s => EF.Property<object>(s, @params.SortBy))
-                : query.OrderBy(s => EF.Property<object>(s, @params.SortBy));
+            query = pagination.IsDescending
+                ? query.OrderByDescending(s => EF.Property<object>(s, pagination.SortBy))
+                : query.OrderBy(s => EF.Property<object>(s, pagination.SortBy));
         }
         else
         {
             query = query.OrderByDescending(s => s.CreatedAt);
         }
 
-        var items = await query.Skip(@params.Offset).Take(@params.Limit).ToListAsync(cancellationToken);
+        var items = await query.Skip(pagination.Offset).Take(pagination.Limit).ToListAsync(cancellationToken);
 
         var dtos = items.Select(_mapper.Map<SubjectResponseDto>).ToList();
-        return new AIStudyHub.Business.DTOs.Common.PagedResultDto<SubjectResponseDto>(dtos, totalCount, @params.Offset, @params.Limit);
+        return new PagedResultDto<SubjectResponseDto>(dtos, totalCount, pagination.Offset, pagination.Limit);
     }
 
-    public async Task<IReadOnlyList<SubjectResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<SubjectResponseDto?> GetOwnedByIdAsync(
+        Guid ownerUserId,
+        Guid subjectId,
+        CancellationToken cancellationToken = default)
     {
-        var subjects = await _unitOfWork.Subjects.GetAllAsync(cancellationToken);
-        return subjects.Select(_mapper.Map<SubjectResponseDto>).ToList();
-    }
+        var subject = await _unitOfWork.Subjects.Query()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                subject => subject.Id == subjectId
+                    && subject.OwnerUserId == ownerUserId,
+                cancellationToken);
 
-    public async Task<SubjectResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
-    {
-        var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
         return subject is null ? null : _mapper.Map<SubjectResponseDto>(subject);
     }
 
-    public async Task<SubjectResponseDto> CreateAsync(CreateSubjectRequestDto request, CancellationToken cancellationToken = default)
+    public Task<bool> ExistsForOwnerAsync(
+        Guid ownerUserId,
+        Guid subjectId,
+        CancellationToken cancellationToken = default)
     {
-        var existing = await _unitOfWork.Subjects
-            .Query()
-            .FirstOrDefaultAsync(s => s.SubjectCode == request.SubjectCode, cancellationToken);
+        return _unitOfWork.Subjects.Query()
+            .AnyAsync(
+                subject => subject.Id == subjectId
+                    && subject.OwnerUserId == ownerUserId,
+                cancellationToken);
+    }
 
-        if (existing is not null)
+    public async Task<SubjectResponseDto> CreateForUserAsync(
+        Guid ownerUserId,
+        CreateSubjectRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedCode = request.SubjectCode.Trim().ToUpperInvariant();
+        var exists = await _unitOfWork.Subjects.Query()
+            .AnyAsync(
+                subject => subject.OwnerUserId == ownerUserId
+                    && subject.SubjectCode == normalizedCode,
+                cancellationToken);
+
+        if (exists)
         {
-            throw new InvalidOperationException($"Subject with code '{request.SubjectCode}' already exists.");
+            throw new InvalidOperationException($"Subject with code '{normalizedCode}' already exists.");
         }
 
         var subject = _mapper.Map<Data.Entities.Subject>(request);
+        subject.OwnerUserId = ownerUserId;
+        subject.SubjectCode = normalizedCode;
+        subject.SubjectName = request.SubjectName.Trim();
         await _unitOfWork.Subjects.AddAsync(subject, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return _mapper.Map<SubjectResponseDto>(subject);
     }
 
-    public async Task<SubjectResponseDto> UpdateAsync(Guid id, UpdateSubjectRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<SubjectResponseDto> UpdateOwnedAsync(
+        Guid ownerUserId,
+        Guid subjectId,
+        UpdateSubjectRequestDto request,
+        CancellationToken cancellationToken = default)
     {
-        var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
-        if (subject is null)
+        var normalizedCode = request.SubjectCode.Trim().ToUpperInvariant();
+        var subject = await _unitOfWork.Subjects.Query()
+            .FirstOrDefaultAsync(
+                subject => subject.Id == subjectId
+                    && subject.OwnerUserId == ownerUserId,
+                cancellationToken)
+            ?? throw new KeyNotFoundException($"Subject with ID {subjectId} not found.");
+
+        var codeConflict = await _unitOfWork.Subjects.Query()
+            .AnyAsync(
+                candidate => candidate.OwnerUserId == ownerUserId
+                    && candidate.SubjectCode == normalizedCode
+                    && candidate.Id != subjectId,
+                cancellationToken);
+
+        if (codeConflict)
         {
-            throw new KeyNotFoundException($"Subject with ID {id} not found.");
+            throw new InvalidOperationException($"Subject with code '{normalizedCode}' already exists.");
         }
 
-        var codeConflict = await _unitOfWork.Subjects
-            .Query()
-            .FirstOrDefaultAsync(s => s.SubjectCode == request.SubjectCode && s.Id != id, cancellationToken);
-
-        if (codeConflict is not null)
-        {
-            throw new InvalidOperationException($"Subject with code '{request.SubjectCode}' already exists.");
-        }
-
-        _mapper.Map(request, subject);
+        subject.SubjectCode = normalizedCode;
+        subject.SubjectName = request.SubjectName.Trim();
+        subject.Description = request.Description;
         _unitOfWork.Subjects.Update(subject);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return _mapper.Map<SubjectResponseDto>(subject);
     }
 
-    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteOwnedAsync(
+        Guid ownerUserId,
+        Guid subjectId,
+        CancellationToken cancellationToken = default)
     {
-        var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
-        if (subject is null)
+        var subject = await _unitOfWork.Subjects.Query()
+            .FirstOrDefaultAsync(
+                subject => subject.Id == subjectId
+                    && subject.OwnerUserId == ownerUserId,
+                cancellationToken)
+            ?? throw new KeyNotFoundException($"Subject with ID {subjectId} not found.");
+
+        var isReferenced = await _unitOfWork.Documents.Query()
+            .AnyAsync(document => document.SubjectId == subjectId, cancellationToken);
+
+        if (isReferenced)
         {
-            throw new KeyNotFoundException($"Subject with ID {id} not found.");
+            throw new InvalidOperationException(
+                "Subject cannot be deleted while it is used by a document.");
         }
 
         _unitOfWork.Subjects.Remove(subject);
