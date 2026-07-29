@@ -196,9 +196,13 @@ public sealed class DocumentService : IDocumentService
 
     public async Task<DocumentResponseDto> CreateAsync(CreateDocumentRequestDto request, CancellationToken cancellationToken = default)
     {
-        var subjectExists = await _unitOfWork.Subjects.GetByIdAsync(request.SubjectId, cancellationToken) is not null;
+        var subjectExists = await _unitOfWork.Subjects.Query()
+            .AnyAsync(
+                subject => subject.Id == request.SubjectId
+                    && subject.OwnerUserId == request.UserId,
+                cancellationToken);
         if (!subjectExists)
-            throw new InvalidOperationException($"Subject with ID {request.SubjectId} not found.");
+            throw new KeyNotFoundException("Subject not found.");
 
         var document = _mapper.Map<Data.Entities.Document>(request);
         document.LifecycleStatus = DocumentLifecycleStatus.Active;
