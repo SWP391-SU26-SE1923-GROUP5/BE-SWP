@@ -533,7 +533,12 @@ public sealed class DocumentController : ControllerBase
                 fullPath,
                 document.FileName!,
                 request.File.ContentType);
-            await _processingQueue.EnqueueAsync(processRequest);
+            if (!_processingQueue.TryEnqueue(processRequest))
+            {
+                _logger.LogWarning(
+                    "Document {DocumentId} was committed but is already queued for processing",
+                    document.Id);
+            }
 
             return Accepted(new UploadDocumentResponseDto(
                 document.Id,
@@ -585,7 +590,12 @@ public sealed class DocumentController : ControllerBase
             fullPath,
             document.FileName ?? "unknown",
             document.FileType ?? "application/octet-stream");
-        await _processingQueue.EnqueueAsync(processRequest);
+        if (!_processingQueue.TryEnqueue(processRequest))
+        {
+            _logger.LogWarning(
+                "Document {DocumentId} was committed for reprocessing but is already queued",
+                document.Id);
+        }
 
         return Accepted(new UploadDocumentResponseDto(id, "processing", 0,
             "Re-processing in progress"));

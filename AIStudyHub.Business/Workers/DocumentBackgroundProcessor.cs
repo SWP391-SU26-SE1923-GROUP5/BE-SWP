@@ -19,6 +19,7 @@ using AIStudyHub.Business.Services;
 using AIStudyHub.Business.Options;
 using AIStudyHub.Business.AI;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 
 namespace AIStudyHub.Business.Workers;
 
@@ -40,6 +41,9 @@ public class DocumentBackgroundProcessor : BackgroundService
 
     private const int MaxSummaryPromptChars = 4000;
     private const int MaxSummaryLength = 1500;
+    private const string UploadUrlPrefix = "/uploads/";
+    private const string InvalidSourceError = "Document source path is invalid.";
+    private const string MissingSourceError = "Document source file is missing.";
 
     private static async Task<string> GenerateDocumentSummaryAsync(
         string documentText,
@@ -152,6 +156,8 @@ public class DocumentBackgroundProcessor : BackgroundService
 
         try
         {
+            await RecoverProcessingDocumentsAsync(stoppingToken);
+
             await foreach (var request in _queue.DequeueAsync(stoppingToken))
             {
                 try
@@ -163,12 +169,107 @@ public class DocumentBackgroundProcessor : BackgroundService
                     _logger.LogError(ex, "Error processing document {DocumentId}", request.DocumentId);
                     await HandleFailureAsync(request, ex);
                 }
+                finally
+                {
+                    _queue.Complete(request.DocumentId);
+                }
             }
         }
         catch (OperationCanceledException)
         {
             _logger.LogInformation("Document Background Processor stopping");
         }
+    }
+
+    private async Task RecoverProcessingDocumentsAsync(CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var services = scope.ServiceProvider;
+        var unitOfWork = services.GetRequiredService<IUnitOfWork>();
+        var fileStorage = services.GetRequiredService<IFileStorageService>();
+
+        var processingDocuments = await unitOfWork.Documents.Query()
+            .Where(document => document.Status == DocumentStatus.Processing
+                && document.LifecycleStatus == DocumentLifecycleStatus.Active)
+            .AsNoTracking()
+            .ToListAsync(ct);
+
+        foreach (var document in processingDocuments)
+        {
+            string fullPath;
+            try
+            {
+                var relativePath = GetStoredRelativePath(document.FileLink);
+                fullPath = fileStorage.ResolveFullPath(relativePath);
+            }
+            catch (InvalidOperationException)
+            {
+                await MarkRecoveryFailureAsync(
+                    unitOfWork,
+                    document.Id,
+                    InvalidSourceError,
+                    ct);
+                continue;
+            }
+
+            if (!File.Exists(fullPath))
+            {
+                await MarkRecoveryFailureAsync(
+                    unitOfWork,
+                    document.Id,
+                    MissingSourceError,
+                    ct);
+                continue;
+            }
+
+            var request = new DocumentProcessRequest(
+                document.Id,
+                document.UserId,
+                fullPath,
+                document.FileName ?? "unknown",
+                document.FileType ?? "application/octet-stream");
+
+            _queue.TryEnqueue(request);
+        }
+    }
+
+    private static string GetStoredRelativePath(string? fileLink)
+    {
+        if (string.IsNullOrWhiteSpace(fileLink)
+            || !fileLink.StartsWith(
+                UploadUrlPrefix,
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(InvalidSourceError);
+        }
+
+        var relativePath = fileLink[UploadUrlPrefix.Length..];
+        if (string.IsNullOrWhiteSpace(relativePath))
+            throw new InvalidOperationException(InvalidSourceError);
+
+        return relativePath;
+    }
+
+    private async Task MarkRecoveryFailureAsync(
+        IUnitOfWork unitOfWork,
+        Guid documentId,
+        string error,
+        CancellationToken ct)
+    {
+        var document = await unitOfWork.Documents.GetByIdAsync(documentId, ct);
+        if (document is null)
+            return;
+
+        document.Status = DocumentStatus.Failed;
+        document.ErrorMessage = error;
+        document.UpdatedAt = DateTime.UtcNow;
+        unitOfWork.Documents.Update(document);
+        await unitOfWork.SaveChangesAsync(ct);
+
+        _logger.LogWarning(
+            "Could not recover document {DocumentId}: {Error}",
+            documentId,
+            error);
     }
 
     private async Task ProcessDocumentAsync(DocumentProcessRequest request, CancellationToken ct)

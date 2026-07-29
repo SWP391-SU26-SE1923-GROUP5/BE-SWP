@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Threading.Channels;
 using AIStudyHub.Business.DTOs.Documents;
 using Microsoft.Extensions.Logging;
@@ -6,49 +7,55 @@ namespace AIStudyHub.Business.Services;
 
 public interface IDocumentProcessingQueue
 {
-    ValueTask EnqueueAsync(DocumentProcessRequest request, CancellationToken cancellationToken = default);
     bool TryEnqueue(DocumentProcessRequest request);
     IAsyncEnumerable<DocumentProcessRequest> DequeueAsync(CancellationToken cancellationToken = default);
+    void Complete(Guid documentId);
 }
 
 public class DocumentProcessingQueue : IDocumentProcessingQueue
 {
-    private readonly Channel<DocumentProcessRequest> _channel;
+    private readonly Channel<DocumentProcessRequest> _channel =
+        Channel.CreateUnbounded<DocumentProcessRequest>(
+            new UnboundedChannelOptions
+            {
+                SingleReader = true,
+                SingleWriter = false
+            });
+    private readonly ConcurrentDictionary<Guid, byte> _queuedDocumentIds = new();
     private readonly ILogger<DocumentProcessingQueue> _logger;
 
-    public DocumentProcessingQueue(ILogger<DocumentProcessingQueue> logger, int capacity = 100)
+    public DocumentProcessingQueue(ILogger<DocumentProcessingQueue> logger)
     {
         _logger = logger;
-        _channel = Channel.CreateBounded<DocumentProcessRequest>(new BoundedChannelOptions(capacity)
-        {
-            FullMode = BoundedChannelFullMode.Wait
-        });
-    }
-
-    public async ValueTask EnqueueAsync(DocumentProcessRequest request, CancellationToken cancellationToken = default)
-    {
-        await _channel.Writer.WriteAsync(request, cancellationToken);
-        _logger.LogInformation("Document {DocumentId} queued for processing", request.DocumentId);
     }
 
     public bool TryEnqueue(DocumentProcessRequest request)
     {
-        var enqueued = _channel.Writer.TryWrite(request);
-        if (enqueued)
+        if (!_queuedDocumentIds.TryAdd(request.DocumentId, 0))
+        {
+            _logger.LogDebug(
+                "Document {DocumentId} is already queued for processing",
+                request.DocumentId);
+            return false;
+        }
+
+        if (_channel.Writer.TryWrite(request))
         {
             _logger.LogInformation(
                 "Document {DocumentId} queued for processing",
                 request.DocumentId);
-        }
-        else
-        {
-            _logger.LogWarning(
-                "Document {DocumentId} could not be queued because the processing queue is full",
-                request.DocumentId);
+            return true;
         }
 
-        return enqueued;
+        _queuedDocumentIds.TryRemove(request.DocumentId, out _);
+        _logger.LogWarning(
+            "Document {DocumentId} could not be queued for processing",
+            request.DocumentId);
+        return false;
     }
+
+    public void Complete(Guid documentId) =>
+        _queuedDocumentIds.TryRemove(documentId, out _);
 
     public async IAsyncEnumerable<DocumentProcessRequest> DequeueAsync(
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
