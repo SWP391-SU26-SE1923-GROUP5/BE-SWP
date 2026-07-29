@@ -2,7 +2,6 @@ using System.Data;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Exceptions;
-using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
 using AIStudyHub.Data;
@@ -11,6 +10,7 @@ using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -24,30 +24,24 @@ public sealed class DocumentUploadService : IDocumentUploadService
     private const string UploadUrlPrefix = "/uploads/";
 
     private readonly IUnitOfWork _unitOfWork;
-    private readonly ApplicationDbContext _dbContext;
-    private readonly IDocumentService _documentService;
+    private readonly IDbContextFactory<ApplicationDbContext> _dbContextFactory;
     private readonly IFileStorageService _fileStorage;
     private readonly IDocumentProcessingQueue _processingQueue;
-    private readonly IVectorStoreService _vectorStoreService;
     private readonly DocumentStorageOptions _storageOptions;
     private readonly ILogger<DocumentUploadService> _logger;
 
     public DocumentUploadService(
         IUnitOfWork unitOfWork,
-        ApplicationDbContext dbContext,
-        IDocumentService documentService,
+        IDbContextFactory<ApplicationDbContext> dbContextFactory,
         IFileStorageService fileStorage,
         IDocumentProcessingQueue processingQueue,
-        IVectorStoreService vectorStoreService,
         IOptions<DocumentStorageOptions> storageOptions,
         ILogger<DocumentUploadService> logger)
     {
         _unitOfWork = unitOfWork;
-        _dbContext = dbContext;
-        _documentService = documentService;
+        _dbContextFactory = dbContextFactory;
         _fileStorage = fileStorage;
         _processingQueue = processingQueue;
-        _vectorStoreService = vectorStoreService;
         _storageOptions = storageOptions.Value;
         _logger = logger;
     }
@@ -92,8 +86,9 @@ public sealed class DocumentUploadService : IDocumentUploadService
             tierLimitBytes,
             request.ContentLength);
 
+        var documentId = Guid.NewGuid();
         StoredFileResult? storedFile = null;
-        var documentWasCommitted = false;
+        var documentCommitVerified = false;
 
         try
         {
@@ -104,56 +99,33 @@ public sealed class DocumentUploadService : IDocumentUploadService
                 _storageOptions.MaxFileSizeBytes,
                 cancellationToken);
 
-            Document document;
-            await using (var transaction =
-                         await _dbContext.Database.BeginTransactionAsync(
-                             IsolationLevel.Serializable,
-                             cancellationToken))
+            if (storedFile.SizeBytes <= 0)
+                throw new ValidationException("A non-empty file is required.");
+
+            var document = new Document
             {
-                activeBytes = await GetActiveBytesAsync(
-                    request.UserId,
-                    cancellationToken);
-                EnsureWithinQuota(
-                    activeBytes,
-                    tierLimitBytes,
-                    storedFile.SizeBytes);
+                Id = documentId,
+                UserId = request.UserId,
+                SubjectId = request.SubjectId,
+                Title = request.Title,
+                FileLink = _fileStorage.GetFileUrl(storedFile.RelativePath),
+                FileExtension = extension,
+                FileType = request.ContentType,
+                FileSizeBytes = storedFile.SizeBytes,
+                ShareStatus = "private",
+                Status = DocumentStatus.Processing,
+                LifecycleStatus = DocumentLifecycleStatus.Active
+            };
 
-                var newActiveBytes = checked(
-                    activeBytes + storedFile.SizeBytes);
-                document = new Document
-                {
-                    Id = Guid.NewGuid(),
-                    UserId = request.UserId,
-                    SubjectId = request.SubjectId,
-                    Title = request.Title,
-                    FileLink = _fileStorage.GetFileUrl(
-                        storedFile.RelativePath),
-                    FileExtension = extension,
-                    FileType = request.ContentType,
-                    FileSizeBytes = storedFile.SizeBytes,
-                    ShareStatus = "private",
-                    Status = DocumentStatus.Processing,
-                    LifecycleStatus = DocumentLifecycleStatus.Active
-                };
-
-                await _unitOfWork.Documents.AddAsync(
-                    document,
-                    cancellationToken);
-                user.CurrentStorageCapacity = checked(
-                    (int)Math.Ceiling(
-                        newActiveBytes / (double)BytesPerMegabyte));
-                _unitOfWork.Users.Update(user);
-
-                await SaveWithAvailableFileNameAsync(
-                    document,
-                    safeFileName,
-                    cancellationToken);
-                await transaction.CommitAsync(cancellationToken);
-                documentWasCommitted = true;
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            await PersistUploadAsync(
+                document,
+                safeFileName,
+                tierLimitBytes);
+            documentCommitVerified = true;
 
             var processRequest = new DocumentProcessRequest(
-                document.Id,
+                documentId,
                 request.UserId,
                 _fileStorage.ResolveFullPath(storedFile.RelativePath),
                 document.FileName!,
@@ -163,22 +135,27 @@ public sealed class DocumentUploadService : IDocumentUploadService
             {
                 _logger.LogWarning(
                     "Document {DocumentId} was committed but could not be queued immediately",
-                    document.Id);
+                    documentId);
             }
 
             return new UploadDocumentResponseDto(
-                document.Id,
+                documentId,
                 "processing",
                 0,
                 "Document is being processed in the background");
         }
         catch
         {
-            if (storedFile is not null && !documentWasCommitted)
+            if (storedFile is not null && !documentCommitVerified)
             {
-                await _fileStorage.DeleteFileAsync(
-                    storedFile.RelativePath,
-                    CancellationToken.None);
+                var commitState = await TryGetDocumentCommitStateAsync(
+                    documentId);
+                if (commitState == false)
+                {
+                    await _fileStorage.DeleteFileAsync(
+                        storedFile.RelativePath,
+                        CancellationToken.None);
+                }
             }
 
             throw;
@@ -214,8 +191,6 @@ public sealed class DocumentUploadService : IDocumentUploadService
 
         if (!File.Exists(fullPath))
             throw new ValidationException("Document source file is missing.");
-
-        await _vectorStoreService.DeleteVectorsByDocumentIdAsync(documentId);
 
         document.Status = DocumentStatus.Processing;
         document.ErrorMessage = null;
@@ -287,21 +262,84 @@ public sealed class DocumentUploadService : IDocumentUploadService
         }
     }
 
+    private async Task PersistUploadAsync(
+        Document document,
+        string requestedFileName,
+        long tierLimitBytes)
+    {
+        await using var context =
+            await _dbContextFactory.CreateDbContextAsync(
+                CancellationToken.None);
+        context.Documents.Add(document);
+
+        var strategy = new SqlServerRetryingExecutionStrategy(
+            context,
+            maxRetryCount: 3,
+            maxRetryDelay: TimeSpan.FromSeconds(2),
+            errorNumbersToAdd: (ICollection<int>?)null);
+        await strategy.ExecuteInTransactionAsync(
+            operation: async transactionCancellationToken =>
+            {
+                var activeBytes = await context.Documents
+                    .Where(candidate => candidate.UserId == document.UserId
+                        && candidate.LifecycleStatus
+                            != DocumentLifecycleStatus.Purged)
+                    .SumAsync(
+                        candidate => (long?)candidate.FileSizeBytes,
+                        transactionCancellationToken)
+                    ?? 0L;
+                EnsureWithinQuota(
+                    activeBytes,
+                    tierLimitBytes,
+                    document.FileSizeBytes);
+
+                var user = await context.Users.SingleOrDefaultAsync(
+                    candidate => candidate.Id == document.UserId,
+                    transactionCancellationToken);
+                if (user is null)
+                {
+                    throw new UnauthorizedAccessException(
+                        "Authentication is required.");
+                }
+
+                var newActiveBytes = checked(
+                    activeBytes + document.FileSizeBytes);
+                user.CurrentStorageCapacity = checked(
+                    (int)Math.Ceiling(
+                        newActiveBytes / (double)BytesPerMegabyte));
+
+                await SaveWithAvailableFileNameAsync(
+                    context,
+                    document,
+                    requestedFileName,
+                    transactionCancellationToken);
+            },
+            verifySucceeded: _ => DocumentExistsAsync(document.Id),
+            isolationLevel: IsolationLevel.Serializable,
+            cancellationToken: CancellationToken.None);
+
+        context.ChangeTracker.AcceptAllChanges();
+    }
+
     private async Task SaveWithAvailableFileNameAsync(
+        ApplicationDbContext context,
         Document document,
         string requestedFileName,
         CancellationToken cancellationToken)
     {
         for (var attempt = 1; attempt <= FileNameSaveAttempts; attempt++)
         {
-            document.FileName = await _documentService.GetAvailableFileNameAsync(
+            document.FileName = await GetAvailableFileNameAsync(
+                context,
                 document.UserId,
                 requestedFileName,
-                cancellationToken: cancellationToken);
+                cancellationToken);
 
             try
             {
-                await _unitOfWork.SaveChangesAsync(cancellationToken);
+                await context.SaveChangesAsync(
+                    acceptAllChangesOnSuccess: false,
+                    cancellationToken);
                 return;
             }
             catch (DbUpdateException exception)
@@ -314,6 +352,103 @@ public sealed class DocumentUploadService : IDocumentUploadService
                         exception);
                 }
             }
+        }
+    }
+
+    private static async Task<string> GetAvailableFileNameAsync(
+        ApplicationDbContext context,
+        Guid userId,
+        string fileName,
+        CancellationToken cancellationToken)
+    {
+        const int maxFileNameLength = 255;
+        var normalizedFileName = Path.GetFileName(fileName);
+        if (string.IsNullOrWhiteSpace(normalizedFileName))
+        {
+            throw new ArgumentException(
+                "Document filename is required.",
+                nameof(fileName));
+        }
+
+        var extension = Path.GetExtension(normalizedFileName);
+        var stem = Path.GetFileNameWithoutExtension(normalizedFileName);
+        if (string.IsNullOrWhiteSpace(stem)
+            || extension.Length >= maxFileNameLength)
+        {
+            throw new ArgumentException(
+                "Document filename is invalid.",
+                nameof(fileName));
+        }
+
+        var existingNames = new HashSet<string>(
+            await context.Documents
+                .Where(candidate => candidate.UserId == userId
+                    && candidate.LifecycleStatus
+                        == DocumentLifecycleStatus.Active
+                    && candidate.FileName != null)
+                .Select(candidate => candidate.FileName!)
+                .ToListAsync(cancellationToken),
+            StringComparer.OrdinalIgnoreCase);
+
+        var initialStemLength = Math.Min(
+            stem.Length,
+            maxFileNameLength - extension.Length);
+        var candidateName = stem[..initialStemLength] + extension;
+        if (!existingNames.Contains(candidateName))
+            return candidateName;
+
+        for (var suffixNumber = 1; ; suffixNumber++)
+        {
+            var suffix = $" ({suffixNumber})";
+            var maxStemLength =
+                maxFileNameLength - extension.Length - suffix.Length;
+            if (maxStemLength <= 0)
+            {
+                throw new ArgumentException(
+                    "Document filename is too long.",
+                    nameof(fileName));
+            }
+
+            candidateName =
+                stem[..Math.Min(stem.Length, maxStemLength)]
+                + suffix
+                + extension;
+            if (!existingNames.Contains(candidateName))
+                return candidateName;
+        }
+    }
+
+    private Task<bool> DocumentExistsAsync(Guid documentId)
+    {
+        return DocumentExistsCoreAsync(documentId);
+    }
+
+    private async Task<bool> DocumentExistsCoreAsync(Guid documentId)
+    {
+        await using var context =
+            await _dbContextFactory.CreateDbContextAsync(
+                CancellationToken.None);
+        return await context.Documents
+            .AsNoTracking()
+            .AnyAsync(
+                document => document.Id == documentId,
+                CancellationToken.None);
+    }
+
+    private async Task<bool?> TryGetDocumentCommitStateAsync(
+        Guid documentId)
+    {
+        try
+        {
+            return await DocumentExistsAsync(documentId);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                exception,
+                "Could not verify commit state for document {DocumentId}; preserving stored file",
+                documentId);
+            return null;
         }
     }
 
