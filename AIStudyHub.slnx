@@ -2,5 +2,4 @@
   <Project Path="AIStudyHub.API/AIStudyHub.API.csproj" />
   <Project Path="AIStudyHub.Business/AIStudyHub.Business.csproj" />
   <Project Path="AIStudyHub.Data/AIStudyHub.Data.csproj" />
-  <Project Path="AIStudyHub.Tests/AIStudyHub.Tests.csproj" />
 </Solution>

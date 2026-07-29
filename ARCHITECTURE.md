@@ -147,7 +147,6 @@ AIStudyHub.slnx
 │   ├── Interfaces/          (IGenericRepository, IUnitOfWork)
 │   ├── Repositories/        (GenericRepository, UnitOfWork)
 │   └── Migrations/          (21 EF Core migrations)
-├── AIStudyHub.Tests/
 ├── docs/                     (FRONTEND_GUIDE.md, EF_MIGRATION_COMMANDS.md, ...)
 ├── AGENT.md                  (coding conventions & rules)
 ├── ARCHITECTURE.md           (this file)
@@ -889,6 +888,31 @@ sequenceDiagram
 - Avoid static state for request-specific behavior.
 - Avoid circular project references.
 
+## Repository Change Policy
+
+These rules are architectural constraints and apply to every feature, bug fix, and refactor.
+
+### Migration History
+
+- A new EF Core migration may be created when an approved schema change requires one.
+- Every migration that already exists in the repository is immutable.
+- Never edit, rename, move, regenerate, squash, or delete an existing migration `.cs` file, designer file, migration name, timestamp, ordering, or historical model operation.
+- Never run `dotnet ef migrations remove` against a committed migration.
+- `ApplicationDbContextModelSnapshot.cs` may change only as the generated result of adding a new migration. Never edit it manually to rewrite migration history.
+- Inspect every newly generated migration before accepting it and confirm that it contains only the schema changes required by the current feature.
+- Applying migrations to a database, dropping a database, or resetting database data requires explicit authorization from the repository owner.
+
+### Testing and Verification
+
+- Do not recreate the deleted `AIStudyHub.Tests` project.
+- Do not create unit-test projects, unit-test files, test fixtures, mocks, test packages, or test-only production hooks when adding or fixing features.
+- Do not add xUnit, NUnit, MSTest, Moq, FluentAssertions, or equivalent unit-testing dependencies unless the repository owner explicitly reverses this policy.
+- Create integration or end-to-end test projects only when the repository owner explicitly requests them.
+- Do not create, run, require, or recommend smoke tests.
+- Agents may run `dotnet build` to verify that the solution compiles.
+- Functional verification is performed manually by the repository owner.
+- Every feature handoff must list the manual flows that the repository owner should verify.
+
 ## Dependency Injection Strategy
 
 DI registration locations:
@@ -990,8 +1014,6 @@ Recommended log levels:
 Recommended evolution paths:
 
 - Add caching (Redis) for frequently accessed public document metadata.
-- Add integration tests with a test database.
-- Add unit tests for validators, business rules, and repository behavior.
 - Add health checks for SQL Server and Qdrant.
 - Add rate limiting on AI and upload endpoints.
 - Add API versioning before public clients depend on the API.
@@ -1002,4 +1024,3 @@ Recommended evolution paths:
 - Replace the public `/api/Gamification/award-xp` endpoint with a server-to-server auth scheme (mTLS or shared HMAC) before going to production.
 - Split AI provider implementations behind interfaces for multi-provider support.
 - Keep the current 3-layer architecture unless scaling requirements justify a larger architecture.
-- Add unit tests for SM-2 math and XP/level/streak math (currently untested, and small off-by-one bugs here corrupt user-facing stats silently).

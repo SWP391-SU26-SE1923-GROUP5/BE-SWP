@@ -90,6 +90,17 @@ Technology stack:
 - **NEVER use generic base controllers (like `CrudControllerBase`).** Controllers must explicitly define only the endpoints required by business rules (e.g., Vote only needs POST and DELETE, no PUT).
 - Do not introduce additional projects without explicit instruction.
 
+## Mandatory Testing and Verification Policy
+
+- Do not recreate the deleted `AIStudyHub.Tests` project.
+- Do not create unit-test projects, unit-test files, test fixtures, mocks, test packages, or test-only production hooks when adding or fixing features.
+- Do not add xUnit, NUnit, MSTest, Moq, FluentAssertions, or equivalent unit-testing dependencies unless the repository owner explicitly reverses this policy.
+- Create integration or end-to-end test projects only when the repository owner explicitly requests them.
+- Do not create, run, require, or recommend smoke tests.
+- Agents may run `dotnet build` to verify that the solution compiles.
+- Functional verification is performed manually by the repository owner.
+- Every feature handoff must list the manual flows that the repository owner should verify.
+
 ## Naming Conventions
 
 - Use PascalCase for classes, methods, properties, DTOs, enums, and files.
@@ -217,7 +228,13 @@ Enums (7+):
 - Configure string max lengths.
 - Configure decimal precision.
 - Use enum-to-string conversions for readable database values.
-- Use migrations for schema changes.
+- A new EF Core migration may be created when an approved schema change requires one.
+- Every migration that already exists in the repository is immutable.
+- Never edit, rename, move, regenerate, squash, or delete an existing migration `.cs` file, designer file, migration name, timestamp, ordering, or historical model operation.
+- Never run `dotnet ef migrations remove` against a committed migration.
+- `ApplicationDbContextModelSnapshot.cs` may change only as the generated result of adding a new migration. Never edit it manually to rewrite migration history.
+- Inspect every newly generated migration before accepting it and confirm that it contains only the schema changes required by the current feature.
+- Applying migrations to a database, dropping a database, or resetting database data requires explicit authorization from the repository owner.
 - Put seed data in `Seed/SeedData.cs`.
 
 ## Service Layer Rules
@@ -346,5 +363,5 @@ Enums (7+):
 
 - **Implemented:** Authentication (JWT + OTP + OAuth), User management, Document management (upload/chunk/vectorize), RAG pipeline (hybrid search + reranking + SK orchestration + guardrails), Flashcard generation, Quiz generation, Quiz submission with auto-grading, AI Chat, **Spaced Repetition review (SM-2)**, **Gamification (XP / level / streak / leaderboard)**, **Recommendations (per-subject mastery + AI study suggestions)**, **Real-time SignalR notifications** (`/hubs/notifications`), DB-backed notifications, Payments (VNPay), Tier memberships, Admin reindexing, **4 background workers** (document processing, tier expiration, unverified-account cleanup, daily streak reset).
 - **AI Stack:** OpenAI (`text-embedding-3-small` for embeddings, `gpt-4o-mini` for generation) + Qdrant vector store + Semantic Kernel orchestration + local BM25 sparse search.
-- **Pending:** Integration tests, unit tests for validators and business rules.
+- **Verification:** Agents verify compilation with `dotnet build`; the repository owner performs functional testing manually.
 - **Pre-production checklist:** Review `appsettings.json`, move all secrets to user secrets / environment variables, configure real SMTP, configure real VNPay credentials, set correct CORS origins, replace `/api/Gamification/award-xp` with a server-to-server auth scheme before exposing externally.
