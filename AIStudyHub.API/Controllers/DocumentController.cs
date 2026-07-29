@@ -35,7 +35,6 @@ public sealed class DocumentController : ControllerBase
     private readonly IEmbeddingService _embeddingService;
     private readonly IVectorStoreService _vectorStoreService;
     private readonly IFileStorageService _fileStorage;
-    private readonly RagOptions _ragOptions;
     private readonly DocumentStorageOptions _storageOptions;
     private readonly ILogger<DocumentController> _logger;
     private readonly IDocumentProcessingQueue _processingQueue;
@@ -48,7 +47,6 @@ public sealed class DocumentController : ControllerBase
         IEmbeddingService embeddingService,
         IVectorStoreService vectorStoreService,
         IFileStorageService fileStorage,
-        IOptions<RagOptions> ragOptions,
         IOptions<DocumentStorageOptions> storageOptions,
         ILogger<DocumentController> logger,
         IDocumentProcessingQueue processingQueue)
@@ -60,7 +58,6 @@ public sealed class DocumentController : ControllerBase
         _embeddingService = embeddingService;
         _vectorStoreService = vectorStoreService;
         _fileStorage = fileStorage;
-        _ragOptions = ragOptions.Value;
         _storageOptions = storageOptions.Value;
         _logger = logger;
         _processingQueue = processingQueue;
@@ -447,8 +444,8 @@ public sealed class DocumentController : ControllerBase
         if (!subjectExists)
             return NotFound("Subject not found.");
 
-        if (request.File.Length > _ragOptions.MaxFileSizeBytes)
-            return BadRequest($"File exceeds maximum allowed size of {_ragOptions.MaxFileSizeBytes / (1024 * 1024)}MB");
+        if (request.File.Length > _storageOptions.MaxFileSizeBytes)
+            return BadRequest($"File exceeds maximum allowed size of {_storageOptions.MaxFileSizeBytes / (1024 * 1024)}MB");
 
         try
         {

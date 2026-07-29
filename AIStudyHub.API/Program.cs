@@ -10,6 +10,7 @@ using AIStudyHub.Business.Validators.Authentication;
 using AIStudyHub.Data.Extensions;
 using CloudinaryDotNet;
 using FluentValidation;
+using Microsoft.AspNetCore.Http.Features;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -21,6 +22,10 @@ builder.Host.UseSerilog((context, loggerConfiguration) =>
 builder.Services.AddControllers(options =>
 {
     options.Filters.Add<FluentValidationFilter>();
+});
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = 6L * 1024 * 1024;
 });
 builder.Services.AddCors(options =>
 {

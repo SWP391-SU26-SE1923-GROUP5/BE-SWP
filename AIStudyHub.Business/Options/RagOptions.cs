@@ -11,7 +11,6 @@ public class RagOptions
     public int ChunkSize { get; set; } = 2048;
     /// <summary>Overlap between chunks in characters (approximate, sentence-aligned).</summary>
     public int ChunkOverlap { get; set; } = 256;
-    public long MaxFileSizeBytes { get; set; } = 50 * 1024 * 1024;
     public string OpenAIApiKey { get; set; } = "";
     public string OpenAIChatModel { get; set; } = "gpt-5-mini";
     public string OpenAIEmbeddingModel { get; set; } = "text-embedding-3-small";
