@@ -1,11 +1,9 @@
 using AIStudyHub.API.DTOs;
-using AIStudyHub.Business.AI.VectorStore;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
-using AIStudyHub.Business.Services;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
@@ -23,44 +21,30 @@ namespace AIStudyHub.API.Controllers;
 [Route("api/[controller]")]
 public sealed class DocumentController : ControllerBase
 {
-    private const string ActiveFileNameIndex = "UX_Document_UserId_FileName_Active";
-    private const int FileNameSaveAttempts = 3;
     private const string SuggestedPromptsWelcomeMessage =
         "Chào mừng bạn đến với AIStudyHub! Tôi có thể giúp bạn khám phá tài liệu này. "
         + "Hãy chọn một câu hỏi gợi ý bên dưới hoặc nhập câu hỏi của riêng bạn.";
     private readonly IDocumentService _service;
-    private readonly ISubjectService _subjectService;
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IDocumentProcessingService _documentProcessing;
-    private readonly IEmbeddingService _embeddingService;
     private readonly IVectorStoreService _vectorStoreService;
-    private readonly IFileStorageService _fileStorage;
     private readonly DocumentStorageOptions _storageOptions;
     private readonly ILogger<DocumentController> _logger;
-    private readonly IDocumentProcessingQueue _processingQueue;
+    private readonly IDocumentUploadService _uploadService;
 
     public DocumentController(
         IDocumentService service,
-        ISubjectService subjectService,
         IUnitOfWork unitOfWork,
-        IDocumentProcessingService documentProcessing,
-        IEmbeddingService embeddingService,
         IVectorStoreService vectorStoreService,
-        IFileStorageService fileStorage,
         IOptions<DocumentStorageOptions> storageOptions,
         ILogger<DocumentController> logger,
-        IDocumentProcessingQueue processingQueue)
+        IDocumentUploadService uploadService)
     {
         _service = service;
-        _subjectService = subjectService;
         _unitOfWork = unitOfWork;
-        _documentProcessing = documentProcessing;
-        _embeddingService = embeddingService;
         _vectorStoreService = vectorStoreService;
-        _fileStorage = fileStorage;
         _storageOptions = storageOptions.Value;
         _logger = logger;
-        _processingQueue = processingQueue;
+        _uploadService = uploadService;
     }
 
     [HttpGet]
@@ -427,177 +411,30 @@ public sealed class DocumentController : ControllerBase
         [FromForm] UploadDocumentFileRequestDto request,
         CancellationToken cancellationToken)
     {
-        if (request.File == null || request.File.Length == 0)
-            return BadRequest("No file provided");
-
-        if (string.IsNullOrWhiteSpace(request.Title))
-            return BadRequest("Document title is required");
-
-        var userId = GetCurrentUserId();
-        if (userId == Guid.Empty)
-            return Unauthorized();
-
-        var subjectExists = await _subjectService.ExistsForOwnerAsync(
-            userId,
-            request.SubjectId,
+        await using var content = request.File.OpenReadStream();
+        var result = await _uploadService.UploadAsync(
+            new DocumentUploadRequest(
+                GetCurrentUserId(),
+                request.SubjectId,
+                request.Title,
+                request.File.FileName,
+                request.File.ContentType,
+                request.File.Length,
+                content),
             cancellationToken);
-        if (!subjectExists)
-            return NotFound("Subject not found.");
 
-        if (request.File.Length > _storageOptions.MaxFileSizeBytes)
-            return BadRequest($"File exceeds maximum allowed size of {_storageOptions.MaxFileSizeBytes / (1024 * 1024)}MB");
-
-        try
-        {
-            var user = await _unitOfWork.Users.GetByIdAsync(userId, cancellationToken);
-            if (user == null)
-                return Unauthorized();
-
-            var tier = await _unitOfWork.TierMemberships.GetByIdAsync(user.TierId, cancellationToken);
-            if (tier == null)
-                return StatusCode(500, "User tier not found");
-
-            var fileSizeMb = request.File.Length / (1024.0 * 1024.0);
-            if (user.CurrentStorageCapacity + fileSizeMb > tier.StorageLimitMb)
-                return StatusCode(403, $"Storage quota exceeded. Your tier ({tier.TierName}) allows {tier.StorageLimitMb}MB. Current usage: {user.CurrentStorageCapacity:F2}MB. This file: {fileSizeMb:F2}MB.");
-
-            var extension = Path.GetExtension(request.File.FileName).ToLowerInvariant();
-
-            if (!_fileStorage.IsValidExtension(extension))
-            {
-                return BadRequest($"File extension '{extension}' is not allowed. Allowed: .pdf, .docx, .txt, .md");
-            }
-
-            await using var memoryStream = new MemoryStream();
-            await request.File.CopyToAsync(memoryStream, cancellationToken);
-            var fileContent = memoryStream.ToArray();
-
-            var filePath = await _fileStorage.SaveFileAsync(fileContent, Path.GetFileNameWithoutExtension(request.File.FileName), extension, cancellationToken);
-            var fileUrl = _fileStorage.GetFileUrl(filePath);
-            var document = new Document
-            {
-                Id = Guid.NewGuid(),
-                UserId = userId,
-                SubjectId = request.SubjectId,
-                Title = request.Title,
-                FileName = request.File.FileName,
-                FileExtension = extension,
-                FileType = request.File.ContentType,
-                FileLink = fileUrl,
-                FileSizeBytes = request.File.Length,
-                ShareStatus = "private",
-                Status = DocumentStatus.Processing,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-
-            await _unitOfWork.Documents.AddAsync(document);
-            user.CurrentStorageCapacity += (int)fileSizeMb;
-            _unitOfWork.Users.Update(user);
-
-            var saved = false;
-            for (var attempt = 1; attempt <= FileNameSaveAttempts; attempt++)
-            {
-                document.FileName = await _service.GetAvailableFileNameAsync(
-                    userId,
-                    request.File.FileName,
-                    cancellationToken: cancellationToken);
-
-                try
-                {
-                    await _unitOfWork.SaveChangesAsync(cancellationToken);
-                    saved = true;
-                    break;
-                }
-                catch (DbUpdateException ex) when (IsActiveFileNameConflict(ex))
-                {
-                    if (attempt == FileNameSaveAttempts)
-                    {
-                        return Conflict(new
-                        {
-                            message = $"Could not allocate a unique document filename after {FileNameSaveAttempts} attempts."
-                        });
-                    }
-                }
-            }
-
-            if (!saved)
-                return Conflict(new { message = "Could not allocate a unique document filename." });
-
-            _logger.LogInformation("Document {DocumentId} accepted for processing by user {UserId}", document.Id, userId);
-
-            var fullPath = Path.GetFullPath(Path.Combine(_storageOptions.BasePath ?? string.Empty, filePath));
-            var processRequest = new DocumentProcessRequest(
-                document.Id,
-                userId,
-                fullPath,
-                document.FileName!,
-                request.File.ContentType);
-            if (!_processingQueue.TryEnqueue(processRequest))
-            {
-                _logger.LogWarning(
-                    "Document {DocumentId} was committed but is already queued for processing",
-                    document.Id);
-            }
-
-            return Accepted(new UploadDocumentResponseDto(
-                document.Id,
-                "processing",
-                0,
-                "Document is being processed in the background"
-            ));
-        }
-        catch (NotSupportedException ex)
-        {
-            return BadRequest(ex.Message);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to upload document file for user {UserId}", userId);
-            return StatusCode(500, "An error occurred while processing the document");
-        }
+        return Accepted(result);
     }
 
     [HttpPost("{id:guid}/reprocess")]
     public async Task<ActionResult<UploadDocumentResponseDto>> Reprocess(
         Guid id, CancellationToken cancellationToken)
     {
-        var userId = GetCurrentUserId();
-        if (userId == Guid.Empty) return Unauthorized();
-
-        var document = await _unitOfWork.Documents.GetByIdAsync(id, cancellationToken);
-        if (document == null) return NotFound("Document not found");
-        if (document.UserId != userId) return Forbid();
-
-        if (string.IsNullOrEmpty(document.FileLink))
-            return BadRequest("Document has no associated file on disk to re-process");
-
-        var relativePath = document.FileLink.Replace("/uploads/", "");
-        var fullPath = Path.Combine(_storageOptions.BasePath ?? string.Empty, relativePath);
-        if (!System.IO.File.Exists(fullPath))
-            return BadRequest("Source file is missing on disk; cannot re-process");
-
-        document.Status = DocumentStatus.Processing;
-        document.UpdatedAt = DateTime.UtcNow;
-        _unitOfWork.Documents.Update(document);
-        await _unitOfWork.SaveChangesAsync(cancellationToken);
-
-        var processRequest = new DocumentProcessRequest(
-            document.Id,
-            userId,
-            fullPath,
-            document.FileName ?? "unknown",
-            document.FileType ?? "application/octet-stream",
-            IsReprocess: true);
-        if (!_processingQueue.TryEnqueue(processRequest))
-        {
-            _logger.LogWarning(
-                "Document {DocumentId} was committed for reprocessing but is already queued",
-                document.Id);
-        }
-
-        return Accepted(new UploadDocumentResponseDto(id, "processing", 0,
-            "Re-processing in progress"));
+        var result = await _uploadService.ReprocessAsync(
+            id,
+            GetCurrentUserId(),
+            cancellationToken);
+        return Accepted(result);
     }
 
     private Guid GetCurrentUserId()
@@ -611,9 +448,4 @@ public sealed class DocumentController : ControllerBase
             : Guid.Empty;
     }
 
-    private static bool IsActiveFileNameConflict(DbUpdateException exception)
-    {
-        var message = exception.InnerException?.Message ?? exception.Message;
-        return message.Contains(ActiveFileNameIndex, StringComparison.OrdinalIgnoreCase);
-    }
 }

@@ -109,22 +109,6 @@ public sealed class LocalFileStorageService : IFileStorageService
             $"Could not allocate a unique storage path after {FileCreateAttempts} attempts.");
     }
 
-    public async Task<string> SaveFileAsync(
-        byte[] fileContent,
-        string fileName,
-        string extension,
-        CancellationToken ct = default)
-    {
-        await using var stream = new MemoryStream(fileContent);
-        var storedFile = await SaveFileAsync(
-            stream,
-            fileName,
-            extension,
-            _options.MaxFileSizeBytes,
-            ct);
-        return storedFile.RelativePath;
-    }
-
     public Task DeleteFileAsync(string relativePath, CancellationToken ct = default)
     {
         var fullPath = ResolveFullPath(relativePath);

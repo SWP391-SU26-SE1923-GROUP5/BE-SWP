@@ -11,10 +11,6 @@ public interface IFileStorageService
         long maxFileSizeBytes,
         CancellationToken cancellationToken = default);
 
-    // Temporary compatibility overload for DocumentController. Task 4 removes it
-    // after the controller delegates uploads to IDocumentUploadService.
-    Task<string> SaveFileAsync(byte[] fileContent, string fileName, string extension, CancellationToken ct = default);
-
     Task DeleteFileAsync(string relativePath, CancellationToken ct = default);
     string GetFileUrl(string relativePath);
     string ResolveFullPath(string relativePath);
