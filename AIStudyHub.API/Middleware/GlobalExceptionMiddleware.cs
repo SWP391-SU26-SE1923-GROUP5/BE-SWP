@@ -62,6 +62,13 @@ public sealed class GlobalExceptionMiddleware
         {
             await WriteStorageQuotaExceededResponseAsync(context, exception);
         }
+        catch (ExactGenerationCountException exception)
+        {
+            await WriteErrorResponseAsync(
+                context,
+                HttpStatusCode.UnprocessableEntity,
+                exception.Message);
+        }
         catch (Exception exception)
         {
             _logger.LogError(exception, "Unhandled exception: {Message}\nStackTrace: {StackTrace}", exception.Message, exception.StackTrace);

@@ -5,11 +5,13 @@ using AIStudyHub.Business.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.Tracking;
 using AIStudyHub.Business.Common;
+using AIStudyHub.Business.DTOs.AI;
 using AIStudyHub.Business.DTOs.Flashcards;
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Exceptions;
 using AIStudyHub.Business.Options;
+using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -28,8 +30,7 @@ public sealed class FlashcardAiService : IFlashcardAiService
     private readonly ILogger<FlashcardAiService> _logger;
     private readonly ITokenTrackerService _tokenTracker;
 
-    private const int MaxAttemptsPerCard = 3;
-    private const int MaxTotalAttempts = 80;
+    private const int MaxModelCalls = 4;
     private const int EstimatedTokensPerBatch = 1300; // was 1500
 
     public FlashcardAiService(
@@ -57,21 +58,13 @@ public sealed class FlashcardAiService : IFlashcardAiService
         if (request.NumberOfFlashcards <= 0 || request.NumberOfFlashcards > 20)
             throw new ArgumentOutOfRangeException(nameof(request.NumberOfFlashcards), "Request between 1 and 20 flashcards.");
 
-        var document = await _unitOfWork.Documents.GetByIdAsync(documentId);
-        if (document == null)
+        var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken);
+        if (document is null || document.UserId != userId)
             throw new KeyNotFoundException("Document not found.");
 
-        if (document.UserId != userId)
-            throw new UnauthorizedAccessException("You do not have permission to access this document.");
-
-        // Check AI token quota before processing
-        var estimatedBatches = (int)Math.Ceiling((double)request.NumberOfFlashcards / 20);
-        var estimatedTokens = estimatedBatches * EstimatedTokensPerBatch;
-        if (!await _tokenTracker.HasQuotaAsync(userId, estimatedTokens, cancellationToken))
-        {
-            var (current, limit) = await _tokenTracker.GetUsageInfoAsync(userId, cancellationToken);
-            throw new QuotaExceededException(current, limit, estimatedTokens);
-        }
+        if (document.Status != DocumentStatus.Done)
+            throw new InvalidOperationException(
+                "Document must finish processing before AI generation.");
 
         _logger.LogInformation("Generating {Num} flashcards for document {DocId} using OpenAI", request.NumberOfFlashcards, documentId);
 
@@ -84,30 +77,36 @@ public sealed class FlashcardAiService : IFlashcardAiService
             .ToList();
 
         var context = BuildContextFromPayloads(sortedChunks);
+        if (string.IsNullOrWhiteSpace(context))
+            throw new InvalidOperationException("Document has no processed content.");
 
         _logger.LogInformation("Flashcard context length: {Length} chars from {ChunkCount} chunks",
             context.Length, sortedChunks.Count);
+
+        var estimatedTokens = MaxModelCalls * EstimatedTokensPerBatch;
+        if (!await _tokenTracker.HasQuotaAsync(userId, estimatedTokens, cancellationToken))
+        {
+            var (current, limit) = await _tokenTracker.GetUsageInfoAsync(userId, cancellationToken);
+            throw new QuotaExceededException(current, limit, estimatedTokens);
+        }
+
         var flashcards = new List<FlashcardResponseAiDto>(request.NumberOfFlashcards);
         var seenFronts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var remaining = request.NumberOfFlashcards;
-        var batchNumber = 0;
-        var maxBatches = request.NumberOfFlashcards * 3;
-        var consecutiveZeroAdded = 0;
         const int batchSize = 20;
 
-        // Track total tokens used
-        int totalInputTokens = 0;
-        int totalOutputTokens = 0;
+        var totalInputTokens = 0;
+        var totalOutputTokens = 0;
 
-        while (remaining > 0 && batchNumber < maxBatches)
+        for (var modelCall = 1;
+             modelCall <= MaxModelCalls && flashcards.Count < request.NumberOfFlashcards;
+             modelCall++)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            batchNumber++;
-            var wantThisBatch = Math.Min(batchSize, remaining + 2);
+            var remaining = request.NumberOfFlashcards - flashcards.Count;
+            var wantThisBatch = Math.Min(batchSize, remaining);
 
-            var (batchCards, inputTokens, outputTokens) = await RunBatchWithRetryWithTrackingAsync(
-                context, flashcards, wantThisBatch, batchNumber, cancellationToken);
+            var (batchCards, inputTokens, outputTokens) = await RunBatchWithTrackingAsync(
+                context, flashcards, wantThisBatch, modelCall, cancellationToken);
 
             totalInputTokens += inputTokens;
             totalOutputTokens += outputTokens;
@@ -122,7 +121,9 @@ public sealed class FlashcardAiService : IFlashcardAiService
 
                 if (!seenFronts.Add(normalizedFront))
                 {
-                    _logger.LogInformation("Flashcard batch {Batch} produced duplicate, skipping", batchNumber);
+                    _logger.LogInformation(
+                        "Flashcard model call {ModelCall} produced duplicate, skipping",
+                        modelCall);
                     continue;
                 }
 
@@ -130,37 +131,32 @@ public sealed class FlashcardAiService : IFlashcardAiService
                 added++;
             }
 
-            _logger.LogInformation("Flashcard batch {Batch}: wanted {Want}, accepted {Accepted}, total {Total}/{Requested}",
-                batchNumber, wantThisBatch, added, flashcards.Count, request.NumberOfFlashcards);
-
-            if (added == 0)
-            {
-                consecutiveZeroAdded++;
-                if (consecutiveZeroAdded >= 3)
-                {
-                    _logger.LogWarning("Aborting flashcard generation after 3 consecutive zero-yield batches.");
-                    break;
-                }
-            }
-            else
-            {
-                consecutiveZeroAdded = 0;
-            }
-
-            remaining = request.NumberOfFlashcards - flashcards.Count;
+            _logger.LogInformation(
+                "Flashcard model call {ModelCall}: wanted {Want}, accepted {Accepted}, total {Total}/{Requested}",
+                modelCall,
+                wantThisBatch,
+                added,
+                flashcards.Count,
+                request.NumberOfFlashcards);
         }
 
         _logger.LogInformation(
-            "Finished flashcard generation: {Got}/{Requested} after {Attempts} batches",
-            flashcards.Count, request.NumberOfFlashcards, batchNumber);
+            "Finished flashcard generation: {Got}/{Requested}",
+            flashcards.Count,
+            request.NumberOfFlashcards);
 
-        // Record token usage
-        if (totalInputTokens > 0 || totalOutputTokens > 0)
+        if (flashcards.Count != request.NumberOfFlashcards)
         {
-            await _tokenTracker.RecordUsageAsync(userId, totalInputTokens, totalOutputTokens, "flashcard", cancellationToken);
+            await RecordConsumedTokensAsync(
+                userId,
+                totalInputTokens,
+                totalOutputTokens,
+                cancellationToken);
+            throw new ExactGenerationCountException(
+                request.NumberOfFlashcards,
+                flashcards.Count);
         }
 
-        // Persist to database
         var entities = flashcards.Select(f => new AIStudyHub.Data.Entities.Flashcard
         {
             DocumentId = documentId,
@@ -174,6 +170,12 @@ public sealed class FlashcardAiService : IFlashcardAiService
         }
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
+        await RecordConsumedTokensAsync(
+            userId,
+            totalInputTokens,
+            totalOutputTokens,
+            cancellationToken);
+
         var result = entities.Select(e => new FlashcardResponseDto(
             e.Id,
             e.DocumentId,
@@ -186,11 +188,11 @@ public sealed class FlashcardAiService : IFlashcardAiService
         return result;
     }
 
-    private async Task<(List<FlashcardResponseAiDto> cards, int inputTokens, int outputTokens)> RunBatchWithRetryWithTrackingAsync(
+    private async Task<(List<FlashcardResponseAiDto> cards, int inputTokens, int outputTokens)> RunBatchWithTrackingAsync(
         string context,
         IReadOnlyList<FlashcardResponseAiDto> existing,
         int wantThisBatch,
-        int batchNumber,
+        int modelCall,
         CancellationToken cancellationToken)
     {
         var avoidBlock = existing.Count == 0
@@ -221,51 +223,54 @@ RULES:
 - Output ONLY the JSON array. Start with '[' and end with ']'.
 """;
 
-        const int maxAttempts = 2;
-        var best = new List<FlashcardResponseAiDto>();
-        var bestInputTokens = 0;
-        var bestOutputTokens = 0;
-        var lastAttemptInputTokens = 0;
-        var lastAttemptOutputTokens = 0;
+        cancellationToken.ThrowIfCancellationRequested();
 
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        TokenUsageResult usageResult;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            string aiText;
-            int inputTokens = 0;
-            int outputTokens = 0;
-            try
-            {
-                var usageResult = await _openAIService.SendMessageWithUsageAsync(prompt, 0.2f);
-                aiText = usageResult.Text;
-                inputTokens = usageResult.InputTokens;
-                outputTokens = usageResult.OutputTokens;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Flashcard batch {Batch} attempt {Attempt}: AI call failed", batchNumber, attempt);
-                continue;
-            }
-
-            lastAttemptInputTokens = inputTokens;
-            lastAttemptOutputTokens = outputTokens;
-            var parsed = ParseFlashcardArray(aiText);
-            
-            if (parsed.Count > best.Count)
-            {
-                best = parsed;
-                bestInputTokens = inputTokens;
-                bestOutputTokens = outputTokens;
-            }
-
-            if (parsed.Count >= Math.Max(1, wantThisBatch / 2))
-                return (parsed, inputTokens, outputTokens);
-
-            _logger.LogWarning("Flashcard batch {Batch} attempt {Attempt}: only {Got}/{Want} cards, retrying", batchNumber, attempt, parsed.Count, wantThisBatch);
+            usageResult = await _openAIService.SendMessageWithUsageAsync(prompt, 0.2f);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Flashcard model call {ModelCall}: AI call failed",
+                modelCall);
+            return (new List<FlashcardResponseAiDto>(), 0, 0);
         }
 
-        return (best, lastAttemptInputTokens, lastAttemptOutputTokens);
+        try
+        {
+            return (
+                ParseFlashcardArray(usageResult.Text),
+                usageResult.InputTokens,
+                usageResult.OutputTokens);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Flashcard model call {ModelCall}: parse failed",
+                modelCall);
+            return (
+                new List<FlashcardResponseAiDto>(),
+                usageResult.InputTokens,
+                usageResult.OutputTokens);
+        }
+    }
+
+    private Task RecordConsumedTokensAsync(
+        Guid userId,
+        int inputTokens,
+        int outputTokens,
+        CancellationToken cancellationToken)
+    {
+        return _tokenTracker.RecordUsageAsync(
+            userId,
+            inputTokens,
+            outputTokens,
+            "flashcard",
+            cancellationToken);
     }
 
     private static List<FlashcardResponseAiDto> ParseFlashcardArray(string aiText)
