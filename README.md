@@ -575,6 +575,14 @@ Create `AIStudyHub.API/appsettings.json` from the example. Key sections:
 
 **Do not commit real credentials.** Use user secrets, environment variables, or a secure secret store.
 
+### Document upload limit
+
+Copy or merge the `DocumentStorage` section from
+`AIStudyHub.API/appsettings.DocumentStorage.example.json` into your ignored runtime
+`AIStudyHub.API/appsettings.json`. The maximum file size is exactly 5 MiB
+(`5242880` bytes); the API permits a 6 MiB multipart request body for form-data
+overhead.
+
 ## Getting Started
 
 ```bash
