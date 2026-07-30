@@ -272,7 +272,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
     /// <summary>
     /// Generates related-topic suggestions based ONLY on the content of the retrieved document chunks.
-    /// The LLM is strictly constrained to cite phrases that appear verbatim in the excerpts.
+    /// The LLM is strictly constrained to use phrases that appear verbatim in the excerpts.
     /// </summary>
     private async Task<string> SuggestRelatedTopicsAsync(
         string question,
@@ -285,7 +285,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         var contextSnippet = string.Join(
             "\n\n",
-            chunks.Take(5).Select(c => $"[{c.Source}]\n{c.Content}"));
+            chunks.Take(5).Select(c => c.Content));
 
         var suggestionPrompt = $"""
             The user asked: "{question}"
@@ -297,6 +297,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             IMPORTANT: You may ONLY suggest topics that appear as exact words or phrases in the excerpts above.
             Do NOT use your own knowledge to add topics not found in the document.
+            Do NOT output or mention filenames, source markers, metadata labels, source lists, or citation sections.
             Based only on what appears in the excerpts above, suggest 2-4 specific questions
             the user could ask that ARE answered by the document. Each suggestion must
             contain at least one phrase that appears verbatim in the excerpts.
@@ -305,14 +306,13 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             Format: a short friendly paragraph. No invented topics.
             """;
 
-        var fallbackLabel = language == "Vietnamese"
-            ? "Gợi ý chủ đề liên quan:"
-            : "Related topics you might be interested in:";
+        var suggestion = await _openAiService.SendMessageAsync(suggestionPrompt);
+        if (!string.IsNullOrWhiteSpace(suggestion))
+            return suggestion;
 
-        var suggestion = await _openAiService.SendMessageAsync(suggestionPrompt)
-            ?? $"{fallbackLabel} {string.Join(", ", chunks.Take(3).Select(c => c.Source))}";
-
-        return suggestion;
+        return language == "Vietnamese"
+            ? "Bạn có thể đặt câu hỏi khác về nội dung được trình bày trực tiếp trong tài liệu."
+            : "You can ask another question about content presented directly in the document.";
     }
 
     /// <summary>
