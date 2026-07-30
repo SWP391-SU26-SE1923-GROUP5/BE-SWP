@@ -178,6 +178,9 @@ Responsibilities:
   model output.
 - State `không xác định được trang` for a selected document whose contexts do
   not contain any trusted page.
+- When one selected document has both known and unknown-page contexts, list the
+  known pages and add `một số đoạn không xác định được trang` for that same
+  document.
 
 Example:
 
@@ -445,10 +448,12 @@ The eventual handoff must cover at least:
 10. Confirm locations from multiple Documents are grouped independently.
 11. Confirm a selected DOCX/TXT context without trustworthy page metadata says
     that the page cannot be determined.
-12. Confirm irrelevant/no-context answers contain no location section.
-13. Confirm no API response contains citation arrays, source markers, snippets,
+12. Confirm a document with mixed known/unknown-page contexts lists its trusted
+    pages and states that some related passages have no determined page.
+13. Confirm irrelevant/no-context answers contain no location section.
+14. Confirm no API response contains citation arrays, source markers, snippets,
     stack traces, provider errors, or technical processing terms.
-14. Confirm a failed background reindex leaves an older usable Document ready.
+15. Confirm a failed background reindex leaves an older usable Document ready.
 
 ## 12. Acceptance Criteria
 
@@ -464,8 +469,8 @@ The eventual handoff must cover at least:
 - Technical processing failures are not exposed through REST or SignalR.
 - Every relevant document-grounded answer includes deterministic per-document
   location information.
-- Positive pages are grouped correctly; unknown pages are stated explicitly;
-  `chunkIndex` is never treated as a page.
+- Positive pages are grouped correctly; wholly and partially unknown page
+  metadata is stated explicitly; `chunkIndex` is never treated as a page.
 - Citation persistence and public citation contracts remain removed.
 - The latest member changes are pulled and audited, and the repository owner
   explicitly approves the revised plan before any implementation begins.
