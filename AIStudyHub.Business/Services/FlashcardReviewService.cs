@@ -62,6 +62,17 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
         if (timeSpentSeconds is < 1 or > 86_400)
             return ServiceResult<ReviewFlashcardResultDto>.Fail("Time spent must be between 1 and 86400 seconds.");
 
+        var authorizedDocumentId = await _dbContext.Flashcards
+            .AsNoTracking()
+            .Where(card => card.Id == flashcardId
+                && (card.Document.UserId == userId
+                    || card.Document.ShareStatus == "public"
+                    || card.Document.DocumentShares.Any(share => share.UserId == userId)))
+            .Select(card => (Guid?)card.DocumentId)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (!authorizedDocumentId.HasValue)
+            return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
+
         Flashcard flashcard = null!;
         FlashcardReview existing = null!;
         FlashcardReviewAttempt attempt = null!;
@@ -73,6 +84,28 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
         {
             try
             {
+                var lockedFlashcard = await _dbContext.Flashcards
+                    .FromSqlInterpolated($"""
+                        SELECT *
+                        FROM [Flashcard] WITH (UPDLOCK, HOLDLOCK)
+                        WHERE [card_id] = {flashcardId}
+                    """)
+                    .SingleOrDefaultAsync(cancellationToken);
+                if (lockedFlashcard is null
+                    || lockedFlashcard.DocumentId != authorizedDocumentId.Value)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
+                }
+
+                await _dbContext.Entry(lockedFlashcard).ReloadAsync(cancellationToken);
+                if (lockedFlashcard.DocumentId != authorizedDocumentId.Value)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
+                }
+                flashcard = lockedFlashcard;
+
                 var lockedReview = await _dbContext.FlashcardReviews
                     .FromSqlInterpolated($"""
                         SELECT *
@@ -82,35 +115,6 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
                     .SingleOrDefaultAsync(cancellationToken);
                 if (lockedReview is not null)
                     await _dbContext.Entry(lockedReview).ReloadAsync(cancellationToken);
-
-                var lockedFlashcard = await _dbContext.Flashcards
-                    .FromSqlInterpolated($"""
-                        SELECT *
-                        FROM [Flashcard] WITH (UPDLOCK, HOLDLOCK)
-                        WHERE [card_id] = {flashcardId}
-                    """)
-                    .SingleOrDefaultAsync(cancellationToken);
-                if (lockedFlashcard is null)
-                {
-                    await transaction.RollbackAsync(cancellationToken);
-                    return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
-                }
-
-                await _dbContext.Entry(lockedFlashcard).ReloadAsync(cancellationToken);
-                flashcard = lockedFlashcard;
-                var canReadDocument = await _dbContext.Documents
-                    .AsNoTracking()
-                    .AnyAsync(
-                        document => document.Id == flashcard.DocumentId
-                            && (document.UserId == userId
-                                || document.ShareStatus == "public"
-                                || document.DocumentShares.Any(share => share.UserId == userId)),
-                        cancellationToken);
-                if (!canReadDocument)
-                {
-                    await transaction.RollbackAsync(cancellationToken);
-                    return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
-                }
 
                 if (lockedReview is null)
                 {
