@@ -1,4 +1,13 @@
 @AIStudyHub.API_HostAddress = http://localhost:5000
+@accessToken = replace-with-jwt-access-token
+@userId = 00000000-0000-0000-0000-000000000000
+@quizId = 00000000-0000-0000-0000-000000000000
+@questionId = 00000000-0000-0000-0000-000000000000
+@selectedOptionText = replace-with-exact-option-text
+@submissionId = 00000000-0000-0000-0000-000000000000
+@flashcardId = 00000000-0000-0000-0000-000000000000
+@attemptId = 00000000-0000-0000-0000-000000000000
+@documentId = 00000000-0000-0000-0000-000000000000
 
 POST {{AIStudyHub.API_HostAddress}}/api/Auth/login
 Content-Type: application/json
@@ -8,5 +17,90 @@ Accept: application/json
   "email": "admin@aistudyhub.local",
   "password": "ChangeMe123!"
 }
+
+###
+
+# Submit a quiz with a persisted duration. Copy submission.id from the response.
+POST {{AIStudyHub.API_HostAddress}}/api/Quiz/{{quizId}}/submit
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "userId": "{{userId}}",
+  "quizId": "{{quizId}}",
+  "answers": "{\"{{questionId}}\":\"{{selectedOptionText}}\"}",
+  "durationSeconds": 95
+}
+
+###
+
+# List the authenticated user's submissions for the quiz.
+GET {{AIStudyHub.API_HostAddress}}/api/QuizSubmission/my?quizId={{quizId}}&offset=0&limit=20
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+###
+
+# Open the owned quiz submission and inspect questions/options/duration.
+GET {{AIStudyHub.API_HostAddress}}/api/QuizSubmission/{{submissionId}}
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+###
+
+# Review the same flashcard for the first time.
+POST {{AIStudyHub.API_HostAddress}}/api/FlashcardReview/review
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "flashcardId": "{{flashcardId}}",
+  "quality": 2,
+  "timeSpentSeconds": 18
+}
+
+###
+
+# Review the same flashcard again; this appends a second immutable attempt.
+POST {{AIStudyHub.API_HostAddress}}/api/FlashcardReview/review
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "flashcardId": "{{flashcardId}}",
+  "quality": 3,
+  "timeSpentSeconds": 11
+}
+
+###
+
+# List both review attempts. Copy an attemptId from items.
+GET {{AIStudyHub.API_HostAddress}}/api/FlashcardReview/history?flashcardId={{flashcardId}}&offset=0&limit=20
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+###
+
+# Open one immutable attempt with before/result SM-2 snapshots.
+GET {{AIStudyHub.API_HostAddress}}/api/FlashcardReview/history/{{attemptId}}
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+###
+
+# Delete every flashcard in the owned document deck.
+DELETE {{AIStudyHub.API_HostAddress}}/api/Flashcard/by-document/{{documentId}}
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+###
+
+# Confirm quiz history remains available after deck deletion.
+GET {{AIStudyHub.API_HostAddress}}/api/Quiz/{{quizId}}/history?offset=0&limit=20
+Authorization: Bearer {{accessToken}}
+Accept: application/json
 
 ###
