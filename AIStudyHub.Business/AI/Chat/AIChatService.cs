@@ -187,7 +187,6 @@ public sealed class AIChatService : IAIChatService
         int inputTokens = 0;
         int outputTokens = 0;
         bool isRelevant = false;
-        IReadOnlyList<ChatCitationDto> citations = Array.Empty<ChatCitationDto>();
 
         if (docIds != null && docIds.Count > 0)
         {
@@ -196,22 +195,6 @@ public sealed class AIChatService : IAIChatService
             inputTokens = ragResponse.InputTokens;
             outputTokens = ragResponse.OutputTokens;
             isRelevant = ragResponse.IsRelevant;
-
-            if (ragResponse.Citations is { Count: > 0 })
-            {
-                citations = ragResponse.Citations
-                    .Select(c => new ChatCitationDto(
-                        c.CitationIndex,
-                        c.DocumentId,
-                        c.Source,
-                        c.Content.Length > 300 ? c.Content[..300] : c.Content,
-                        c.PageNumber,
-                        c.Relevance,
-                        c.MatchType,
-                        c.IsHighlightable,
-                        c.Reason))
-                    .ToList();
-            }
         }
         else
         {
@@ -230,30 +213,7 @@ public sealed class AIChatService : IAIChatService
             ChatSessionId = session.Id,
             Sender = "assistant",
             Content = aiResponse,
-            IsRelevant = isRelevant,
-            Citations = citations.Select(citation =>
-            {
-                if (citation.CitationIndex <= 0
-                    || citation.DocumentId == Guid.Empty
-                    || string.IsNullOrWhiteSpace(citation.Source)
-                    || string.IsNullOrWhiteSpace(citation.Snippet))
-                {
-                    throw new InvalidOperationException("Citation snapshot is missing required source metadata.");
-                }
-
-                return new ChatMessageCitation
-                {
-                    CitationIndex = citation.CitationIndex,
-                    DocumentId = citation.DocumentId,
-                    Source = citation.Source,
-                    Snippet = citation.Snippet,
-                    PageNumber = citation.PageNumber,
-                    Relevance = citation.Relevance,
-                    MatchType = citation.MatchType,
-                    IsHighlightable = citation.IsHighlightable,
-                    Reason = citation.Reason
-                };
-            }).ToList()
+            IsRelevant = isRelevant
         };
 
         await _unitOfWork.ChatMessages.AddAsync(assistantMessage, ct);

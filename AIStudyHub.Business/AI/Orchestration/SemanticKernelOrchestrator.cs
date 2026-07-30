@@ -16,6 +16,27 @@ namespace AIStudyHub.Business.AI.Orchestration;
 
 public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 {
+    private const string RagSystemPrompt = """
+        You are 'AIStudyHub Assistant', a helpful and friendly AI tutor for AIStudyHub.
+
+        ABOUT AI STUDY HUB (System Features):
+        - AIStudyHub allows users to upload documents (PDF, Word) and chat with them to extract knowledge.
+        - Users can request a "Summary" of any uploaded document.
+
+        ANSWERING RULES:
+        - Answer from the supplied source content only.
+        - Mention a document/page only when the user explicitly asks where the content appears.
+        - Use PAGE_NUMBER only when it is a positive integer.
+        - If every supporting chunk has PAGE_NUMBER: unknown, state that the exact page is unavailable.
+        - Never infer a page from chunk order, surrounding text, document length, or model knowledge.
+        - Never output metadata labels, bracketed source markers, a source list, or a citation section.
+        - If the user asks about the AIStudyHub system features or how to use it, use the ABOUT AI STUDY HUB information above to guide them naturally.
+        - For YES/NO questions, use the source content to answer. If it answers the question indirectly, answer "Không" or "Có" with the supporting evidence instead of claiming the topic is absent.
+        - For YES/NO technology questions, if the source content does not mention X but does mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly. If the source content contains no information about the topic, say so clearly in Vietnamese.
+        - Answer in Vietnamese by default unless the user asks in English.
+        - Answer only the user's current request. Do not append follow-up offers, suggested actions, or claims about additional capabilities.
+        """;
+
     private readonly RagRetrievalPipeline _retrievalPipeline;
     private readonly IVectorStoreService _vectorStoreService;
     private readonly IFaithfulnessFilter _faithfulnessFilter;
@@ -23,7 +44,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
     private readonly IConfidenceScorer _confidenceScorer;
     private readonly SemanticKernelOptions _options;
     private readonly IOpenAIService _openAiService;
-    private readonly RagCitationFactory _citationFactory;
+    private readonly RagContextSelector _contextSelector;
     private readonly ILogger<SemanticKernelOrchestrator> _logger;
 
     public SemanticKernelOrchestrator(
@@ -34,7 +55,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         IConfidenceScorer confidenceScorer,
         IOptions<SemanticKernelOptions> options,
         IOpenAIService openAiService,
-        RagCitationFactory citationFactory,
+        RagContextSelector contextSelector,
         ILogger<SemanticKernelOrchestrator> logger)
     {
         _retrievalPipeline = retrievalPipeline;
@@ -44,7 +65,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _confidenceScorer = confidenceScorer;
         _options = options.Value;
         _openAiService = openAiService;
-        _citationFactory = citationFactory;
+        _contextSelector = contextSelector;
         _logger = logger;
     }
 
@@ -54,16 +75,15 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         // L3: Retrieval with hybrid search and reranking
         var candidates = (await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct)).ToList();
-        var citationSources = _citationFactory.Create(candidates, documentIds);
-        var resultList = citationSources.Select(source => source.Result).ToList();
-        var citations = citationSources.Select(source => source.Citation).ToList();
+        var contexts = _contextSelector.Select(candidates, documentIds);
+        var resultList = contexts.Select(context => context.Result).ToList();
         _logger.LogInformation(
-            "RAG retrieval produced {CandidateCount} candidates and {ValidCount} valid citation sources",
+            "RAG retrieval produced {CandidateCount} candidates and {ValidCount} valid context chunks",
             candidates.Count,
             resultList.Count);
         if (!resultList.Any())
         {
-            return new RagResponse("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", new(), 0.0, IsRelevant: false);
+            return new RagResponse("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", 0.0, IsRelevant: false);
         }
 
         // Programmatic relevance check — skip LLM if chunks don't match question
@@ -77,30 +97,14 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             var suggestion = await SuggestRelatedTopicsAsync(question, resultList, "Vietnamese", ct);
             var combined = $"Tài liệu không đề cập đến chủ đề này.\n\n{suggestion}";
-            return new RagResponse(combined, new(), 0.0, IsRelevant: false);
+            return new RagResponse(combined, 0.0, IsRelevant: false);
         }
 
         // L4: Generate answer using Custom LLM Prompt (Avoids duplicate KernelMemory search)
-        var contextBuilder = RagPromptContextBuilder.Build(resultList);
+        var contextBuilder = RagPromptContextBuilder.Build(contexts);
         var exhaustiveInstruction = GetExhaustiveInstruction(question);
 
-        var systemPrompt = """
-            You are 'AIStudyHub Assistant', a helpful and friendly AI tutor for AIStudyHub.
-
-            ABOUT AI STUDY HUB (System Features):
-            - AIStudyHub allows users to upload documents (PDF, Word) and chat with them to extract knowledge.
-            - Users can request a "Summary" of any uploaded document.
-
-            ANSWERING RULES:
-            1. Base your answer ONLY on the provided SOURCES. Your answer must be strictly limited to what the SOURCES contain.
-            2. When providing information, you SHOULD explicitly mention which document and page number the information comes from (e.g. "Theo trang 5 của tài liệu X...").
-            3. If the user asks about the AIStudyHub system features or how to use it, use the 'ABOUT AI STUDY HUB' info above to guide them naturally.
-            4. YES/NO questions: use the SOURCES to answer. If the SOURCES answer the question indirectly (e.g. user asks "Does it use Java?" and SOURCES say "The backend uses .NET"), answer "Không" or "Có" with the supporting evidence. Never say "Tài liệu không đề cập" if the SOURCES provide enough information to infer the answer.
-            5. YES/NO questions about technologies: if SOURCES don't mention X but do mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly (e.g. ".NET", "JavaScript", "TypeScript", "Python", "React", "Angular"). If SOURCES contain zero information about the topic at all, say so clearly in Vietnamese (e.g. "Tài liệu không đề cập đến chủ đề này.").
-            6. Answer in Vietnamese by default unless the user asks in English.
-            7. For page citations, use only AUTHORITATIVE_CITATION_PAGE. If PAGE_CITATION_AVAILABLE is false, do not mention a page and never print metadata field names or placeholders. Never infer a page number from CONTENT.
-            8. Answer only the user's current request. Do not append follow-up offers, suggested actions, or claims about additional capabilities. Never offer functionality that is not explicitly available in the current workflow. End the response after the grounded answer and citations.
-            """;
+        var systemPrompt = RagSystemPrompt;
 
         var userPrompt = $"""
             SOURCES:
@@ -124,7 +128,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
         var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
 
-        return new RagResponse(answer, citations, confidence, IsRelevant: true);
+        return new RagResponse(answer, confidence, IsRelevant: true);
     }
 
 
@@ -134,12 +138,15 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         // L3: Retrieval with hybrid search and reranking
         var candidates = (await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct)).ToList();
-        var citationSources = _citationFactory.Create(candidates, documentIds);
-        var resultList = citationSources.Select(source => source.Result).ToList();
-        var citations = citationSources.Select(source => source.Citation).ToList();
+        var contexts = _contextSelector.Select(candidates, documentIds);
+        var resultList = contexts.Select(context => context.Result).ToList();
+        _logger.LogInformation(
+            "RAG retrieval produced {CandidateCount} candidates and {ValidCount} valid context chunks",
+            candidates.Count,
+            resultList.Count);
         if (!resultList.Any())
         {
-            return new RagResponseWithUsage("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", new(), 0.0, 0, 0, IsRelevant: false);
+            return new RagResponseWithUsage("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", 0.0, 0, 0, IsRelevant: false);
         }
 
         // Programmatic relevance check — skip LLM if chunks don't match question
@@ -153,37 +160,21 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             var suggestion = await SuggestRelatedTopicsAsync(question, resultList, "Vietnamese", ct);
             var combined = $"Tài liệu không đề cập đến chủ đề này.\n\n{suggestion}";
-            return new RagResponseWithUsage(combined, new(), 0.0, 0, 0, IsRelevant: false);
+            return new RagResponseWithUsage(combined, 0.0, 0, 0, IsRelevant: false);
         }
 
         // L4: Pre-check for yes/no tech questions — short-circuit if answer is clearly "Không"
         if (TryDetectNoAnswer(question, resultList, out var noAnswer))
         {
             _logger.LogInformation("Yes/No shortcut triggered: {Answer}", noAnswer);
-            return new RagResponseWithUsage(noAnswer, citations, 1.0, 0, 0, IsRelevant: true);
+            return new RagResponseWithUsage(noAnswer, 1.0, 0, 0, IsRelevant: true);
         }
 
         // L4: Generate answer using Custom LLM Prompt
-        var contextBuilder = RagPromptContextBuilder.Build(resultList);
+        var contextBuilder = RagPromptContextBuilder.Build(contexts);
         var exhaustiveInstruction = GetExhaustiveInstruction(question);
 
-        var systemPrompt = """
-            You are 'AIStudyHub Assistant', a helpful and friendly AI tutor for AIStudyHub.
-
-            ABOUT AI STUDY HUB (System Features):
-            - AIStudyHub allows users to upload documents (PDF, Word) and chat with them to extract knowledge.
-            - Users can request a "Summary" of any uploaded document.
-
-            ANSWERING RULES:
-            1. Base your answer ONLY on the provided SOURCES. Your answer must be strictly limited to what the SOURCES contain.
-            2. When providing information, you SHOULD explicitly mention which document and page number the information comes from (e.g. "Theo trang 5 của tài liệu X...").
-            3. If the user asks about the AIStudyHub system features or how to use it, use the 'ABOUT AI STUDY HUB' info above to guide them naturally.
-            4. YES/NO questions: use the SOURCES to answer. If the SOURCES answer the question indirectly (e.g. user asks "Does it use Java?" and SOURCES say "The backend uses .NET"), answer "Không" or "Có" with the supporting evidence. Never say "Tài liệu không đề cập" if the SOURCES provide enough information to infer the answer.
-            5. YES/NO questions about technologies: if SOURCES don't mention X but do mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly (e.g. ".NET", "JavaScript", "TypeScript", "Python", "React", "Angular"). If SOURCES contain zero information about the topic at all, say so clearly in Vietnamese (e.g. "Tài liệu không đề cập đến chủ đề này.").
-            6. Answer in Vietnamese by default unless the user asks in English.
-            7. For page citations, use only AUTHORITATIVE_CITATION_PAGE. If PAGE_CITATION_AVAILABLE is false, do not mention a page and never print metadata field names or placeholders. Never infer a page number from CONTENT.
-            8. Answer only the user's current request. Do not append follow-up offers, suggested actions, or claims about additional capabilities. Never offer functionality that is not explicitly available in the current workflow. End the response after the grounded answer and citations.
-            """;
+        var systemPrompt = RagSystemPrompt;
 
         var userPrompt = $"""
             SOURCES:
@@ -210,7 +201,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
         var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
 
-        return new RagResponseWithUsage(answer, citations, confidence, totalInputTokens, totalOutputTokens, IsRelevant: true);
+        return new RagResponseWithUsage(answer, confidence, totalInputTokens, totalOutputTokens, IsRelevant: true);
     }
 
     public async Task<string> SummarizeAsync(Guid documentId, Guid userId, CancellationToken ct = default)

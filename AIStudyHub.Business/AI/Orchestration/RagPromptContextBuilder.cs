@@ -1,29 +1,21 @@
+using System.Globalization;
 using System.Text;
-using AIStudyHub.Business.Interfaces.AI.Search;
 
 namespace AIStudyHub.Business.AI.Orchestration;
 
 public static class RagPromptContextBuilder
 {
-    public static string Build(IEnumerable<SearchResult> results)
+    public static string Build(IEnumerable<RagContextSource> contexts)
     {
         var context = new StringBuilder();
-        foreach (var result in results)
+        foreach (var source in contexts)
         {
-            context.AppendLine("--- SOURCE ---");
-            context.AppendLine($"DOCUMENT: {result.Source}");
-            if (result.Metadata.TryGetValue("pageNumber", out var page))
-            {
-                context.AppendLine($"PDF_PHYSICAL_PAGE: {page}");
-                context.AppendLine($"AUTHORITATIVE_CITATION_PAGE: {page}");
-            }
-            else
-            {
-                context.AppendLine("PAGE_CITATION_AVAILABLE: false");
-            }
+            context.AppendLine("--- DOCUMENT CONTEXT ---");
+            context.AppendLine($"FILE_NAME: {source.Result.Source}");
+            context.AppendLine($"PAGE_NUMBER: {source.PageNumber?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}");
             context.AppendLine("CONTENT:");
-            context.AppendLine(result.Content);
-            context.AppendLine("--- END SOURCE ---");
+            context.AppendLine(source.Result.Content);
+            context.AppendLine("--- END CONTEXT ---");
             context.AppendLine();
         }
 
