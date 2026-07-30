@@ -100,4 +100,16 @@ public sealed class FlashcardController : ControllerBase
         await _service.DeleteAsync(id, cancellationToken);
         return NoContent();
     }
+
+    [HttpDelete("by-document/{documentId:guid}")]
+    public async Task<IActionResult> DeleteDeck(
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        await _service.DeleteDeckAsync(documentId, userId, cancellationToken);
+        return NoContent();
+    }
 }

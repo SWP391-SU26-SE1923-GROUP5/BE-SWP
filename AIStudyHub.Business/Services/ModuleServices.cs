@@ -1263,6 +1263,32 @@ public sealed class FlashcardService : IFlashcardService
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<int> DeleteDeckAsync(
+        Guid documentId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var ownedDocumentExists = await _unitOfWork.Documents
+            .Query()
+            .AsNoTracking()
+            .AnyAsync(
+                document => document.Id == documentId && document.UserId == userId,
+                cancellationToken);
+        if (!ownedDocumentExists)
+            throw new KeyNotFoundException("Document not found.");
+
+        var flashcards = await _unitOfWork.Flashcards
+            .Query()
+            .Where(flashcard => flashcard.DocumentId == documentId)
+            .ToListAsync(cancellationToken);
+
+        foreach (var flashcard in flashcards)
+            _unitOfWork.Flashcards.Remove(flashcard);
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        return flashcards.Count;
+    }
+
     public async Task<IReadOnlyList<FlashcardResponseDto>> GetByDocumentAsync(
         Guid documentId,
         Guid userId,
