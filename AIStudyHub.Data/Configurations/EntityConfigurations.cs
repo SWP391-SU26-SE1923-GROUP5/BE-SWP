@@ -499,41 +499,6 @@ internal sealed class ChatMessageConfiguration : IEntityTypeConfiguration<ChatMe
     }
 }
 
-internal sealed class ChatMessageCitationConfiguration : IEntityTypeConfiguration<ChatMessageCitation>
-{
-    public void Configure(EntityTypeBuilder<ChatMessageCitation> builder)
-    {
-        builder.ToTable("ChatMessageCitation", table =>
-        {
-            table.HasCheckConstraint(
-                "CK_ChatMessageCitation_CitationIndex_Positive",
-                "[citation_index] > 0");
-            table.HasCheckConstraint(
-                "CK_ChatMessageCitation_DocumentId_NotEmpty",
-                "[document_id] <> '00000000-0000-0000-0000-000000000000'");
-        });
-        builder.HasKey(x => x.Id);
-        builder.Property(x => x.Id).HasColumnName("citation_id");
-        builder.Property(x => x.ChatMessageId).HasColumnName("message_id").IsRequired();
-        builder.Property(x => x.CitationIndex).HasColumnName("citation_index").IsRequired();
-        builder.Property(x => x.DocumentId).HasColumnName("document_id").IsRequired();
-        builder.Property(x => x.Source).HasColumnName("source").HasMaxLength(500).IsRequired();
-        builder.Property(x => x.Snippet).HasColumnName("snippet").IsRequired();
-        builder.Property(x => x.PageNumber).HasColumnName("page_number");
-        builder.Property(x => x.Relevance).HasColumnName("relevance").IsRequired();
-        builder.Property(x => x.MatchType).HasColumnName("match_type").HasMaxLength(50).IsRequired();
-        builder.Property(x => x.IsHighlightable).HasColumnName("is_highlightable").IsRequired();
-        builder.Property(x => x.Reason).HasColumnName("reason").HasMaxLength(100);
-        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
-        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
-        builder.HasIndex(x => new { x.ChatMessageId, x.CitationIndex }).IsUnique();
-        builder.HasOne(x => x.ChatMessage)
-            .WithMany(x => x.Citations)
-            .HasForeignKey(x => x.ChatMessageId)
-            .OnDelete(DeleteBehavior.Cascade);
-    }
-}
-
 internal sealed class BadgeConfiguration : IEntityTypeConfiguration<Badge>
 {
     public void Configure(EntityTypeBuilder<Badge> builder)

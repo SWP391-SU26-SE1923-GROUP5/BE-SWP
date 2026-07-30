@@ -8,5 +8,4 @@ public sealed class ChatMessage : BaseEntity
     public bool IsRelevant { get; set; }
 
     public ChatSession ChatSession { get; set; } = null!;
-    public ICollection<ChatMessageCitation> Citations { get; set; } = new List<ChatMessageCitation>();
 }

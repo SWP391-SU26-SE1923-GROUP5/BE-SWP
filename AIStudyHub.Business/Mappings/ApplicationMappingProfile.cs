@@ -122,29 +122,7 @@ public sealed class ApplicationMappingProfile : Profile
 
         CreateMap<ChatSession, ChatSessionResponseDto>();
         CreateMap<CreateChatSessionRequestDto, ChatSession>();
-        CreateMap<ChatMessage, ChatMessageResponseDto>()
-            .ConstructUsing(src => new ChatMessageResponseDto(
-                src.Id,
-                src.ChatSessionId,
-                src.Sender,
-                src.Content,
-                src.CreatedAt,
-                src.UpdatedAt,
-                src.IsRelevant,
-                src.Citations
-                    .OrderBy(citation => citation.CitationIndex)
-                    .Select(citation => new ChatCitationDto(
-                        citation.CitationIndex,
-                        citation.DocumentId,
-                        citation.Source,
-                        citation.Snippet,
-                        citation.PageNumber,
-                        citation.Relevance,
-                        citation.MatchType,
-                        citation.IsHighlightable,
-                        citation.Reason))
-                    .ToList()))
-            .ForMember(destination => destination.Citations, option => option.Ignore());
+        CreateMap<ChatMessage, ChatMessageResponseDto>();
         CreateMap<CreateChatMessageRequestDto, ChatMessage>()
             .ForMember(dest => dest.ChatSessionId, opt => opt.MapFrom(src => src.SessionId))
             .ForMember(dest => dest.Content, opt => opt.MapFrom(src => src.Message))

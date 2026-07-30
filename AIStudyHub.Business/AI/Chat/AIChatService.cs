@@ -120,7 +120,6 @@ public sealed class AIChatService : IAIChatService
         var messages = await _unitOfWork.ChatMessages
             .Query()
             .Where(message => message.ChatSessionId == sessionId)
-            .Include(message => message.Citations)
             .OrderBy(message => message.CreatedAt)
             .AsNoTracking()
             .ToListAsync(ct);
