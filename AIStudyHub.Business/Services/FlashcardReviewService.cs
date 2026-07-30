@@ -51,8 +51,20 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             return ServiceResult<ReviewFlashcardResultDto>.Fail("User id is required.");
         if (flashcardId == Guid.Empty)
             return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard id is required.");
+        if (!Enum.IsDefined(quality))
+            return ServiceResult<ReviewFlashcardResultDto>.Fail("Review quality is invalid.");
+        if (timeSpentSeconds is < 1 or > 86_400)
+            return ServiceResult<ReviewFlashcardResultDto>.Fail("Time spent must be between 1 and 86400 seconds.");
 
-        var flashcard = await _unitOfWork.Flashcards.GetByIdAsync(flashcardId, cancellationToken);
+        var flashcard = await _unitOfWork.Flashcards
+            .Query()
+            .Include(card => card.Document)
+            .FirstOrDefaultAsync(
+                card => card.Id == flashcardId
+                    && (card.Document.UserId == userId
+                        || card.Document.ShareStatus == "public"
+                        || card.Document.DocumentShares.Any(share => share.UserId == userId)),
+                cancellationToken);
         if (flashcard is null)
             return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
 
@@ -60,6 +72,7 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             .Query()
             .FirstOrDefaultAsync(r => r.UserId == userId && r.FlashcardId == flashcardId, cancellationToken);
 
+        var isNewReview = existing is null;
         if (existing is null)
         {
             existing = new FlashcardReview
@@ -76,29 +89,43 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             await _unitOfWork.FlashcardReviews.AddAsync(existing, cancellationToken);
         }
 
+        var previousEaseFactor = existing.EaseFactor;
+        var previousInterval = existing.Interval;
+        var previousRepetitions = existing.Repetitions;
+        var previousNextReviewDate = existing.NextReviewDate;
+
         ApplySm2(existing, quality);
 
+        var attempt = new FlashcardReviewAttempt
+        {
+            Id = Guid.NewGuid(),
+            UserId = userId,
+            FlashcardId = flashcardId,
+            Quality = quality,
+            TimeSpentSeconds = timeSpentSeconds,
+            PreviousEaseFactor = previousEaseFactor,
+            ResultEaseFactor = existing.EaseFactor,
+            PreviousInterval = previousInterval,
+            ResultInterval = existing.Interval,
+            PreviousRepetitions = previousRepetitions,
+            ResultRepetitions = existing.Repetitions,
+            PreviousNextReviewDate = previousNextReviewDate,
+            ResultNextReviewDate = existing.NextReviewDate,
+            XpEarned = 0,
+            CreatedAt = DateTime.UtcNow
+        };
+        await _unitOfWork.FlashcardReviewAttempts.AddAsync(attempt, cancellationToken);
+
         // Track lapses on the flashcard (for leech detection)
+        var shouldCreateLeechRecommendation = false;
         if ((int)quality < 3)
         {
             flashcard.Lapses += 1;
             _unitOfWork.Flashcards.Update(flashcard);
-
-            // Phase 4b: auto-create LeechCard recommendation when lapses threshold (4) is first crossed
-            if (_recommendationService != null && flashcard.Lapses == 4)
-            {
-                try
-                {
-                    await _recommendationService.CreateLeechCardRecommendationAsync(userId, flashcardId, cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to create leech recommendation for user {UserId}, card {FlashcardId}", userId, flashcardId);
-                }
-            }
+            shouldCreateLeechRecommendation = flashcard.Lapses == 4;
         }
 
-        if (existing.Id != Guid.Empty && _unitOfWork.FlashcardReviews.Query().Any(r => r.Id == existing.Id))
+        if (!isNewReview)
         {
             _unitOfWork.FlashcardReviews.Update(existing);
         }
@@ -115,9 +142,27 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
 
         var newlyUnlocked = new List<AchievementDto>();
 
+        // Run only after the review state and immutable attempt have been saved;
+        // this hook performs its own SaveChangesAsync on the shared unit of work.
+        if (_recommendationService != null && shouldCreateLeechRecommendation)
+        {
+            try
+            {
+                await _recommendationService.CreateLeechCardRecommendationAsync(
+                    userId,
+                    flashcardId,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to create leech recommendation for user {UserId}, card {FlashcardId}", userId, flashcardId);
+            }
+        }
+
         // Plan C2: award XP and accumulate TimeSpentSeconds. Wrapped so a failure
         // does not roll back the SM-2 schedule the user just saw.
         int xpEarned = 0;
+        var xpAwardSucceeded = false;
         if (_gamificationService is not null)
         {
             try
@@ -143,6 +188,7 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
                 if (xpResult is { Success: true, Data: not null })
                 {
                     xpEarned = xpResult.Data.XpEarned;
+                    xpAwardSucceeded = true;
                 }
             }
             catch (Exception ex)
@@ -166,6 +212,23 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Badge evaluation failed for user {UserId}, card {FlashcardId}", userId, flashcardId);
+            }
+        }
+
+        if (xpAwardSucceeded)
+        {
+            attempt.XpEarned = xpEarned;
+            _unitOfWork.FlashcardReviewAttempts.Update(attempt);
+            try
+            {
+                await _unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to reconcile XP for flashcard review attempt {AttemptId}",
+                    attempt.Id);
             }
         }
 
