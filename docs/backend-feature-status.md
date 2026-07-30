@@ -14,3 +14,14 @@
 | Learning-history schema | Generated, pending deployment | Migration `20260730063555_AddLearningHistoryDetails` must be applied manually by the repository owner to each intended database. |
 
 The backend build succeeds. No database migration is applied automatically by the application or by the feature implementation workflow.
+
+## Page-aware chat and hybrid search
+
+| Capability | Status | Notes |
+| --- | --- | --- |
+| Reduced chat response | Implemented | Create-message and history responses contain message identity, sender, content, timestamps, and relevance only; no `citations` property is returned. |
+| Grounded normal answers | Implemented | Normal answers do not automatically name documents/pages or append source markers and source lists. |
+| Explicit page questions | Implemented | A page may be stated only from positive PDF/OCR `pageNumber` metadata; DOCX, TXT, and legacy chunks without that metadata report that the exact page is unavailable. `chunkIndex` is never treated as a page. |
+| Hybrid search diagnostics | Implemented | Results retain `PageNumber` and `ChunkIndex` but no longer expose `IsHighlightable`. |
+| Existing chat text | Preserved | `RemoveChatCitations` drops only obsolete source-snapshot rows; stored `ChatMessage` and `ChatSession` rows survive. |
+| Chat schema cleanup | Generated, pending deployment | Migration `20260730071539_RemoveChatCitations` must be applied manually by the repository owner to each intended database. |

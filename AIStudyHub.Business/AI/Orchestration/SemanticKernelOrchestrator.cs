@@ -29,7 +29,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         - Use PAGE_NUMBER only when it is a positive integer.
         - If every supporting chunk has PAGE_NUMBER: unknown, state that the exact page is unavailable.
         - Never infer a page from chunk order, surrounding text, document length, or model knowledge.
-        - Never output metadata labels, bracketed source markers, a source list, or a citation section.
+        - Never output metadata labels, bracketed source markers, a source list, or a source-attribution section.
         - If the user asks about the AIStudyHub system features or how to use it, use the ABOUT AI STUDY HUB information above to guide them naturally.
         - For YES/NO questions, use the source content to answer. If it answers the question indirectly, answer "Không" or "Có" with the supporting evidence instead of claiming the topic is absent.
         - For YES/NO technology questions, if the source content does not mention X but does mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly. If the source content contains no information about the topic, say so clearly in Vietnamese.
@@ -297,7 +297,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             IMPORTANT: You may ONLY suggest topics that appear as exact words or phrases in the excerpts above.
             Do NOT use your own knowledge to add topics not found in the document.
-            Do NOT output or mention filenames, source markers, metadata labels, source lists, or citation sections.
+            Do NOT output or mention filenames, source markers, metadata labels, source lists, or reference sections.
             Based only on what appears in the excerpts above, suggest 2-4 specific questions
             the user could ask that ARE answered by the document. Each suggestion must
             contain at least one phrase that appears verbatim in the excerpts.

@@ -534,7 +534,7 @@ sequenceDiagram
     end
 ```
 
-#### L2-L5 — Legacy RAG Query Flow (Chat with Document)
+#### L2-L5 — Page-Aware RAG Query Flow (Chat with Document)
 
 > Current API contract: `POST /api/AI/rag/ask` is search-only and returns reranked chunks. Chat answer generation uses `POST /api/Chat/messages`. The sequence below documents the orchestration used by the chat flow, not the search-only endpoint.
 
@@ -542,6 +542,7 @@ sequenceDiagram
 sequenceDiagram
     participant Client
     participant Controller as ChatController
+    participant Chat as AIChatService
     participant Orch as SemanticKernelOrchestrator
     participant Hybrid as HybridSearchService
     participant EmbedSvc as EmbeddingService
@@ -554,7 +555,8 @@ sequenceDiagram
     participant Score as ConfidenceScorer
 
     Client->>Controller: POST /api/Chat/messages { sessionId, message }
-    Controller->>Orch: AskWithTrackingAsync(userId, documentIds, question, history)
+    Controller->>Chat: CreateMessageAsync(request, userId)
+    Chat->>Orch: AskWithTrackingAsync(userId, documentIds, question, history)
 
     rect rgb(235, 245, 255)
         Note over Orch,Qdrant: L2 — Retrieval (Hybrid Search + Reranking)
@@ -579,16 +581,17 @@ sequenceDiagram
         Rerank-->>Orch: List<SearchResult> (5 items, adjusted scores)
 
         alt No relevant results
-            Orch-->>Controller: RagResponse("no info found", confidence=0)
+            Orch-->>Chat: RagResponse("no info found", confidence=0)
         end
     end
 
     rect rgb(240, 255, 240)
         Note over Orch,LLM: L3 — Generation (LLM Prompt Assembly)
 
-        Orch->>Orch: Build context string<br/>"--- Source: fileName ---\nchunkText"
-        Orch->>Orch: Build system prompt:<br/>- Answer ONLY from SOURCES<br/>- Guide on AIStudyHub features<br/>- Never reveal backend details<br/>- Vietnamese by default
-        Orch->>Orch: Build user prompt:<br/>"SOURCES: [chunks]\nQUESTION: [question]"
+        Orch->>Orch: Validate document metadata + allowlist<br/>Deduplicate and preserve retrieval order
+        Orch->>Orch: Build context with FILE_NAME,<br/>positive PAGE_NUMBER or unknown, and CONTENT
+        Orch->>Orch: Build shared system prompt:<br/>- Answer only from supplied content<br/>- Name document/page only for explicit location questions<br/>- Never infer a page from chunk order<br/>- No source markers, lists, or metadata labels<br/>- Vietnamese by default
+        Orch->>Orch: Build user prompt:<br/>"SOURCE CONTENT: [chunks]\nQUESTION: [question]"
 
         Orch->>LLM: SendMessageAsync(systemPrompt + userPrompt)
         Note over LLM: OpenAI Chat Completions API<br/>Sends full prompt to configured model
@@ -612,11 +615,14 @@ sequenceDiagram
     rect rgb(250, 240, 255)
         Note over Orch,Client: L5 — Response
 
-        Orch->>Orch: Build CitationInfo[]<br/>from searchResults
-        Orch-->>Controller: RagResponse(answer, citations, confidence)
-        Controller-->>Client: 200 OK
+        Orch-->>Chat: RagResponseWithUsage(answer, confidence,<br/>tokens, isRelevant)
+        Chat->>Chat: Persist ChatMessage text + relevance
+        Chat-->>Controller: ChatMessageResponseDto
+        Controller-->>Client: ChatMessageResponseDto<br/>(no source array or highlight metadata)
     end
 ```
+
+`pageNumber` remains internal retrieval context for chat and is used only when it is a positive value on a supporting PDF/OCR chunk and the user explicitly asks where content appears. DOCX, TXT, and legacy chunks without trustworthy page metadata produce an honest “exact page unavailable” answer. The search-only hybrid endpoint continues to expose nullable `PageNumber` and `ChunkIndex` for diagnostics, but not `IsHighlightable`. Removing the obsolete chat-citation table leaves existing `ChatMessage.Content` and sessions intact.
 
 #### L6 — Flashcard Generation Flow
 

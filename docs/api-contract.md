@@ -1,4 +1,4 @@
-# Learning History and Flashcard Deck API Contract
+# Backend API Contract
 
 All routes below require a bearer token. User ownership is derived from the JWT; clients cannot select another user by query string or request body.
 
@@ -116,6 +116,48 @@ Only the document owner may delete its deck. Missing and other-user documents bo
 
 Deletion removes every flashcard for that document. Database cascades remove each card's current `FlashcardReview` and immutable `FlashcardReviewAttempt` rows. It does not delete or modify the document, uploaded file, vector chunks, quizzes, questions, answers, quiz submissions, study logs, subject, or other document resources.
 
+## Page-aware document chat
+
+`POST /api/Chat/messages` and `GET /api/Chat/sessions/{sessionId}/messages` return the same reduced `ChatMessageResponseDto` shape:
+
+```json
+{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "chatSessionId": "00000000-0000-0000-0000-000000000000",
+  "sender": "assistant",
+  "content": "Grounded answer text",
+  "createdAt": "2026-07-30T07:30:00Z",
+  "updatedAt": null,
+  "isRelevant": true
+}
+```
+
+Chat responses do not include a `citations` property, source snippets, highlight flags, source arrays, or bracketed source markers. Normal answers do not automatically name a document or page.
+
+When the user explicitly asks where content appears, the assistant may state a page only from a positive `pageNumber` attached to a supporting PDF or OCR chunk. It never derives a page from `chunkIndex`, text order, surrounding text, document length, or model knowledge. If every supporting chunk has no trustworthy page metadata—as with DOCX, TXT, or legacy vectors—the answer states that the exact page is unavailable.
+
+Migration `20260730071539_RemoveChatCitations` drops only the obsolete chat-citation table. It does not delete or rewrite `ChatMessage`, `ChatSession`, or stored message text, so chat history content remains available after deployment.
+
+## Hybrid document search
+
+`POST /api/AI/rag/ask` remains a search-only endpoint. Each item in `results` contains exactly these fields:
+
+```json
+{
+  "content": "matching document text",
+  "score": 0.85,
+  "documentId": "00000000-0000-0000-0000-000000000000",
+  "fileName": "document.pdf",
+  "pageNumber": 12,
+  "chunkIndex": 22,
+  "matchType": "semantic"
+}
+```
+
+`pageNumber` and `chunkIndex` remain diagnostic retrieval metadata and may be `null`. Hybrid search no longer returns `isHighlightable`.
+
 ## Schema deployment
 
 Migration `20260730063555_AddLearningHistoryDetails` adds nullable quiz duration storage and the flashcard review-attempt table. The application does not apply this migration as part of these API requests; the repository owner must apply it explicitly to the target database before using the new persistence paths.
+
+Migration `20260730071539_RemoveChatCitations` removes the obsolete chat-citation table while preserving chat sessions and message text. It is also generated but not applied automatically.

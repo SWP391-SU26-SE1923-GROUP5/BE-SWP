@@ -1,6 +1,6 @@
 # AIStudyHub - Frontend Integration Guide
 
-## AI Notebook session reload and persistent citations
+## AI Notebook session reload and page-aware answers
 
 Frontend route khuyen nghi: `/ai-notebook/{sessionId}`.
 
@@ -13,33 +13,31 @@ GET /api/Chat/sessions/{sessionId}/documents
 
 Backend tra `404` neu session khong ton tai hoac khong thuoc user dang dang nhap. Khong tu dong chon Notebook moi nhat khi URL da co `sessionId`.
 
-Moi assistant message tra `citations` la mot array khong null. Marker `[n]` duoc tra bang truong `citationIndex`, khong suy ra tu vi tri phan tu trong array. Khi click `[n]`, Frontend tim citation co `citationIndex === n`, sau do dung `documentId` cua citation do de mo tai lieu.
-
-Contract citation giong nhau cho ca response tao message va response lich su:
+Response tao message va response lich su dung cung contract `ChatMessageResponseDto`:
 
 ```json
 {
-  "citationIndex": 1,
-  "documentId": "d9b8775b-45f4-4a4d-a257-43ea7e730fda",
-  "source": "document.pdf",
-  "snippet": "Exact source text",
-  "pageNumber": 12,
-  "relevance": 0.91,
-  "matchType": "hybrid",
-  "isHighlightable": true,
-  "reason": null
+  "id": "11111111-1111-1111-1111-111111111111",
+  "chatSessionId": "22222222-2222-2222-2222-222222222222",
+  "sender": "assistant",
+  "content": "Noi dung tra loi dua tren tai lieu.",
+  "createdAt": "2026-07-30T07:30:00Z",
+  "updatedAt": null,
+  "isRelevant": true
 }
 ```
 
-Sau khi tim dung citation, Frontend chuyen den `pageNumber` neu co va chi highlight `snippet` khi `isHighlightable` la `true`. Neu khong highlight duoc, van mo dung tai lieu/trang va co the hien thi `reason`. `documentId` luon la GUID tai lieu that, khong phai so marker nhu `"1"`.
+Response khong co `citations`, source snippet, marker `[n]`, hoac highlight metadata. Frontend chi render `content`; khong can parser marker hoac UI source list. Cau tra loi thong thuong khong tu dong neu ten file/trang.
 
-Message tao truoc migration persistent citations khong duoc backfill va se tra `citations: []`.
+Chi khi user hoi ro noi dung nam o trang nao, backend moi co the dua trang vao `content`, va chi dung `pageNumber` duong tu chunk PDF/OCR. Khong suy ra trang tu `chunkIndex`. Neu DOCX, TXT, hoac vector cu khong co page metadata dang tin cay, `content` se noi ro khong xac dinh duoc trang chinh xac.
 
-> **Phiên bản**: cập nhật 2026-07-18
+Migration `20260730071539_RemoveChatCitations` chi xoa bang metadata cu; lich su `ChatMessage.content` va session van con sau khi deploy.
+
+> **Phiên bản**: cập nhật 2026-07-30
 > **Backend**: ASP.NET Core 8 Web API
 > **Auth**: JWT Bearer (access + refresh) + External (Google, GitHub)
 > **Real-time**: SignalR tại `/hubs/notifications`
-> **Database**: EF Core (citation contract mới nhất: `20260718140849_CompleteChatCitationFlow`)
+> **Database**: EF Core (page-aware chat schema: `20260730071539_RemoveChatCitations`)
 
 Document này chia làm 3 phần:
 1. **Phần 1 (mục 1-5)**: Mô tả luồng nghiệp vụ bằng ngôn ngữ dễ hiểu cho BA/QC/Frontend dev.
@@ -312,7 +310,7 @@ sequenceDiagram
 | **Danh sách chat session (sidebar)** | `GET /api/Chat/sessions` | |
 | **Tạo session mới** | `POST /api/Chat/sessions { sessionTitle }` | |
 | **Mở 1 session, xem messages** | `GET /api/Chat/sessions/{sessionId}/messages` | |
-| **Gửi message trong session** | `POST /api/Chat/messages { sessionId, message }` | Response là message AI; citation marker dùng `citationIndex`, viewer dùng `documentId` |
+| **Gửi message trong session** | `POST /api/Chat/messages { sessionId, message }` | Response là message AI rút gọn; render `content`, không có source array/highlight metadata |
 
 ### 5.5.4. Flashcard & Spaced Repetition
 
@@ -885,12 +883,13 @@ Hybrid search trên các tài liệu của user. Endpoint này không gọi chat
       "fileName": "document.pdf",
       "pageNumber": 12,
       "chunkIndex": 22,
-      "matchType": "semantic",
-      "isHighlightable": true
+      "matchType": "semantic"
     }
   ]
 }
 ```
+
+`pageNumber` va `chunkIndex` la metadata chan doan cua hybrid search va co the la `null`. Response khong co `isHighlightable`.
 
 ### 10.2. POST `/api/AI/rag/summarize`
 
@@ -1219,11 +1218,13 @@ Lấy lịch sử messages của 1 session.
 
 ### 17.4. POST `/api/Chat/messages`
 
-Gửi message mới theo hai giai đoạn: backend lưu user message trước khi gọi AI; sau đó lưu assistant message và toàn bộ citation snapshots trong cùng một `SaveChangesAsync`.
+Gửi message mới theo hai giai đoạn: backend lưu user message trước khi gọi AI; sau đó lưu assistant message với nội dung trả lời và `isRelevant`. Token accounting vẫn được ghi từ kết quả orchestration.
 
 **Body**: `{ "sessionId": "guid", "message": "string" }`
 
-**Response 200**: `ChatMessageResponseDto` (AI response). `citations` dùng cùng contract đã mô tả ở đầu tài liệu: tìm marker `[n]` bằng `citationIndex == n`, rồi mở file bằng GUID `documentId`.
+**Response 200**: `ChatMessageResponseDto` với `id`, `chatSessionId`, `sender`, `content`, `createdAt`, `updatedAt`, và `isRelevant`. Không có `citations`, marker nguồn, source snippet, hay highlight metadata. Câu trả lời bình thường không tự nêu file/trang; câu hỏi vị trí chỉ nhận trang dương từ metadata PDF/OCR, còn DOCX/TXT/legacy không có trang tin cậy sẽ báo không xác định được trang chính xác.
+
+`GET /api/Chat/sessions/{sessionId}/messages` trả cùng response shape. Sau migration loại bỏ bảng metadata cũ, text của các message đã lưu vẫn được giữ nguyên.
 
 ---
 

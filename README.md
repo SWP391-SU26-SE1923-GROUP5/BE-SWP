@@ -54,18 +54,20 @@ Data access layer. Holds **21 entity classes** (all inheriting `BaseEntity`, exc
 | **Subject Management** | Authenticated students create, list, update, and delete only their own Subjects |
 | **User Management** | CRUD, profile update, tier info, document sharing |
 | **Document Management** | Upload (multipart/form-data), text extraction (PDF/DOCX/TXT/MD), chunking, versioning, sharing, vote/report |
-| **RAG Pipeline** | Hybrid search (dense + sparse BM25 via Qdrant RRF), reranking, Semantic Kernel orchestration, guardrails (faithfulness, grounding, confidence), document Q&A, summarization |
+| **RAG Pipeline** | Hybrid search (dense + sparse BM25 via Qdrant RRF), reranking, validated context selection, page-aware Semantic Kernel orchestration, guardrails (faithfulness, grounding, confidence), document Q&A, summarization |
 | **Flashcard Generation** | AI-powered flashcard creation from document chunks, auto-persisted |
 | **Spaced Repetition Review** | SM-2 algorithm — per-user schedule (ease factor / interval / repetitions), due-today list, daily counts |
 | **Quiz Generation** | AI-powered multiple-choice quiz creation, auto-persisted with questions and answers |
 | **Quiz Submission** | Submit answers, auto-grading, score tracking |
-| **AI Chat** | Session-based chat with document context, RAG-augmented responses |
+| **AI Chat** | Session-based chat with document context; responses contain answer text and relevance without citation arrays or highlight metadata |
 | **Gamification** | XP / level / current-best streak, leaderboard, activity logging via `StudyLog` |
 | **Recommendations** | Per-subject mastery analytics + AI-driven study suggestions |
 | **Notifications** | DB-backed list + real-time push via SignalR `/hubs/notifications` |
 | **Payments** | VNPay checkout, webhook processing, tier upgrade on success |
 | **Tier Memberships** | Subscription tiers with storage and AI token quotas |
 | **Admin** | Dashboard data, document reindexing, user/document/report moderation |
+
+Normal document-chat answers do not automatically name files or pages. When a user explicitly asks for a location, the assistant may state only a positive page number carried by a supporting PDF/OCR chunk; DOCX, TXT, and legacy chunks without trustworthy page metadata report that the exact page is unavailable. Hybrid-search diagnostics still return `pageNumber` and `chunkIndex`, but not `isHighlightable`. Removing the obsolete chat-citation schema preserves existing session and message text.
 
 ## AI Architecture
 
@@ -118,7 +120,8 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Ctrl as RagController
+    participant Ctrl as ChatController
+    participant Chat as AIChatService
     participant Orch as SemanticKernelOrchestrator
     participant Hybrid as HybridSearchService
     participant Embed as EmbeddingService
@@ -130,8 +133,9 @@ sequenceDiagram
     participant Ground as GroundingVerifier
     participant Score as ConfidenceScorer
 
-    Client->>Ctrl: POST /api/Rag/chat { question }
-    Ctrl->>Orch: AskAsync(userId, question)
+    Client->>Ctrl: POST /api/Chat/messages { sessionId, message }
+    Ctrl->>Chat: CreateMessageAsync(request, userId)
+    Chat->>Orch: AskWithTrackingAsync(userId, documentIds, question, history)
 
     rect rgb(235, 245, 255)
         Note over Orch,Qdrant: L2 — Retrieval
@@ -152,7 +156,7 @@ sequenceDiagram
     rect rgb(240, 255, 240)
         Note over Orch,LLM: L3 — Generation
 
-        Orch->>Orch: Build context + system prompt + user prompt
+        Orch->>Orch: Select validated chunks + build page-aware context and prompt
         Orch->>LLM: SendMessageAsync(systemPrompt + userPrompt)
         Note over LLM: OpenAI Chat Completions API
         LLM-->>Orch: answer
@@ -169,8 +173,10 @@ sequenceDiagram
         Note over Score: Combined + clamped [0,1]
     end
 
-    Orch-->>Ctrl: RagResponse(answer, citations, confidence)
-    Ctrl-->>Client: 200 OK
+    Orch-->>Chat: RagResponseWithUsage(answer, confidence, tokens, isRelevant)
+    Chat->>Chat: Persist answer text + relevance
+    Chat-->>Ctrl: ChatMessageResponseDto
+    Ctrl-->>Client: ChatMessageResponseDto (no source array)
 ```
 
 #### L6 — Flashcard Generation

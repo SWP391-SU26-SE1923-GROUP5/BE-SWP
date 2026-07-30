@@ -10,6 +10,8 @@
 @flashcardId = 55555555-5555-5555-5555-555555555555
 @attemptId = 66666666-6666-6666-6666-666666666666
 @documentId = 77777777-7777-7777-7777-777777777777
+@pdfSessionId = 88888888-8888-8888-8888-888888888888
+@missingPageSessionId = 99999999-9999-9999-9999-999999999999
 
 POST {{AIStudyHub.API_HostAddress}}/api/Auth/login
 Content-Type: application/json
@@ -104,5 +106,67 @@ Accept: application/json
 GET {{AIStudyHub.API_HostAddress}}/api/Quiz/{{quizId}}/history?offset=0&limit=20
 Authorization: Bearer {{accessToken}}
 Accept: application/json
+
+###
+
+# Normal grounded chat: use a session with an attached processed document.
+# Verify content has no source marker/list and the response has no citations property.
+POST {{AIStudyHub.API_HostAddress}}/api/Chat/messages
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "sessionId": "{{pdfSessionId}}",
+  "message": "Hãy giải thích ngắn gọn nội dung chính của tài liệu."
+}
+
+###
+
+# Explicit page question against a PDF/OCR session whose supporting chunk has a positive pageNumber.
+POST {{AIStudyHub.API_HostAddress}}/api/Chat/messages
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "sessionId": "{{pdfSessionId}}",
+  "message": "Nội dung này nằm ở trang nào?"
+}
+
+###
+
+# Same page question against DOCX/TXT or legacy vectors without trustworthy page metadata.
+# Verify the answer says the exact page is unavailable.
+POST {{AIStudyHub.API_HostAddress}}/api/Chat/messages
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "sessionId": "{{missingPageSessionId}}",
+  "message": "Nội dung này nằm ở trang nào?"
+}
+
+###
+
+# History after applying RemoveChatCitations: stored message text remains, with no citations property.
+GET {{AIStudyHub.API_HostAddress}}/api/Chat/sessions/{{pdfSessionId}}/messages
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+###
+
+# Search-only hybrid diagnostics: results retain pageNumber/chunkIndex and have no isHighlightable field.
+POST {{AIStudyHub.API_HostAddress}}/api/AI/rag/ask
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "Nội dung chính của tài liệu là gì?",
+  "documentIds": ["{{documentId}}"],
+  "topK": 5
+}
 
 ###

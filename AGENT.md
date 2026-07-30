@@ -295,6 +295,9 @@ Enums (7+):
 - Hybrid search: use `IHybridSearchService` — combines dense + sparse (BM25) via RRF.
 - Reranking: use `IRerankingService` — applies positional decay after initial retrieval.
 - RAG orchestration: use `ISemanticKernelOrchestrator` — handles L3-L5 pipeline.
+- RAG context selection must reject invalid/missing document IDs, enforce any supplied document allowlist, reject blank source/content, and deduplicate chunks before prompting.
+- Chat message responses contain answer text and relevance only; do not add citation arrays, source snippets, marker indexes, or highlightability metadata back to the public contract.
+- Normal chat answers must not automatically name a document/page. State a page only for an explicit location question and only from a positive `pageNumber`; never reinterpret `chunkIndex` as a page. When supporting chunks have no trustworthy page metadata, state that the exact page is unavailable.
 - AI generators: `IQuizAiService` and `IFlashcardAiService` require integer `numberOfQuestions` / `numberOfFlashcards` values from 1 through 20; they may generate only from the owner's `Done` document with nonempty processed context.
 - Generation is all-or-nothing: persist exactly the requested flashcards or quiz questions, or return `422 Unprocessable Entity` with no partial rows. Flashcard generation returns the persisted cards; quiz generation returns metadata with `Questions` null, so clients fetch `GET /api/Quiz/{id}` for persisted question items.
 - Guardrails: `IFaithfulnessFilter`, `IGroundingVerifier`, `IConfidenceScorer` validate responses.
