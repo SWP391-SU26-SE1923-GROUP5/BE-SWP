@@ -24,7 +24,7 @@ internal sealed class PatchUserCommandHandler : IRequestHandler<PatchUserCommand
             request.Request.FullName ?? existing.FullName,
             request.Request.DateOfBirth ?? existing.DateOfBirth,
             request.Request.CurrentStorageCapacity ?? existing.CurrentStorageCapacity,
-            request.Request.CurrentAiTokenUsage ?? existing.CurrentAiTokenUsage,
+            existing.CurrentAiTokenUsage,
             request.Request.Status ?? existing.Status,
             request.Request.Role ?? existing.Role);
 

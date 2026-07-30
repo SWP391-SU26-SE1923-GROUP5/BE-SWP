@@ -44,7 +44,7 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<CreateUserRequestDto, User>()
             .ForMember(dest => dest.CurrentAiTokenUsage, opt => opt.MapFrom(src => src.CurrentAiTokenUsage));
         CreateMap<UpdateUserRequestDto, User>()
-            .ForMember(dest => dest.CurrentAiTokenUsage, opt => opt.MapFrom(src => src.CurrentAiTokenUsage));
+            .ForMember(dest => dest.CurrentAiTokenUsage, opt => opt.Ignore());
 
         CreateMap<Document, DocumentResponseDto>()
             .ConstructUsing(src => new DocumentResponseDto(
