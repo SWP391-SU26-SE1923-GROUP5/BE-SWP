@@ -110,7 +110,7 @@ Accept: application/json
 ###
 
 # Normal grounded chat: use a session with an attached processed document.
-# Verify content has no source marker/list and the response has no citations property.
+# Verify content has no source marker/list and the response has no removed source-array property.
 POST {{AIStudyHub.API_HostAddress}}/api/Chat/messages
 Authorization: Bearer {{accessToken}}
 Content-Type: application/json
@@ -150,14 +150,14 @@ Accept: application/json
 
 ###
 
-# History after applying RemoveChatCitations: stored message text remains, with no citations property.
+# History after applying the schema-removal migration: stored message text remains, with no removed source-array property.
 GET {{AIStudyHub.API_HostAddress}}/api/Chat/sessions/{{pdfSessionId}}/messages
 Authorization: Bearer {{accessToken}}
 Accept: application/json
 
 ###
 
-# Search-only hybrid diagnostics: results retain pageNumber/chunkIndex and have no isHighlightable field.
+# Search-only hybrid diagnostics: results retain pageNumber/chunkIndex and have no highlight field.
 POST {{AIStudyHub.API_HostAddress}}/api/AI/rag/ask
 Authorization: Bearer {{accessToken}}
 Content-Type: application/json
