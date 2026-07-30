@@ -221,6 +221,54 @@ internal sealed class FlashcardReviewConfiguration : IEntityTypeConfiguration<Fl
     }
 }
 
+internal sealed class FlashcardReviewAttemptConfiguration : IEntityTypeConfiguration<FlashcardReviewAttempt>
+{
+    public void Configure(EntityTypeBuilder<FlashcardReviewAttempt> builder)
+    {
+        builder.ToTable("FlashcardReviewAttempt");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("attempt_id");
+        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.FlashcardId).HasColumnName("card_id").IsRequired();
+        builder.Property(x => x.Quality)
+            .HasColumnName("quality")
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .IsRequired();
+        builder.Property(x => x.TimeSpentSeconds).HasColumnName("time_spent_seconds");
+        builder.Property(x => x.PreviousEaseFactor).HasColumnName("previous_ease_factor").IsRequired();
+        builder.Property(x => x.ResultEaseFactor).HasColumnName("result_ease_factor").IsRequired();
+        builder.Property(x => x.PreviousInterval).HasColumnName("previous_interval").IsRequired();
+        builder.Property(x => x.ResultInterval).HasColumnName("result_interval").IsRequired();
+        builder.Property(x => x.PreviousRepetitions).HasColumnName("previous_repetitions").IsRequired();
+        builder.Property(x => x.ResultRepetitions).HasColumnName("result_repetitions").IsRequired();
+        builder.Property(x => x.PreviousNextReviewDate)
+            .HasColumnName("previous_next_review_date")
+            .HasColumnType("datetime")
+            .IsRequired();
+        builder.Property(x => x.ResultNextReviewDate)
+            .HasColumnName("result_next_review_date")
+            .HasColumnType("datetime")
+            .IsRequired();
+        builder.Property(x => x.XpEarned).HasColumnName("xp_earned").IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+
+        builder.HasIndex(x => new { x.UserId, x.CreatedAt });
+        builder.HasIndex(x => new { x.UserId, x.FlashcardId, x.CreatedAt });
+
+        builder.HasOne(x => x.User)
+            .WithMany()
+            .HasForeignKey(x => x.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(x => x.Flashcard)
+            .WithMany()
+            .HasForeignKey(x => x.FlashcardId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
 internal sealed class UserStatsConfiguration : IEntityTypeConfiguration<UserStats>
 {
     public void Configure(EntityTypeBuilder<UserStats> builder)

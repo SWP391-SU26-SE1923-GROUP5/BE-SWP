@@ -18,6 +18,7 @@ public sealed class UnitOfWork : IUnitOfWork
         Reports = new GenericRepository<Report>(_dbContext);
         Flashcards = new GenericRepository<Flashcard>(_dbContext);
         FlashcardReviews = new GenericRepository<FlashcardReview>(_dbContext);
+        FlashcardReviewAttempts = new GenericRepository<FlashcardReviewAttempt>(_dbContext);
         Quizzes = new GenericRepository<Quiz>(_dbContext);
         Questions = new GenericRepository<Question>(_dbContext);
         Answers = new GenericRepository<Answer>(_dbContext);
@@ -44,6 +45,7 @@ public sealed class UnitOfWork : IUnitOfWork
     public IRepository<Report> Reports { get; }
     public IRepository<Flashcard> Flashcards { get; }
     public IRepository<FlashcardReview> FlashcardReviews { get; }
+    public IRepository<FlashcardReviewAttempt> FlashcardReviewAttempts { get; }
     public IRepository<Quiz> Quizzes { get; }
     public IRepository<Question> Questions { get; }
     public IRepository<Answer> Answers { get; }
