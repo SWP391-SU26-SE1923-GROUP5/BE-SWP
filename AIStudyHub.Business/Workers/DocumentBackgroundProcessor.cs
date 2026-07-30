@@ -139,7 +139,6 @@ public class DocumentBackgroundProcessor : BackgroundService
                 { "fileName", fileName },
                 { "chunkIndex", i.ToString() },
                 { "contentType", chunk.ContentType.ToString() },
-                { "isHighlightable", chunk.IsHighlightable.ToString() },
                 { "processingVersion", DocumentIngestionVersion.Current.ToString() },
                 { "indexRunId", indexRunId.ToString() }
             };

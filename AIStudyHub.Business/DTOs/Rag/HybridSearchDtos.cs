@@ -1,4 +1,3 @@
-using AIStudyHub.Business.AI.Orchestration;
 using AIStudyHub.Business.Interfaces.AI.Search;
 
 namespace AIStudyHub.Business.DTOs.Rag;
@@ -20,8 +19,7 @@ public sealed record HybridSearchResultDto(
     string FileName,
     int? PageNumber,
     int? ChunkIndex,
-    string MatchType,
-    bool IsHighlightable)
+    string MatchType)
 {
     public static bool TryFromSearchResult(
         SearchResult result,
@@ -34,7 +32,6 @@ public sealed record HybridSearchResultDto(
             return false;
         }
 
-        var highlight = CitationHighlightability.FromMetadata(result.Metadata);
         dto = new HybridSearchResultDto(
             result.Content,
             result.Score,
@@ -42,8 +39,7 @@ public sealed record HybridSearchResultDto(
             result.Metadata.GetValueOrDefault("fileName", result.Source),
             ParseInt(result.Metadata.GetValueOrDefault("pageNumber")),
             ParseInt(result.Metadata.GetValueOrDefault("chunkIndex")),
-            result.MatchType,
-            highlight.IsHighlightable);
+            result.MatchType);
         return true;
     }
 

@@ -75,8 +75,8 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
             "pdf" => ParsePageSegments(extracted),
             "docx" => ParseDocxSegments(extracted),
             "jpg" or "png" or "jpeg" or "webp" or "gif" =>
-                [new ExtractedTextSegment(extracted, DocumentContentType.Ocr, null, false)],
-            _ => [new ExtractedTextSegment(extracted, DocumentContentType.Verbatim, null, true)]
+                [new ExtractedTextSegment(extracted, DocumentContentType.Ocr, null)],
+            _ => [new ExtractedTextSegment(extracted, DocumentContentType.Verbatim, null)]
         };
     }
 
@@ -103,7 +103,7 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         {
             var value = current.ToString().Trim();
             if (!string.IsNullOrWhiteSpace(value) && !IsBackendErrorMarker(value))
-                result.Add(new ExtractedTextSegment(value, DocumentContentType.Verbatim, page, true));
+                result.Add(new ExtractedTextSegment(value, DocumentContentType.Verbatim, page));
             current.Clear();
         }
     }
@@ -138,7 +138,7 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         {
             var value = current.ToString().Trim();
             if (!string.IsNullOrWhiteSpace(value))
-                result.Add(new ExtractedTextSegment(value, type, null, type == DocumentContentType.Verbatim));
+                result.Add(new ExtractedTextSegment(value, type, null));
             current.Clear();
         }
     }
@@ -214,7 +214,7 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
         bool preserveTables = true)
     {
         var chunks = new List<DocumentChunkDto>();
-        var groups = new List<(DocumentContentType Type, int? Page, bool Highlightable, StringBuilder Text)>();
+        var groups = new List<(DocumentContentType Type, int? Page, StringBuilder Text)>();
 
         foreach (var segment in segments)
         {
@@ -227,10 +227,9 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
 
             var current = groups.LastOrDefault();
             if (current.Text is null || current.Type != segment.ContentType
-                || current.Page != segment.PageNumber
-                || current.Highlightable != segment.IsHighlightable)
+                || current.Page != segment.PageNumber)
             {
-                current = (segment.ContentType, segment.PageNumber, segment.IsHighlightable, new StringBuilder());
+                current = (segment.ContentType, segment.PageNumber, new StringBuilder());
                 groups.Add(current);
             }
 
@@ -246,7 +245,6 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
             {
                 chunk.PageNumber = group.Page;
                 chunk.ContentType = group.Type;
-                chunk.IsHighlightable = group.Highlightable;
                 chunks.Add(chunk);
             }
         }
