@@ -24,6 +24,9 @@ public sealed class TokenWalletService : ITokenWalletService
 
     public async Task<TokenReservationDto> ReserveAsync(Guid userId, string operationType, int estimatedTokens, Guid? relatedEntityId, CancellationToken ct = default)
     {
+        if (estimatedTokens < 0)
+            throw new ArgumentOutOfRangeException(nameof(estimatedTokens));
+
         await using var context = await _dbContextFactory.CreateDbContextAsync(ct);
         await using var transaction = await context.Database.BeginTransactionAsync(ct);
         var reservedAt = DateTime.UtcNow;
@@ -80,6 +83,9 @@ public sealed class TokenWalletService : ITokenWalletService
 
     public async Task SettleAsync(Guid ledgerId, int actualTokens, CancellationToken ct = default)
     {
+        if (actualTokens < 0)
+            throw new ArgumentOutOfRangeException(nameof(actualTokens));
+
         await using var context = await _dbContextFactory.CreateDbContextAsync(ct);
         await using var transaction = await context.Database.BeginTransactionAsync(ct);
         var ledger = await context.TokenLedgers
@@ -90,8 +96,15 @@ public sealed class TokenWalletService : ITokenWalletService
         if (ledger.Status != TokenLedgerStatus.Reserved)
             return; // Already settled or refunded
 
+        if (actualTokens > ledger.EstimatedTokens)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(actualTokens),
+                "Actual token usage cannot exceed the reserved estimate.");
+        }
+
         var settledAt = DateTime.UtcNow;
-        var refund = Math.Max(0, ledger.EstimatedTokens - actualTokens);
+        var refund = ledger.EstimatedTokens - actualTokens;
         var transitionedLedgers = await context.TokenLedgers
             .Where(entry =>
                 entry.Id == ledgerId
@@ -110,7 +123,9 @@ public sealed class TokenWalletService : ITokenWalletService
         }
 
         var updatedUsers = await context.Users
-            .Where(user => user.Id == ledger.UserId)
+            .Where(user =>
+                user.Id == ledger.UserId
+                && user.CurrentAiTokenUsage >= refund)
             .ExecuteUpdateAsync(
                 setters => setters
                     .SetProperty(
@@ -119,7 +134,16 @@ public sealed class TokenWalletService : ITokenWalletService
                     .SetProperty(user => user.UpdatedAt, settledAt),
                 ct);
         if (updatedUsers != 1)
-            throw new UnauthorizedAccessException("User not found.");
+        {
+            var userExists = await context.Users
+                .AsNoTracking()
+                .AnyAsync(user => user.Id == ledger.UserId, ct);
+            if (!userExists)
+                throw new UnauthorizedAccessException("User not found.");
+
+            throw new InvalidOperationException(
+                "Token usage balance is lower than the settlement refund.");
+        }
 
         await transaction.CommitAsync(ct);
     }
