@@ -184,11 +184,14 @@ public sealed class QuizController : ControllerBase
         [FromQuery] int limit = 20,
         CancellationToken ct = default)
     {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
         var quiz = await _service.GetByIdAsync(quizId, ct);
         if (quiz == null) return NotFound("Quiz not found");
 
         var @params = new AIStudyHub.Business.DTOs.Common.PaginationParams { Offset = offset, Limit = limit };
-        var result = await _submissionService.GetQuizHistoryAsync(quizId, fromDate, toDate, @params, ct);
+        var result = await _submissionService.GetQuizHistoryAsync(quizId, userId, fromDate, toDate, @params, ct);
         return Ok(result);
     }
 

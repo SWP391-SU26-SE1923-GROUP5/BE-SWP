@@ -29,9 +29,12 @@ public sealed class QuizSubmissionController : ControllerBase
 
     /// <summary>Lấy kết quả nộp bài theo ID.</summary>
     [HttpGet("{id:guid}")]
-    public async Task<ActionResult<QuizSubmissionResponseDto>> GetById(Guid id, CancellationToken cancellationToken)
+    public async Task<ActionResult<QuizSubmissionDetailDto>> GetById(Guid id, CancellationToken cancellationToken)
     {
-        var result = await _service.GetByIdAsync(id, cancellationToken);
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var result = await _service.GetOwnedDetailAsync(id, userId, cancellationToken);
         return result is null ? NotFound() : Ok(result);
     }
 

@@ -1634,16 +1634,77 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
         return submissions.Select(_mapper.Map<QuizSubmissionResponseDto>).ToList();
     }
 
-    public async Task<QuizSubmissionResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<QuizSubmissionDetailDto?> GetOwnedDetailAsync(
+        Guid submissionId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
     {
         var submission = await _unitOfWork.QuizSubmissions
             .Query()
-            .Include(qs => qs.User)
             .Include(qs => qs.Quiz)
+                .ThenInclude(quiz => quiz.Document)
+                    .ThenInclude(document => document.Subject)
+            .Include(qs => qs.Quiz)
+                .ThenInclude(quiz => quiz.Questions)
+                    .ThenInclude(question => question.Answers)
             .AsNoTracking()
-            .FirstOrDefaultAsync(qs => qs.Id == id, cancellationToken);
+            .FirstOrDefaultAsync(
+                qs => qs.Id == submissionId && qs.UserId == userId,
+                cancellationToken);
 
-        return submission is null ? null : _mapper.Map<QuizSubmissionResponseDto>(submission);
+        if (submission is null)
+            return null;
+
+        var submittedAnswers = DeserializeSubmittedAnswers(
+            submission.Answers,
+            submission.Id);
+        var questions = submission.Quiz.Questions
+            .OrderBy(question => question.Position)
+            .ThenBy(question => question.Id)
+            .Select(question =>
+            {
+                submittedAnswers.TryGetValue(
+                    question.Id.ToString(),
+                    out var selectedOption);
+                var options = question.Answers
+                    .OrderBy(answer => answer.CreatedAt)
+                    .ThenBy(answer => answer.Id)
+                    .Select(answer => new QuizSubmissionOptionDetailDto(
+                        answer.Id,
+                        answer.SelectedOption,
+                        selectedOption is not null
+                            && AnswersMatch(answer.SelectedOption, selectedOption),
+                        answer.IsCorrect))
+                    .ToList();
+
+                return new QuizSubmissionQuestionDetailDto(
+                    question.Id,
+                    question.Title,
+                    question.Type,
+                    question.Position,
+                    options);
+            })
+            .ToList();
+
+        return new QuizSubmissionDetailDto(
+            submission.Id,
+            submission.QuizId,
+            submission.Quiz.Title,
+            submission.Quiz.DocumentId,
+            submission.Quiz.Document.Title,
+            submission.Quiz.Document.SubjectId,
+            submission.Quiz.Document.Subject.SubjectCode,
+            submission.Quiz.Document.Subject.SubjectName,
+            submission.Score,
+            submission.MaxScore,
+            submission.TotalCorrect,
+            submission.DurationSeconds,
+            submission.MaxScore > 0
+                ? Math.Round((double)submission.Score / submission.MaxScore * 100, 1)
+                : 0,
+            submission.GradedAt,
+            submission.SubmittedAt,
+            questions);
     }
 
     public async Task<IReadOnlyList<QuizSubmissionResponseDto>> GetByUserAndQuizAsync(Guid userId, Guid quizId, CancellationToken cancellationToken = default)
@@ -1707,6 +1768,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
 
     public async Task<PagedResultDto<QuizSubmissionHistoryDto>> GetQuizHistoryAsync(
         Guid quizId,
+        Guid userId,
         DateTime? fromDate,
         DateTime? toDate,
         PaginationParams @params,
@@ -1717,7 +1779,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             .Include(qs => qs.Quiz)
                 .ThenInclude(q => q.Document)
                     .ThenInclude(d => d.Subject)
-            .Where(qs => qs.QuizId == quizId);
+            .Where(qs => qs.UserId == userId && qs.QuizId == quizId);
 
         if (fromDate.HasValue)
             query = query.Where(qs => qs.SubmittedAt >= fromDate.Value);
@@ -1779,15 +1841,16 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             // Simple grading: parse submitted answers and match with questions
             // Assuming request.Answers is JSON string like "{\"q1\":\"A\",\"q2\":\"B\"}"
             // And Question has Answers where IsCorrect == true
-            var submittedAnswers = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(request.Answers)
-                ?? new Dictionary<string, string>();
+            var submittedAnswers = DeserializeSubmittedAnswers(
+                request.Answers,
+                submission.Id);
 
             foreach (var question in quiz.Questions)
             {
                 var correctAnswer = question.Answers.FirstOrDefault(a => a.IsCorrect);
                 if (correctAnswer != null && submittedAnswers.TryGetValue(question.Id.ToString(), out var selectedOption))
                 {
-                    if (correctAnswer.SelectedOption.Equals(selectedOption, StringComparison.OrdinalIgnoreCase))
+                    if (AnswersMatch(correctAnswer.SelectedOption, selectedOption))
                     {
                         totalCorrect++;
                     }
@@ -1941,6 +2004,39 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
         }
 
         return new SubmitQuizResultDto(submission, xpEarned, unlocked);
+    }
+
+    private Dictionary<string, string> DeserializeSubmittedAnswers(
+        string serializedAnswers,
+        Guid submissionId)
+    {
+        try
+        {
+            var submittedAnswers = JsonSerializer.Deserialize<Dictionary<string, string>>(
+                serializedAnswers);
+            if (submittedAnswers is null
+                || submittedAnswers.Any(answer =>
+                    !Guid.TryParse(answer.Key, out var questionId)
+                    || questionId == Guid.Empty
+                    || string.IsNullOrWhiteSpace(answer.Value)))
+            {
+                throw new JsonException();
+            }
+
+            return submittedAnswers;
+        }
+        catch (JsonException)
+        {
+            _logger?.LogError(
+                "Stored answers are invalid for quiz submission {SubmissionId}",
+                submissionId);
+            throw new CorruptedQuizSubmissionException(submissionId);
+        }
+    }
+
+    private static bool AnswersMatch(string expected, string selected)
+    {
+        return string.Equals(expected, selected, StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)

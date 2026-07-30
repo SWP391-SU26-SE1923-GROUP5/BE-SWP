@@ -1,4 +1,5 @@
 using AIStudyHub.Business.DTOs.Gamification;
+using AIStudyHub.Data.Enums;
 
 namespace AIStudyHub.Business.DTOs.QuizSubmissions;
 
@@ -18,6 +19,37 @@ public sealed record QuizSubmissionResponseDto(
     DateTime SubmittedAt,
     DateTime CreatedAt,
     DateTime? UpdatedAt);
+
+public sealed record QuizSubmissionOptionDetailDto(
+    Guid AnswerId,
+    string Text,
+    bool IsSelected,
+    bool IsCorrect);
+
+public sealed record QuizSubmissionQuestionDetailDto(
+    Guid QuestionId,
+    string Title,
+    QuestionType Type,
+    int Position,
+    IReadOnlyList<QuizSubmissionOptionDetailDto> Options);
+
+public sealed record QuizSubmissionDetailDto(
+    Guid Id,
+    Guid QuizId,
+    string QuizTitle,
+    Guid DocumentId,
+    string DocumentTitle,
+    Guid SubjectId,
+    string SubjectCode,
+    string SubjectName,
+    int Score,
+    int MaxScore,
+    int TotalCorrect,
+    int? DurationSeconds,
+    double PercentageScore,
+    DateTime? GradedAt,
+    DateTime SubmittedAt,
+    IReadOnlyList<QuizSubmissionQuestionDetailDto> Questions);
 
 /// <summary>
 /// Enriched history item with quiz/document metadata. Returned by GetMyHistoryAsync.

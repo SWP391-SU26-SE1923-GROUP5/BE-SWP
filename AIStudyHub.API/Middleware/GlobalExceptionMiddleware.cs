@@ -69,6 +69,10 @@ public sealed class GlobalExceptionMiddleware
                 HttpStatusCode.UnprocessableEntity,
                 exception.Message);
         }
+        catch (CorruptedQuizSubmissionException)
+        {
+            await WriteCorruptedQuizSubmissionResponseAsync(context);
+        }
         catch (Exception exception)
         {
             _logger.LogError(exception, "Unhandled exception: {Message}\nStackTrace: {StackTrace}", exception.Message, exception.StackTrace);
@@ -125,6 +129,21 @@ public sealed class GlobalExceptionMiddleware
             currentUsage = exception.CurrentUsage,
             limit = exception.Limit,
             requestedTokens = exception.RequestedTokens
+        };
+
+        await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
+    }
+
+    private static async Task WriteCorruptedQuizSubmissionResponseAsync(HttpContext context)
+    {
+        context.Response.ContentType = "application/json";
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+
+        var payload = new
+        {
+            statusCode = context.Response.StatusCode,
+            message = "Stored quiz answers are invalid.",
+            error = "CorruptedQuizSubmission"
         };
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
