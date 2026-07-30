@@ -309,6 +309,90 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             new FlashcardReviewStatsDto(total, dueNow, mastered, avgEase));
     }
 
+    public async Task<PagedResultDto<FlashcardReviewHistoryItemDto>> GetHistoryAsync(
+        Guid userId,
+        Guid? documentId,
+        Guid? flashcardId,
+        DateTime? fromDate,
+        DateTime? toDate,
+        PaginationParams pagination,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _unitOfWork.FlashcardReviewAttempts
+            .Query()
+            .AsNoTracking()
+            .Where(attempt => attempt.UserId == userId);
+
+        if (documentId.HasValue)
+            query = query.Where(attempt => attempt.Flashcard.DocumentId == documentId.Value);
+        if (flashcardId.HasValue)
+            query = query.Where(attempt => attempt.FlashcardId == flashcardId.Value);
+        if (fromDate.HasValue)
+            query = query.Where(attempt => attempt.CreatedAt >= fromDate.Value);
+        if (toDate.HasValue)
+            query = query.Where(attempt => attempt.CreatedAt <= toDate.Value);
+
+        var totalCount = await query.CountAsync(cancellationToken);
+        var offset = Math.Max(0, pagination.Offset);
+        var limit = Math.Clamp(pagination.Limit, 1, 100);
+        var items = await query
+            .OrderByDescending(attempt => attempt.CreatedAt)
+            .ThenByDescending(attempt => attempt.Id)
+            .Skip(offset)
+            .Take(limit)
+            .Select(attempt => new FlashcardReviewHistoryItemDto(
+                attempt.Id,
+                attempt.FlashcardId,
+                attempt.Flashcard.DocumentId,
+                attempt.Flashcard.Document.Title,
+                attempt.Flashcard.Front,
+                attempt.Quality,
+                attempt.TimeSpentSeconds,
+                attempt.XpEarned,
+                attempt.CreatedAt))
+            .ToListAsync(cancellationToken);
+
+        return new PagedResultDto<FlashcardReviewHistoryItemDto>(
+            items,
+            totalCount,
+            offset,
+            limit);
+    }
+
+    public async Task<FlashcardReviewHistoryDetailDto?> GetHistoryDetailAsync(
+        Guid userId,
+        Guid attemptId,
+        CancellationToken cancellationToken = default)
+    {
+        return await _unitOfWork.FlashcardReviewAttempts
+            .Query()
+            .AsNoTracking()
+            .Where(attempt => attempt.UserId == userId && attempt.Id == attemptId)
+            .Select(attempt => new FlashcardReviewHistoryDetailDto(
+                attempt.Id,
+                attempt.FlashcardId,
+                attempt.Flashcard.DocumentId,
+                attempt.Flashcard.Document.Title,
+                attempt.Flashcard.Document.SubjectId,
+                attempt.Flashcard.Document.Subject.SubjectCode,
+                attempt.Flashcard.Document.Subject.SubjectName,
+                attempt.Flashcard.Front,
+                attempt.Flashcard.Back,
+                attempt.Quality,
+                attempt.TimeSpentSeconds,
+                attempt.PreviousEaseFactor,
+                attempt.ResultEaseFactor,
+                attempt.PreviousInterval,
+                attempt.ResultInterval,
+                attempt.PreviousRepetitions,
+                attempt.ResultRepetitions,
+                attempt.PreviousNextReviewDate,
+                attempt.ResultNextReviewDate,
+                attempt.XpEarned,
+                attempt.CreatedAt))
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
     /// <summary>
     /// Pure SM-2 update with Fuzzing ±5% (Plan C3 / B.2.3).
     ///

@@ -40,3 +40,37 @@ public sealed record FlashcardReviewStatsDto(
     int DueNow,
     int MasteredCount,
     float AverageEaseFactor);
+
+public sealed record FlashcardReviewHistoryItemDto(
+    Guid AttemptId,
+    Guid FlashcardId,
+    Guid DocumentId,
+    string DocumentTitle,
+    string Front,
+    ReviewQuality Quality,
+    int? TimeSpentSeconds,
+    int XpEarned,
+    DateTime ReviewedAt);
+
+public sealed record FlashcardReviewHistoryDetailDto(
+    Guid AttemptId,
+    Guid FlashcardId,
+    Guid DocumentId,
+    string DocumentTitle,
+    Guid SubjectId,
+    string SubjectCode,
+    string SubjectName,
+    string Front,
+    string Back,
+    ReviewQuality Quality,
+    int? TimeSpentSeconds,
+    float PreviousEaseFactor,
+    float ResultEaseFactor,
+    int PreviousInterval,
+    int ResultInterval,
+    int PreviousRepetitions,
+    int ResultRepetitions,
+    DateTime PreviousNextReviewDate,
+    DateTime ResultNextReviewDate,
+    int XpEarned,
+    DateTime ReviewedAt);
