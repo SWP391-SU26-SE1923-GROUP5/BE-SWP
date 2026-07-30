@@ -1698,7 +1698,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             qs.Quiz?.Document?.Title ?? string.Empty,
             qs.Quiz?.Document?.Subject?.SubjectCode ?? string.Empty,
             qs.Score, qs.MaxScore, qs.TotalCorrect,
-            null, // DurationSeconds - not tracked in entity
+            qs.DurationSeconds,
             qs.MaxScore > 0 ? Math.Round((double)qs.Score / qs.MaxScore * 100, 1) : 0,
             qs.GradedAt, qs.SubmittedAt, qs.CreatedAt, qs.UpdatedAt)).ToList();
 
@@ -1739,7 +1739,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             qs.Quiz?.Document?.Title ?? string.Empty,
             qs.Quiz?.Document?.Subject?.SubjectCode ?? string.Empty,
             qs.Score, qs.MaxScore, qs.TotalCorrect,
-            null,
+            qs.DurationSeconds,
             qs.MaxScore > 0 ? Math.Round((double)qs.Score / qs.MaxScore * 100, 1) : 0,
             qs.GradedAt, qs.SubmittedAt, qs.CreatedAt, qs.UpdatedAt)).ToList();
 
@@ -1765,6 +1765,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             UserId = request.UserId,
             QuizId = request.QuizId,
             Answers = request.Answers,
+            DurationSeconds = request.DurationSeconds,
             SubmittedAt = DateTime.UtcNow,
             CreatedAt = DateTime.UtcNow
         };

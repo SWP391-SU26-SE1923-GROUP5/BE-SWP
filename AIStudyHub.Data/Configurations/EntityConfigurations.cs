@@ -343,6 +343,7 @@ internal sealed class QuizSubmissionConfiguration : IEntityTypeConfiguration<Qui
         builder.Property(x => x.QuizId).HasColumnName("quiz_id").IsRequired();
         builder.Property(x => x.Answers).HasColumnName("answers").IsRequired();
         builder.Property(x => x.Score).HasColumnName("score").HasPrecision(5, 2);
+        builder.Property(x => x.DurationSeconds).HasColumnName("duration_seconds");
         builder.Property(x => x.SubmittedAt).HasColumnName("submitted_at").HasColumnType("datetime");
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");

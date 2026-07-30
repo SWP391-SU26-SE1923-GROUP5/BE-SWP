@@ -99,7 +99,7 @@ public sealed class ApplicationMappingProfile : Profile
                 string.Empty,
                 string.Empty,
                 src.Score, src.MaxScore, src.TotalCorrect,
-                null,
+                src.DurationSeconds,
                 src.MaxScore > 0 ? Math.Round((double)src.Score / src.MaxScore * 100, 1) : 0,
                 src.GradedAt, src.SubmittedAt, src.CreatedAt, src.UpdatedAt));
         CreateMap<CreateQuizSubmissionRequestDto, QuizSubmission>();
