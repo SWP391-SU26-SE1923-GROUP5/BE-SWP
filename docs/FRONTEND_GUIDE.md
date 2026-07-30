@@ -325,7 +325,7 @@ sequenceDiagram
 | **Tạo flashcard thủ công** | `POST /api/Flashcard { documentId, front, back }` | |
 | **Sửa flashcard** | `PUT /api/Flashcard/{id} { front, back }` | |
 | **Xoá flashcard** | `DELETE /api/Flashcard/{id}` | |
-| **Trang stats cá nhân (mastery)** | `GET /api/FlashcardReview/stats/{userId}` (lấy `userId` từ token) | Trả `totalReviewed`, `dueNow`, `masteredCount`, `averageEaseFactor` |
+| **Trang stats cá nhân (mastery)** | `GET /api/FlashcardReview/stats` | Backend luôn lấy user hiện tại từ JWT; trả `totalReviewed`, `dueNow`, `masteredCount`, `averageEaseFactor` |
 
 ### 5.5.5. Quiz (Làm bài kiểm tra)
 
@@ -335,7 +335,7 @@ sequenceDiagram
 | **Xem chi tiết quiz (chưa có answers)** | `GET /api/Quiz/{id}/questions` | Trả list câu hỏi, không kèm đáp án đúng |
 | **Xem lại 1 câu hỏi (kèm answers)** | `GET /api/Quiz/{quizId}/questions/{questionId}` | Kèm `answers[]` |
 | **Làm bài → nộp bài** | `POST /api/Quiz/{id}/submit` (body: `CreateQuizSubmissionRequestDto` — `userId`/`quizId` trong body bị ignore, server tự lấy từ token + route) → trả `SubmitQuizResultDto` (submission + newAchievements) | Plan C3 / B.4.5 |
-| **Xem lịch sử nộp bài của tôi** | `GET /api/QuizSubmission/{id}` (với id biết trước) | Hiện chưa có endpoint list submissions của user |
+| **Xem lịch sử nộp bài của tôi** | 1. `GET /api/QuizSubmission/my?quizId={quizId}&offset=0&limit=20` → 2. `GET /api/QuizSubmission/{id}` | List và detail chỉ trả submission của user trong JWT; detail có question, option, selected/correct flags và duration |
 | **Xoá quiz** | `DELETE /api/Quiz/{id}` | Chỉ owner mới xoá được |
 
 ### 5.5.6. Gamification (XP, Level, Streak)
@@ -1013,7 +1013,9 @@ Số flashcard đến hạn - dùng cho badge counter trên UI.
 
 **Response 200**: `42` (int)
 
-### 12.4. GET `/api/FlashcardReview/stats/{userId}`
+### 12.4. GET `/api/FlashcardReview/stats`
+
+Backend lấy user hiện tại từ JWT; FE không truyền `userId`.
 
 **Response 200**:
 ```json
@@ -1172,17 +1174,26 @@ Lấy answers của 1 question (chỉ dùng cho debug/admin).
 
 ### 16.2. GET `/api/QuizSubmission/{id}`
 
-Trả về kết quả nộp bài (nếu là user thường, chỉ xem được submission của mình - enforced ở service layer).
+Trả về chi tiết đầy đủ của submission thuộc user trong JWT. Submission không tồn tại hoặc thuộc user khác đều trả `404`.
 
-**Response 200** (`QuizSubmissionResponseDto`):
+**Response 200** (`QuizSubmissionDetailDto`):
 ```json
 {
-  "id": "guid", "userId": "guid", "quizId": "guid",
-  "answers": "{\"q1\":\"A\",\"q2\":[\"B\",\"C\"]}", // JSON string
-  "score": 8, "maxScore": 10, "totalCorrect": 4,
+  "id": "guid", "quizId": "guid", "quizTitle": "string",
+  "documentId": "guid", "documentTitle": "string",
+  "subjectId": "guid", "subjectCode": "SUB101", "subjectName": "string",
+  "score": 8, "maxScore": 10, "totalCorrect": 8,
+  "durationSeconds": 95, "percentageScore": 80.0,
   "gradedAt": "2026-06-28T10:30:00Z",
   "submittedAt": "2026-06-28T10:25:00Z",
-  "createdAt": "...", "updatedAt": null
+  "questions": [
+    {
+      "questionId": "guid", "title": "string", "type": 0, "position": 1,
+      "options": [
+        { "answerId": "guid", "text": "A", "isSelected": true, "isCorrect": true }
+      ]
+    }
+  ]
 }
 ```
 
