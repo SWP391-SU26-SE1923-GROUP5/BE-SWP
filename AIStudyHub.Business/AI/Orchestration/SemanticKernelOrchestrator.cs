@@ -118,7 +118,15 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             """;
 
         var fullPrompt = $"{systemPrompt}\n\n{userPrompt}";
-        var answer = await _openAiService.SendMessageAsync(fullPrompt) ?? "Xin lỗi, tôi không thể trả lời lúc này.";
+        var answer = await _openAiService.SendMessageAsync(fullPrompt);
+        if (string.IsNullOrWhiteSpace(answer))
+        {
+            return new RagResponse(
+                "Xin lỗi, tôi không thể trả lời lúc này.",
+                0.0,
+                IsRelevant: false);
+        }
+
         // L5: Guardrails
         var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
         // TODO: GroundingVerifier is too strict for short/Vietnamese answers - disabled temporarily
@@ -197,9 +205,19 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         var fullPrompt = $"{systemPrompt}\n\n{userPrompt}";
         var usageResult = await _openAiService.SendMessageWithUsageAsync(fullPrompt);
-        var answer = usageResult.Text ?? "Xin lỗi, tôi không thể trả lời lúc này.";
+        var answer = usageResult.Text;
         var totalInputTokens = usageResult.InputTokens;
         var totalOutputTokens = usageResult.OutputTokens;
+        if (string.IsNullOrWhiteSpace(answer))
+        {
+            return new RagResponseWithUsage(
+                "Xin lỗi, tôi không thể trả lời lúc này.",
+                0.0,
+                totalInputTokens,
+                totalOutputTokens,
+                IsRelevant: false);
+        }
+
         // L5: Guardrails
         var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
         // TODO: GroundingVerifier is too strict for short/Vietnamese answers - disabled temporarily
