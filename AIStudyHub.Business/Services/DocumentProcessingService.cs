@@ -44,7 +44,7 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
     {
         var extension = fileExtension.ToLowerInvariant().TrimStart('.');
 
-        if (!DocumentRagFilePolicy.SupportsChat(fileExtension))
+        if (!DocumentRagFilePolicy.SupportsChat(null, fileExtension))
             throw new NotSupportedException($"File type '.{extension}' is not supported. Supported types: .txt, .md, .pdf, .docx");
 
         return extension switch

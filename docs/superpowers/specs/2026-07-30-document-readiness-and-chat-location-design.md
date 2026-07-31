@@ -250,9 +250,13 @@ Upload continues to return `202 Accepted` immediately after durable acceptance:
 ```
 
 The frontend uses SignalR for prompt updates and status polling as a fallback.
-On receiving a document success or failure notification, it refetches the
-authoritative API state. Polling stops when readiness reaches a terminal state:
-ready, failed, or unavailable.
+Each document completion or failure notification mirrors the readiness
+evaluation of the persisted Document, including `status`, `isChatReady`,
+`message`, and `canRetry`. Therefore, accepted unsupported media that completes
+without indexing reports `Done` with `isChatReady=false` and the unsupported
+message; it must not use ready title/body copy. On receiving a notification, the
+frontend refetches the authoritative API state. Polling stops when readiness
+reaches a terminal state: ready, failed, or unavailable.
 
 The backend does not expose a percentage because it does not persist reliable
 stage progress. The UI should show an indeterminate preparing state rather than

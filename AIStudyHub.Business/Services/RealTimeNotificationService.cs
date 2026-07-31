@@ -1,4 +1,5 @@
 using AIStudyHub.Business.DTOs.Common;
+using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Gamification;
 using AIStudyHub.Business.DTOs.Notifications;
 using AIStudyHub.Business.Hubs;
@@ -67,20 +68,28 @@ public sealed class RealTimeNotificationService : IRealTimeNotificationService
         }
     }
 
-    public Task NotifyDocumentProcessedAsync(Guid userId, Guid documentId, string title, CancellationToken cancellationToken = default)
-        => SendNotificationAsync(new RealTimeNotification(
+    public Task NotifyDocumentProcessedAsync(
+        Guid userId,
+        Guid documentId,
+        string title,
+        DocumentReadinessDto readiness,
+        CancellationToken cancellationToken = default)
+    {
+        var content = BuildDocumentNotificationContent(title, readiness);
+        return SendNotificationAsync(new RealTimeNotification(
             userId,
-            "Tài liệu đã sẵn sàng",
-            $"\"{title}\" đã sẵn sàng để sử dụng.",
+            content.Title,
+            content.Body,
             NotificationType.Document,
             DateTime.UtcNow,
             new DocumentProcessedPayload(
                 documentId,
                 title,
-                "Done",
-                true,
-                "Tài liệu đã sẵn sàng.",
-                false)), cancellationToken);
+                readiness.Status,
+                readiness.IsChatReady,
+                readiness.Message,
+                readiness.CanRetry)), cancellationToken);
+    }
 
     public Task NotifyStreakAtRiskAsync(Guid userId, int currentStreak, int hoursRemaining, CancellationToken cancellationToken = default)
         => SendNotificationAsync(new RealTimeNotification(
@@ -189,18 +198,45 @@ public sealed class RealTimeNotificationService : IRealTimeNotificationService
         Guid userId,
         Guid documentId,
         string title,
+        DocumentReadinessDto readiness,
         CancellationToken cancellationToken = default)
-        => SendNotificationAsync(new RealTimeNotification(
+    {
+        var content = BuildDocumentNotificationContent(title, readiness);
+        return SendNotificationAsync(new RealTimeNotification(
             userId,
-            "Không thể chuẩn bị tài liệu",
-            $"Không thể chuẩn bị \"{title}\". Vui lòng thử lại.",
+            content.Title,
+            content.Body,
             NotificationType.Document,
             DateTime.UtcNow,
             new DocumentFailedPayload(
                 documentId,
                 title,
-                "Failed",
-                false,
-                "Không thể chuẩn bị tài liệu.",
-                true)), cancellationToken);
+                readiness.Status,
+                readiness.IsChatReady,
+                readiness.Message,
+                readiness.CanRetry)), cancellationToken);
+    }
+
+    private static (string Title, string Body) BuildDocumentNotificationContent(
+        string documentTitle,
+        DocumentReadinessDto readiness)
+    {
+        if (readiness.IsChatReady)
+        {
+            return (
+                "Tài liệu đã sẵn sàng",
+                $"\"{documentTitle}\" đã sẵn sàng để sử dụng.");
+        }
+
+        if (readiness.CanRetry)
+        {
+            return (
+                "Không thể chuẩn bị tài liệu",
+                $"Không thể chuẩn bị \"{documentTitle}\". Vui lòng thử lại.");
+        }
+
+        return (
+            readiness.Message.TrimEnd('.'),
+            $"\"{documentTitle}\": {readiness.Message}");
+    }
 }

@@ -13,7 +13,10 @@ public static class DocumentReadinessEvaluator
         var status = document.Status?.ToString() ?? "Unknown";
 
         if (document.LifecycleStatus != DocumentLifecycleStatus.Active
-            || document.Status is DocumentStatus.Archived or DocumentStatus.Banned)
+            || document.Status is DocumentStatus.Draft
+                or DocumentStatus.Archived
+                or DocumentStatus.Banned
+                or DocumentStatus.Trashed)
         {
             return new(status, false, "Tài liệu không khả dụng cho Chat.", false);
         }

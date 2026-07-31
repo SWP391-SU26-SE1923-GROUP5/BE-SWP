@@ -57,7 +57,7 @@ public sealed class GlobalExceptionMiddleware
                 message = exception.Message,
                 documents = exception.Documents
             };
-            await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
+            await context.Response.WriteAsJsonAsync(payload);
         }
         catch (InvalidOperationException exception)
         {

@@ -281,7 +281,10 @@ public static class DocumentReadinessEvaluator
         var status = document.Status?.ToString() ?? "Unknown";
 
         if (document.LifecycleStatus != DocumentLifecycleStatus.Active
-            || document.Status is DocumentStatus.Archived or DocumentStatus.Banned)
+            || document.Status is DocumentStatus.Draft
+                or DocumentStatus.Archived
+                or DocumentStatus.Banned
+                or DocumentStatus.Trashed)
         {
             return new(status, false, "Tài liệu không khả dụng cho Chat.", false);
         }
@@ -519,22 +522,33 @@ public sealed record DocumentFailedPayload(
     bool CanRetry);
 ```
 
-Change `IRealTimeNotificationService.NotifyDocumentFailedAsync` to:
+Change both document notification methods to accept the evaluated readiness of
+the persisted Document:
 
 ```csharp
+Task NotifyDocumentProcessedAsync(
+    Guid userId,
+    Guid documentId,
+    string title,
+    DocumentReadinessDto readiness,
+    CancellationToken cancellationToken = default);
+
 Task NotifyDocumentFailedAsync(
     Guid userId,
     Guid documentId,
     string title,
+    DocumentReadinessDto readiness,
     CancellationToken cancellationToken = default);
 ```
 
 The worker already logs the caught exception. Remove `ex.Message` from its
-notification call.
+notification call. After each success or failure state is committed, evaluate
+that persisted Document and pass the resulting `DocumentReadinessDto` to the
+notification service. Do not query Qdrant from the notification path.
 
 - [ ] **Step 5: Send friendly notification content**
 
-Success:
+Supported, ready completion:
 
 ```text
 Title: Tài liệu đã sẵn sàng
@@ -545,7 +559,7 @@ Message: Tài liệu đã sẵn sàng.
 CanRetry: false
 ```
 
-Failure:
+Retryable failure:
 
 ```text
 Title: Không thể chuẩn bị tài liệu
@@ -558,6 +572,14 @@ CanRetry: true
 
 Keep the transport method name `ReceiveNotification`, the user group, and
 `NotificationType.Document` unchanged.
+
+For all other results, including accepted unsupported media that persists as
+`Done`, derive the notification title/body and every payload readiness field
+from the passed evaluator result. Unsupported media must report `Done`,
+`IsChatReady: false`, `CanRetry: false`, and
+`Loại tài liệu này không hỗ trợ Chat.` without any ready claim. A failure
+notification must likewise use the evaluator's actual readiness instead of
+hardcoding `Failed` or `CanRetry: true`.
 
 - [ ] **Step 6: Audit for technical error leakage and compile**
 
@@ -722,12 +744,13 @@ catch (DocumentsNotReadyException exception)
         message = exception.Message,
         documents = exception.Documents
     };
-    await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
+    await context.Response.WriteAsJsonAsync(payload);
 }
 ```
 
 Do not catch this exception in `ChatController`; global middleware owns the
-contract.
+contract. ASP.NET web JSON serialization is required so nested blocker fields
+remain camelCase.
 
 - [ ] **Step 6: Audit side-effect ordering and compile**
 

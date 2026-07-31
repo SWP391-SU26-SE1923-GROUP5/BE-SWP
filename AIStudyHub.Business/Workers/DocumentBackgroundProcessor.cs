@@ -556,8 +556,17 @@ public class DocumentBackgroundProcessor : BackgroundService
             {
                 try
                 {
-                    await realTimeNotifier.NotifyDocumentProcessedAsync(
-                        request.UserId, request.DocumentId, request.FileName, ct);
+                    if (document is not null)
+                    {
+                        var readiness =
+                            DocumentReadinessEvaluator.Evaluate(document);
+                        await realTimeNotifier.NotifyDocumentProcessedAsync(
+                            request.UserId,
+                            request.DocumentId,
+                            request.FileName,
+                            readiness,
+                            ct);
+                    }
                 }
                 catch (Exception notifyEx)
                 {
@@ -626,8 +635,17 @@ public class DocumentBackgroundProcessor : BackgroundService
             {
                 try
                 {
-                    await realTimeNotifier.NotifyDocumentFailedAsync(
-                        request.UserId, request.DocumentId, request.FileName, ct);
+                    if (document is not null)
+                    {
+                        var readiness =
+                            DocumentReadinessEvaluator.Evaluate(document);
+                        await realTimeNotifier.NotifyDocumentFailedAsync(
+                            request.UserId,
+                            request.DocumentId,
+                            request.FileName,
+                            readiness,
+                            ct);
+                    }
                 }
                 catch (Exception notifyEx)
                 {
