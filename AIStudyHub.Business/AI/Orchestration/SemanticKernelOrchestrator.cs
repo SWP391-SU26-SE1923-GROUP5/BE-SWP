@@ -25,10 +25,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         ANSWERING RULES:
         - Answer from the supplied source content only.
-        - Mention a document/page only when the user explicitly asks where the content appears.
-        - Use PAGE_NUMBER only when it is a positive integer.
-        - If every supporting chunk has PAGE_NUMBER: unknown, state that the exact page is unavailable.
-        - Never infer a page from chunk order, surrounding text, document length, or model knowledge.
+        - Do not add document names, page numbers, source markers, or a source section; the backend appends trusted location information after generation.
         - Never output metadata labels, bracketed source markers, a source list, or a source-attribution section.
         - If the user asks about the AIStudyHub system features or how to use it, use the ABOUT AI STUDY HUB information above to guide them naturally.
         - For YES/NO questions, use the source content to answer. If it answers the question indirectly, answer "Không" or "Có" with the supporting evidence instead of claiming the topic is absent.
@@ -128,7 +125,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
         var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
 
-        return new RagResponse(answer, confidence, IsRelevant: true);
+        var answerWithLocation = RagLocationFormatter.AppendToAnswer(answer, contexts);
+        return new RagResponse(answerWithLocation, confidence, IsRelevant: true);
     }
 
 
@@ -167,7 +165,14 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         if (TryDetectNoAnswer(question, resultList, out var noAnswer))
         {
             _logger.LogInformation("Yes/No shortcut triggered: {Answer}", noAnswer);
-            return new RagResponseWithUsage(noAnswer, 1.0, 0, 0, IsRelevant: true);
+            var answerWithLocation =
+                RagLocationFormatter.AppendToAnswer(noAnswer, contexts);
+            return new RagResponseWithUsage(
+                answerWithLocation,
+                1.0,
+                0,
+                0,
+                IsRelevant: true);
         }
 
         // L4: Generate answer using Custom LLM Prompt
@@ -201,7 +206,8 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
         var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
 
-        return new RagResponseWithUsage(answer, confidence, totalInputTokens, totalOutputTokens, IsRelevant: true);
+        var trackedAnswerWithLocation = RagLocationFormatter.AppendToAnswer(answer, contexts);
+        return new RagResponseWithUsage(trackedAnswerWithLocation, confidence, totalInputTokens, totalOutputTokens, IsRelevant: true);
     }
 
     public async Task<string> SummarizeAsync(Guid documentId, Guid userId, CancellationToken ct = default)
