@@ -763,8 +763,11 @@ Lấy documents của user hiện tại (phân trang).
       "title": "string", "fileLink": "/uploads/abc.pdf",
       "fileName": "abc.pdf", "fileExtension": ".pdf",
       "fileType": "application/pdf", "fileSizeBytes": 1048576,
-      "sharedUsers": "guid1,guid2", "shareStatus": "private",
-      "status": 2, "voteCount": 5,
+      "shareStatus": "private", "status": 2,
+      "isChatReady": true,
+      "message": "Tài liệu đã sẵn sàng.",
+      "canRetry": false,
+      "voteCount": 5, "lifecycleStatus": 0, "trashedAt": null,
       "createdAt": "...", "updatedAt": null
     }
   ],
@@ -820,7 +823,16 @@ Stream file inline (cho PDF viewer).
 
 ### 9.8. GET `/api/Document/{id}/status`
 
-**Response 200**: `{ "id": "guid", "Status": "Processing" }`
+**Response 200**:
+```json
+{
+  "id": "guid",
+  "status": "Processing",
+  "isChatReady": false,
+  "message": "Tài liệu đang được chuẩn bị.",
+  "canRetry": false
+}
+```
 
 > Dùng để poll sau khi upload. Trả 403 nếu không phải owner.
 
@@ -857,7 +869,14 @@ Lấy text chunks (sau khi xử lý xong) - dùng cho debug.
 
 **Response 202**:
 ```json
-{ "documentId": "guid", "status": "processing", "chunkCount": 0, "message": "Document is being processed in the background" }
+{
+  "documentId": "guid",
+  "status": "Processing",
+  "chunkCount": 0,
+  "message": "Tài liệu đang được chuẩn bị.",
+  "isChatReady": false,
+  "canRetry": false
+}
 ```
 
 `202` chỉ được trả sau khi file và Document `Processing` đã được lưu và queue; không chờ OCR/embed. Worker chuyển status sang `Done` hoặc `Failed`. Sau khi app restart, các Document active `Processing` được khôi phục; nếu file đã lưu bị mất thì Document chuyển sang `Failed`.
@@ -1612,7 +1631,7 @@ export default api;
 - [ ] Tích hợp `/api/Auth/login` + `/refresh-token` + Auto-refresh interceptor
 - [ ] OAuth Google/GitHub (window.location redirect)
 - [ ] Subject picker + Tier picker (load 1 lần, cache)
-- [ ] Document upload với progress bar + status polling + SignalR fallback
+- [ ] Document upload: có thể dùng progress bar xác định cho tiến độ truyền HTTP; sau `202 Accepted`, dùng readiness state/spinner không xác định cho bước chuẩn bị tài liệu, không hiển thị phần trăm giả. SignalR là cập nhật tức thời, status polling là fallback.
 - [ ] Chat UI qua `POST /api/Chat/messages`; `/api/AI/rag/ask` chỉ dùng cho hybrid search
 - [ ] Flashcard review UI (hỗ trợ keyboard 1/2/3/4 cho Again/Hard/Good/Easy)
 - [ ] Quiz taking UI (timer, navigation, submit)

@@ -288,7 +288,6 @@ AIStudyHub.slnx
 │   ├── Interfaces/            (Repository + UnitOfWork interfaces)
 │   ├── Repositories/         (GenericRepository, UnitOfWork)
 │   └── Migrations/           (21 EF Core migrations)
-├── AIStudyHub.Tests/
 ├── docs/
 │   ├── FRONTEND_GUIDE.md         (frontend integration guide)
 │   └── EF_MIGRATION_COMMANDS.md  (database migration cheatsheet)
