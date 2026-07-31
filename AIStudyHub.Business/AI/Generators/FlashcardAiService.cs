@@ -49,7 +49,7 @@ public sealed class FlashcardAiService : IFlashcardAiService
         _tokenTracker = tokenTracker;
     }
 
-    public async Task<IReadOnlyList<FlashcardResponseDto>> GenerateFlashcardsAsync(
+    public async Task<FlashcardDeckResponseDto> GenerateFlashcardsAsync(
         Guid documentId,
         CreateFlashcardsViaAiRequestDto request,
         Guid userId,
@@ -187,9 +187,27 @@ public sealed class FlashcardAiService : IFlashcardAiService
                 flashcards.Count);
         }
 
+        // Create or get a deck for this document
+        var deckName = document.Title;
+        var deck = await _unitOfWork.FlashcardDecks
+            .Query()
+            .FirstOrDefaultAsync(d => d.DocumentId == documentId && d.Name == deckName, cancellationToken);
+
+        if (deck is null)
+        {
+            deck = new AIStudyHub.Data.Entities.FlashcardDeck
+            {
+                Id = Guid.NewGuid(),
+                DocumentId = documentId,
+                Name = deckName,
+                CreatedAt = DateTime.UtcNow
+            };
+            await _unitOfWork.FlashcardDecks.AddAsync(deck, cancellationToken);
+        }
+
         var entities = flashcards.Select(f => new AIStudyHub.Data.Entities.Flashcard
         {
-            DocumentId = documentId,
+            DeckId = deck.Id,
             Front = f.Front,
             Back = f.Back
         }).ToList();
@@ -202,14 +220,14 @@ public sealed class FlashcardAiService : IFlashcardAiService
 
         var result = entities.Select(e => new FlashcardResponseDto(
             e.Id,
-            e.DocumentId,
+            e.DeckId,
             e.Front,
             e.Back,
             e.CreatedAt,
             e.UpdatedAt
         )).ToList();
 
-        return result;
+        return new FlashcardDeckResponseDto(deck.Id, deck.Name, result);
     }
 
     private async Task<(List<FlashcardResponseAiDto> cards, int inputTokens, int outputTokens)> RunBatchWithTrackingAsync(

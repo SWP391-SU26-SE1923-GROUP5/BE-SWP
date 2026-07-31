@@ -4,7 +4,7 @@ namespace AIStudyHub.Business.Interfaces.AI.Generators;
 
 public interface IFlashcardAiService
 {
-    Task<IReadOnlyList<FlashcardResponseDto>> GenerateFlashcardsAsync(
+    Task<FlashcardDeckResponseDto> GenerateFlashcardsAsync(
         Guid documentId,
         CreateFlashcardsViaAiRequestDto request,
         Guid userId,

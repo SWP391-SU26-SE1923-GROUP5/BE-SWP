@@ -140,7 +140,7 @@ public sealed class AIController : ControllerBase
 
     /// <summary>Generate flashcards from a document using AI.</summary>
     [HttpPost("flashcards/generate")]
-    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> GenerateFlashcards(
+    public async Task<ActionResult<FlashcardDeckResponseDto>> GenerateFlashcards(
         Guid docId,
         [FromBody] CreateFlashcardsViaAiRequestDto request,
         CancellationToken cancellationToken)
@@ -157,7 +157,7 @@ public sealed class AIController : ControllerBase
             var document = await _unitOfWork.Documents.GetByIdAsync(docId, cancellationToken);
             if (document is not null)
             {
-                await _realTimeNotifier.NotifyNewFlashcardsReadyAsync(userId, docId, document.Title ?? "Document", result.Count, cancellationToken);
+                await _realTimeNotifier.NotifyNewFlashcardsReadyAsync(userId, docId, document.Title ?? "Document", result.FlashcardLists.Count, cancellationToken);
             }
         }
         catch (Exception notifyEx)

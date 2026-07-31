@@ -64,11 +64,12 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
 
         var authorizedDocumentId = await _dbContext.Flashcards
             .AsNoTracking()
+            .Include(card => card.FlashcardDeck)
             .Where(card => card.Id == flashcardId
-                && (card.Document.UserId == userId
-                    || card.Document.ShareStatus == "public"
-                    || card.Document.DocumentShares.Any(share => share.UserId == userId)))
-            .Select(card => (Guid?)card.DocumentId)
+                && (card.FlashcardDeck.Document.UserId == userId
+                    || card.FlashcardDeck.Document.ShareStatus == "public"
+                    || card.FlashcardDeck.Document.DocumentShares.Any(share => share.UserId == userId)))
+            .Select(card => (Guid?)card.FlashcardDeck.DocumentId)
             .SingleOrDefaultAsync(cancellationToken);
         if (!authorizedDocumentId.HasValue)
             return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
@@ -92,14 +93,14 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
                     """)
                     .SingleOrDefaultAsync(cancellationToken);
                 if (lockedFlashcard is null
-                    || lockedFlashcard.DocumentId != authorizedDocumentId.Value)
+                    || lockedFlashcard.FlashcardDeck.DocumentId != authorizedDocumentId.Value)
                 {
                     await transaction.RollbackAsync(cancellationToken);
                     return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
                 }
 
                 await _dbContext.Entry(lockedFlashcard).ReloadAsync(cancellationToken);
-                if (lockedFlashcard.DocumentId != authorizedDocumentId.Value)
+                if (lockedFlashcard.FlashcardDeck.DocumentId != authorizedDocumentId.Value)
                 {
                     await transaction.RollbackAsync(cancellationToken);
                     return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
@@ -134,6 +135,23 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
                 else
                 {
                     existing = lockedReview;
+                }
+
+                // Fix 1: reject same-card same-day resubmits.
+                var todayUtc = DateTime.UtcNow.Date;
+                var alreadyReviewedToday = await _unitOfWork.FlashcardReviewAttempts
+                    .Query()
+                    .AnyAsync(a => a.UserId == userId
+                                && a.FlashcardId == flashcardId
+                                && a.CreatedAt >= todayUtc
+                                && a.CreatedAt <  todayUtc.AddDays(1),
+                              cancellationToken);
+
+                if (alreadyReviewedToday)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return ServiceResult<ReviewFlashcardResultDto>.Fail(
+                        "This card has already been reviewed today.");
                 }
 
                 var previousEaseFactor = existing.EaseFactor;
@@ -333,7 +351,7 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             .Select(r => new DueFlashcardDto(
                 r.Id,
                 r.FlashcardId,
-                r.Flashcard!.DocumentId,
+                r.Flashcard!.FlashcardDeck.DocumentId,
                 r.Flashcard.Front,
                 r.Flashcard.Back,
                 r.NextReviewDate))
@@ -384,10 +402,14 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
         var query = _unitOfWork.FlashcardReviewAttempts
             .Query()
             .AsNoTracking()
+            .Include(attempt => attempt.Flashcard)
+                .ThenInclude(flashcard => flashcard.FlashcardDeck)
+                    .ThenInclude(deck => deck.Document)
+                        .ThenInclude(doc => doc.Subject)
             .Where(attempt => attempt.UserId == userId);
 
         if (documentId.HasValue)
-            query = query.Where(attempt => attempt.Flashcard.DocumentId == documentId.Value);
+            query = query.Where(attempt => attempt.Flashcard.FlashcardDeck.DocumentId == documentId.Value);
         if (flashcardId.HasValue)
             query = query.Where(attempt => attempt.FlashcardId == flashcardId.Value);
         if (fromDate.HasValue)
@@ -406,8 +428,8 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             .Select(attempt => new FlashcardReviewHistoryItemDto(
                 attempt.Id,
                 attempt.FlashcardId,
-                attempt.Flashcard.DocumentId,
-                attempt.Flashcard.Document.Title,
+                attempt.Flashcard.FlashcardDeck.DocumentId,
+                attempt.Flashcard.FlashcardDeck.Document.Title,
                 attempt.Flashcard.Front,
                 attempt.Quality,
                 attempt.TimeSpentSeconds,
@@ -431,14 +453,18 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             .Query()
             .AsNoTracking()
             .Where(attempt => attempt.UserId == userId && attempt.Id == attemptId)
+            .Include(attempt => attempt.Flashcard)
+                .ThenInclude(flashcard => flashcard.FlashcardDeck)
+                    .ThenInclude(deck => deck.Document)
+                        .ThenInclude(doc => doc.Subject)
             .Select(attempt => new FlashcardReviewHistoryDetailDto(
                 attempt.Id,
                 attempt.FlashcardId,
-                attempt.Flashcard.DocumentId,
-                attempt.Flashcard.Document.Title,
-                attempt.Flashcard.Document.SubjectId,
-                attempt.Flashcard.Document.Subject.SubjectCode,
-                attempt.Flashcard.Document.Subject.SubjectName,
+                attempt.Flashcard.FlashcardDeck.DocumentId,
+                attempt.Flashcard.FlashcardDeck.Document.Title,
+                attempt.Flashcard.FlashcardDeck.Document.SubjectId,
+                attempt.Flashcard.FlashcardDeck.Document.Subject.SubjectCode,
+                attempt.Flashcard.FlashcardDeck.Document.Subject.SubjectName,
                 attempt.Flashcard.Front,
                 attempt.Flashcard.Back,
                 attempt.Quality,

@@ -1158,8 +1158,8 @@ public sealed class FlashcardService : IFlashcardService
     public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<FlashcardResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, Guid userId, CancellationToken cancellationToken = default)
     {
         var query = _unitOfWork.Flashcards.Query()
-            .Include(f => f.Document)
-            .Where(f => f.Document.UserId == userId || f.Document.ShareStatus == "public")
+            .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
+            .Where(f => f.FlashcardDeck.Document.UserId == userId || f.FlashcardDeck.Document.ShareStatus == "public")
             .AsNoTracking();
 
         if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
@@ -1191,7 +1191,7 @@ public sealed class FlashcardService : IFlashcardService
     {
         var flashcards = await _unitOfWork.Flashcards
             .Query()
-            .Include(f => f.Document)
+            .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
@@ -1202,7 +1202,7 @@ public sealed class FlashcardService : IFlashcardService
     {
         var flashcard = await _unitOfWork.Flashcards
             .Query()
-            .Include(f => f.Document)
+            .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
             .AsNoTracking()
             .FirstOrDefaultAsync(f => f.Id == id, cancellationToken);
 
@@ -1211,10 +1211,10 @@ public sealed class FlashcardService : IFlashcardService
 
     public async Task<FlashcardResponseDto> CreateAsync(CreateFlashcardRequestDto request, CancellationToken cancellationToken = default)
     {
-        var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
-        if (!documentExists)
+        var deckExists = await _unitOfWork.FlashcardDecks.GetByIdAsync(request.DeckId, cancellationToken) is not null;
+        if (!deckExists)
         {
-            throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
+            throw new KeyNotFoundException($"FlashcardDeck with ID {request.DeckId} not found.");
         }
 
         var flashcard = _mapper.Map<Data.Entities.Flashcard>(request);
@@ -1223,7 +1223,7 @@ public sealed class FlashcardService : IFlashcardService
 
         var created = await _unitOfWork.Flashcards
             .Query()
-            .Include(f => f.Document)
+            .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
             .AsNoTracking()
             .FirstOrDefaultAsync(f => f.Id == flashcard.Id, cancellationToken);
 
@@ -1244,7 +1244,7 @@ public sealed class FlashcardService : IFlashcardService
 
         var updated = await _unitOfWork.Flashcards
             .Query()
-            .Include(f => f.Document)
+            .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
             .AsNoTracking()
             .FirstOrDefaultAsync(f => f.Id == id, cancellationToken);
 
@@ -1264,22 +1264,22 @@ public sealed class FlashcardService : IFlashcardService
     }
 
     public async Task<int> DeleteDeckAsync(
-        Guid documentId,
+        Guid deckId,
         Guid userId,
         CancellationToken cancellationToken = default)
     {
-        var ownedDocumentExists = await _unitOfWork.Documents
+        var ownedDeckExists = await _unitOfWork.FlashcardDecks
             .Query()
             .AsNoTracking()
             .AnyAsync(
-                document => document.Id == documentId && document.UserId == userId,
+                deck => deck.Id == deckId && deck.Document.UserId == userId,
                 cancellationToken);
-        if (!ownedDocumentExists)
-            throw new KeyNotFoundException("Document not found.");
+        if (!ownedDeckExists)
+            throw new KeyNotFoundException("Deck not found.");
 
         var flashcards = await _unitOfWork.Flashcards
             .Query()
-            .Where(flashcard => flashcard.DocumentId == documentId)
+            .Where(flashcard => flashcard.DeckId == deckId)
             .ToListAsync(cancellationToken);
 
         foreach (var flashcard in flashcards)
@@ -1289,20 +1289,94 @@ public sealed class FlashcardService : IFlashcardService
         return flashcards.Count;
     }
 
-    public async Task<IReadOnlyList<FlashcardResponseDto>> GetByDocumentAsync(
+    public async Task<int> DeleteByDocumentAsync(
         Guid documentId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var documentExists = await _unitOfWork.Documents
+            .Query()
+            .AsNoTracking()
+            .AnyAsync(d => d.Id == documentId && d.UserId == userId, cancellationToken);
+        if (!documentExists)
+            throw new KeyNotFoundException("Document not found.");
+
+        var decks = await _unitOfWork.FlashcardDecks
+            .Query()
+            .Where(deck => deck.DocumentId == documentId)
+            .ToListAsync(cancellationToken);
+
+        var deckIds = decks.Select(d => d.Id).ToList();
+        var flashcards = await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => deckIds.Contains(f.DeckId))
+            .ToListAsync(cancellationToken);
+
+        foreach (var flashcard in flashcards)
+            _unitOfWork.Flashcards.Remove(flashcard);
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        return flashcards.Count;
+    }
+
+    public async Task<IReadOnlyList<FlashcardResponseDto>> GetByDeckAsync(
+        Guid deckId,
         Guid userId,
         CancellationToken cancellationToken = default)
     {
         var flashcards = await _unitOfWork.Flashcards
             .Query()
-            .Include(f => f.Document)
-            .Where(f => f.DocumentId == documentId && (f.Document.UserId == userId || f.Document.ShareStatus == "public"))
+            .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
+            .Where(f => f.DeckId == deckId && (f.FlashcardDeck.Document.UserId == userId || f.FlashcardDeck.Document.ShareStatus == "public"))
             .OrderBy(f => f.CreatedAt)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
         return flashcards.Select(_mapper.Map<FlashcardResponseDto>).ToList();
+    }
+
+    public async Task<IReadOnlyList<FlashcardDeckSummaryDto>> GetDecksByDocumentAsync(
+        Guid documentId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var decks = await _unitOfWork.FlashcardDecks
+            .Query()
+            .AsNoTracking()
+            .Where(d => d.DocumentId == documentId)
+            .OrderBy(d => d.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        if (decks.Count == 0)
+            return Array.Empty<FlashcardDeckSummaryDto>();
+
+        var document = await _unitOfWork.Documents
+            .Query()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId, cancellationToken);
+
+        if (document is null)
+            throw new KeyNotFoundException("Document not found.");
+
+        if (document.UserId != userId && document.ShareStatus != "public")
+            throw new KeyNotFoundException("Document not found.");
+
+        var deckIds = decks.Select(d => d.Id).ToList();
+        var counts = await _unitOfWork.Flashcards
+            .Query()
+            .AsNoTracking()
+            .Where(f => deckIds.Contains(f.DeckId))
+            .GroupBy(f => f.DeckId)
+            .Select(g => new { DeckId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.DeckId, x => x.Count, cancellationToken);
+
+        return decks.Select(d => new FlashcardDeckSummaryDto(
+            d.Id,
+            d.DocumentId,
+            d.Name,
+            d.CreatedAt,
+            counts.TryGetValue(d.Id, out var c) ? c : 0
+        )).ToList();
     }
 
     public async Task<IReadOnlyList<FlashcardResponseDto>> CreateBulkAsync(
@@ -1312,15 +1386,15 @@ public sealed class FlashcardService : IFlashcardService
         if (requests is null || requests.Count == 0)
             return Array.Empty<FlashcardResponseDto>();
 
-        var documentIds = requests.Select(r => r.DocumentId).Distinct().ToList();
-        var allDocumentsExist = await _unitOfWork.Documents
+        var deckIds = requests.Select(r => r.DeckId).Distinct().ToList();
+        var allDecksExist = await _unitOfWork.FlashcardDecks
             .Query()
-            .Where(d => documentIds.Contains(d.Id))
+            .Where(d => deckIds.Contains(d.Id))
             .Select(d => d.Id)
-            .CountAsync(cancellationToken) == documentIds.Count;
+            .CountAsync(cancellationToken) == deckIds.Count;
 
-        if (!allDocumentsExist)
-            throw new KeyNotFoundException("One or more documents not found.");
+        if (!allDecksExist)
+            throw new KeyNotFoundException("One or more decks not found.");
 
         var flashcards = requests
             .Select(r => _mapper.Map<Data.Entities.Flashcard>(r))
