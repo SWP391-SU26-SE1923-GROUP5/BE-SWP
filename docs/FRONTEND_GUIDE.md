@@ -453,7 +453,7 @@ await connection.invoke("JoinGroup", String(currentUserId));
 **Các event cần handle**:
 | `type` | Label cho user | Action FE nên làm |
 |---|---|---|
-| `2` Document | "Tài liệu đã sẵn sàng" | Toast success + refetch list document |
+| `2` Document | Hiển thị `payload.message` | Chỉ dùng toast success khi `payload.isChatReady === true`; luôn refetch document. `Done` với `isChatReady === false` (ví dụ định dạng không hỗ trợ Chat) không được báo đã sẵn sàng |
 | `3` Quiz (FlashcardsReady) | "X flashcard mới sẵn sàng" | Toast + refetch flashcard list |
 | `3` Quiz (QuizReady) | "Quiz đã được tạo" | Toast + navigate tới quiz |
 | `1` System (StreakAtRisk) | "Streak sắp mất, ôn ngay!" | Toast warning + link tới /review |

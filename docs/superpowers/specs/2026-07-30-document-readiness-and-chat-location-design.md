@@ -388,9 +388,12 @@ a public citation/source array or recreate citation persistence.
 
 The existing `ReceiveNotification` event remains the transport.
 
-Success communicates that the Document is ready. Failure communicates only
-that the Document could not be prepared. Both payloads identify the Document so
-the frontend can refetch its state.
+Every completion or failure payload mirrors the persisted readiness evaluation.
+The frontend displays `message` and treats `isChatReady` as the authoritative
+decision; a successful processing run does not necessarily mean the Document is
+ready. In particular, unsupported media may report `Done` with
+`isChatReady=false` and must not use ready copy. Both payloads identify the
+Document so the frontend can refetch its state.
 
 The failure payload must not expose the internal `ErrorMessage`. If the current
 payload type contains raw error text, the implementation replaces it with a
