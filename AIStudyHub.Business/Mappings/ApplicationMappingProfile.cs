@@ -14,6 +14,7 @@ using AIStudyHub.Business.DTOs.TierMemberships;
 using AIStudyHub.Business.DTOs.TokenWallet;
 using AIStudyHub.Business.DTOs.Users;
 using AIStudyHub.Business.DTOs.Votes;
+using AIStudyHub.Business.Services;
 using AIStudyHub.Data.Entities;
 using AutoMapper;
 
@@ -47,25 +48,7 @@ public sealed class ApplicationMappingProfile : Profile
             .ForMember(dest => dest.CurrentAiTokenUsage, opt => opt.Ignore());
 
         CreateMap<Document, DocumentResponseDto>()
-            .ConstructUsing(src => new DocumentResponseDto(
-                src.Id,
-                src.UserId,
-                src.SubjectId,
-                src.Title,
-                src.FileLink,
-                src.FileName,
-                src.FileExtension,
-                src.FileType,
-                src.FileSizeBytes,
-                src.ShareStatus,
-                src.Status,
-                src.ErrorMessage,
-                src.Votes != null ? src.Votes.Count : 0,
-                src.LifecycleStatus,
-                src.TrashedAt,
-                src.CreatedAt,
-                src.UpdatedAt
-            ));
+            .ConvertUsing(source => MapDocument(source));
         CreateMap<CreateDocumentRequestDto, Document>();
         CreateMap<UpdateDocumentRequestDto, Document>();
 
@@ -140,5 +123,30 @@ public sealed class ApplicationMappingProfile : Profile
                 src.Id, src.OperationType, src.Status.ToString(), src.EstimatedTokens,
                 src.ActualTokens, src.FailureReason, src.CreatedAt));
         CreateMap<Recommendation, RecommendationResponseDto>();
+    }
+
+    private static DocumentResponseDto MapDocument(Document source)
+    {
+        var readiness = DocumentReadinessEvaluator.Evaluate(source);
+        return new DocumentResponseDto(
+            source.Id,
+            source.UserId,
+            source.SubjectId,
+            source.Title,
+            source.FileLink,
+            source.FileName,
+            source.FileExtension,
+            source.FileType,
+            source.FileSizeBytes,
+            source.ShareStatus,
+            source.Status,
+            readiness.IsChatReady,
+            readiness.Message,
+            readiness.CanRetry,
+            source.Votes != null ? source.Votes.Count : 0,
+            source.LifecycleStatus,
+            source.TrashedAt,
+            source.CreatedAt,
+            source.UpdatedAt);
     }
 }

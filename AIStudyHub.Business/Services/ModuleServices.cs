@@ -43,16 +43,26 @@ public sealed class DocumentService : IDocumentService
         _vectorStoreService = vectorStoreService;
     }
 
-    private static DocumentResponseDto MapToDto(Document d) => new(
-        d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
-        d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status, d.ErrorMessage,
-        d.Votes.Sum(v => v.Type == AIStudyHub.Data.Enums.VoteType.Upvote ? 1 : -1),
-        d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
+    private static DocumentResponseDto MapToDto(Document d)
+    {
+        var readiness = DocumentReadinessEvaluator.Evaluate(d);
+        return new(
+            d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
+            d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status,
+            readiness.IsChatReady, readiness.Message, readiness.CanRetry,
+            d.Votes.Sum(v => v.Type == AIStudyHub.Data.Enums.VoteType.Upvote ? 1 : -1),
+            d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
+    }
 
-    private static DocumentResponseDto MapToDtoNoVotes(Document d) => new(
-        d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
-        d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status, d.ErrorMessage,
-        d.Votes.Count, d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
+    private static DocumentResponseDto MapToDtoNoVotes(Document d)
+    {
+        var readiness = DocumentReadinessEvaluator.Evaluate(d);
+        return new(
+            d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
+            d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status,
+            readiness.IsChatReady, readiness.Message, readiness.CanRetry,
+            d.Votes.Count, d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
+    }
 
     public async Task<string> GetAvailableFileNameAsync(
         Guid userId,

@@ -350,8 +350,10 @@ public class DocumentBackgroundProcessor : BackgroundService
             }
 
             var extension = Path.GetExtension(request.FileName).ToLowerInvariant();
-            var isTextDocument = new[] { ".pdf", ".docx", ".txt", ".md" }.Contains(extension);
-            var isImageFile = new[] { ".jpg", ".png", ".jpeg", ".webp", ".gif" }.Contains(extension);
+            var isTextDocument = DocumentRagFilePolicy.IsTextDocument(
+                request.FileName);
+            var isImageFile = DocumentRagFilePolicy.IsImageDocument(
+                request.FileName);
 
             var fileContent = await System.IO.File.ReadAllBytesAsync(request.FilePath, ct);
             var documentProcessing = services.GetRequiredService<IDocumentProcessingService>();

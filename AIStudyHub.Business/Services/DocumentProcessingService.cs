@@ -14,17 +14,13 @@ using WpDrawing = DocumentFormat.OpenXml.Wordprocessing.Drawing;
 using DocProperties = DocumentFormat.OpenXml.Drawing.Wordprocessing.DocProperties;
 using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.Enums;
+using AIStudyHub.Business.AI;
 
 
 namespace AIStudyHub.Business.Services;
 
 public sealed class DocumentProcessingService : IDocumentProcessingService
 {
-    private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".txt", ".md", ".pdf", ".docx", ".jpg", ".png", ".jpeg", ".webp", ".gif"
-    };
-
     private static readonly string TessDataPath = ResolveTessDataPath();
 
     private static string ResolveTessDataPath()
@@ -48,7 +44,7 @@ public sealed class DocumentProcessingService : IDocumentProcessingService
     {
         var extension = fileExtension.ToLowerInvariant().TrimStart('.');
 
-        if (!SupportedExtensions.Contains($".{extension}"))
+        if (!DocumentRagFilePolicy.SupportsChat(fileExtension))
             throw new NotSupportedException($"File type '.{extension}' is not supported. Supported types: .txt, .md, .pdf, .docx");
 
         return extension switch
