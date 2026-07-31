@@ -59,7 +59,7 @@ Data access layer. Holds **21 entity classes** (all inheriting `BaseEntity`, exc
 | **Spaced Repetition Review** | SM-2 algorithm — per-user schedule (ease factor / interval / repetitions), due-today list, daily counts |
 | **Quiz Generation** | AI-powered multiple-choice quiz creation, auto-persisted with questions and answers |
 | **Quiz Submission** | Submit answers, auto-grading, score tracking |
-| **AI Chat** | Session-based chat with document context; responses contain answer text and relevance without citation arrays or highlight metadata |
+| **AI Chat** | Session-based chat with document context; readiness-gated attachments and answer text with plain-text per-document locations, without citation arrays or highlight metadata |
 | **Gamification** | XP / level / current-best streak, leaderboard, activity logging via `StudyLog` |
 | **Recommendations** | Per-subject mastery analytics + AI-driven study suggestions |
 | **Notifications** | DB-backed list + real-time push via SignalR `/hubs/notifications` |
@@ -67,7 +67,7 @@ Data access layer. Holds **21 entity classes** (all inheriting `BaseEntity`, exc
 | **Tier Memberships** | Subscription tiers with storage and AI token quotas |
 | **Admin** | Dashboard data, document reindexing, user/document/report moderation |
 
-Normal document-chat answers do not automatically name files or pages. When a user explicitly asks for a location, the assistant may state only a positive page number carried by a supporting PDF/OCR chunk; DOCX, TXT, and legacy chunks without trustworthy page metadata report that the exact page is unavailable. Hybrid-search diagnostics still return `pageNumber` and `chunkIndex`, but not `isHighlightable`. Removing the obsolete chat-citation schema preserves existing session and message text.
+Every relevant grounded document-chat answer appends a plain-text `Vị trí nội dung liên quan trong tài liệu:` section grouped by file. Trusted positive PDF/OCR pages are rendered as pages or consecutive ranges; documents with no trusted page show `không xác định được trang`, and mixed known/unknown context adds `một số đoạn không xác định được trang`. This is not a citation array or claim-level citation system, and `chunkIndex` is never a page number. Irrelevant or empty answers do not receive the location section. Hybrid-search diagnostics still return `pageNumber` and `chunkIndex`, but not `isHighlightable`. Removing the obsolete chat-citation schema preserves existing session and message text.
 
 ## AI Architecture
 
@@ -520,7 +520,7 @@ erDiagram
 
 ## Background Workers
 
-1. **DocumentBackgroundProcessor** — dequeues uploaded documents, extracts text/OCR segments, assembles chunks, generates batch embeddings and sparse vectors, upserts directly to Qdrant, updates DB status, and pushes a `ReceiveNotification` event when done.
+1. **DocumentBackgroundProcessor** — dequeues uploaded documents, extracts text/OCR segments, assembles chunks, generates batch embeddings and sparse vectors, upserts directly to Qdrant, updates DB status, and pushes a safe `ReceiveNotification` readiness event when processing completes or fails.
 2. **TierExpirationCleanupService** — runs every 24h, downgrades expired subscriptions to Free tier.
 3. **UnverifiedAccountCleanupService** — runs daily, removes accounts older than 7 days that are still unverified.
 4. **DailyStreakResetWorker** — runs daily, resets `CurrentStreak` to 0 for users whose `LastActivityDate` is older than yesterday, and pushes a `StreakAtRisk` notification when a streak is about to lapse.
@@ -591,6 +591,12 @@ The background processor transitions the document to `Done` or `Failed`. On
 application startup, it resumes active `Processing` documents from their
 persisted records; if a stored source file is missing, the document is marked
 `Failed`.
+
+### Document readiness and Chat
+
+The upload response includes `documentId`, `status`, `chunkCount`, `message`, `isChatReady`, and `canRetry`; `GET /api/Document/{id}/status` returns `id`, `status`, `isChatReady`, `message`, and `canRetry`. `isChatReady` is authoritative. Display `Tài liệu đang được chuẩn bị.` while `Processing`, `Tài liệu đã sẵn sàng.` when ready, `Không thể chuẩn bị tài liệu.` when failed, and `Loại tài liệu này không hỗ trợ Chat.` for an unsupported type. Use SignalR as the immediate update and poll status as fallback; show an indeterminate spinner rather than invented percentage progress.
+
+`Processing` and `Failed` documents may be attached to a Chat session, but sending is blocked when any attachment is unready. The API returns `409 DOCUMENTS_NOT_READY` before it persists a user message or consumes AI tokens. Offer retry only when `canRetry=true`; disable it immediately after use and call `POST /api/Document/{id}/reprocess`. Readiness responses and SignalR payloads expose only safe fields and never the internal `ErrorMessage`.
 
 Copy or merge the `DocumentStorage` section from
 `AIStudyHub.API/appsettings.DocumentStorage.example.json` into your ignored runtime

@@ -1,37 +1,45 @@
 # AIStudyHub - Frontend Integration Guide
 
-## AI Notebook session reload and page-aware answers
+## AI Notebook: tải lại phiên, trạng thái tài liệu và vị trí nội dung
 
-Frontend route khuyen nghi: `/ai-notebook/{sessionId}`.
+Frontend route khuyến nghị: `/ai-notebook/{sessionId}`.
 
-Khi mo route hoac refresh trang, Frontend dung `sessionId` de goi:
+Khi mở route hoặc refresh trang, Frontend dùng `sessionId` để gọi:
 
 ```http
 GET /api/Chat/sessions/{sessionId}/messages
 GET /api/Chat/sessions/{sessionId}/documents
 ```
 
-Backend tra `404` neu session khong ton tai hoac khong thuoc user dang dang nhap. Khong tu dong chon Notebook moi nhat khi URL da co `sessionId`.
+Backend trả `404` nếu session không tồn tại hoặc không thuộc user đang đăng nhập. Không tự động chọn Notebook mới nhất khi URL đã có `sessionId`.
 
-Response tao message va response lich su dung cung contract `ChatMessageResponseDto`:
+Response tạo message và response lịch sử dùng cùng contract `ChatMessageResponseDto`:
 
 ```json
 {
   "id": "11111111-1111-1111-1111-111111111111",
   "chatSessionId": "22222222-2222-2222-2222-222222222222",
   "sender": "assistant",
-  "content": "Noi dung tra loi dua tren tai lieu.",
+  "content": "Nội dung trả lời dựa trên tài liệu.",
   "createdAt": "2026-07-30T07:30:00Z",
   "updatedAt": null,
   "isRelevant": true
 }
 ```
 
-Response khong co `citations`, source snippet, marker `[n]`, hoac highlight metadata. Frontend chi render `content`; khong can parser marker hoac UI source list. Cau tra loi thong thuong khong tu dong neu ten file/trang.
+Response không có `citations`, source snippet, marker `[n]`, hoặc highlight metadata. Frontend chỉ render `content`; không cần parser marker hoặc UI source list. Mỗi câu trả lời grounded liên quan đều tự động có phần văn bản thuần `Vị trí nội dung liên quan trong tài liệu:` ở cuối. Backend nhóm vị trí theo file, gộp các trang liên tiếp thành khoảng, hiển thị `không xác định được trang` khi file không có trang đáng tin cậy, và thêm `một số đoạn không xác định được trang` khi một file có cả trang biết và không biết. Câu trả lời không liên quan hoặc rỗng không có phần này.
 
-Chi khi user hoi ro noi dung nam o trang nao, backend moi co the dua trang vao `content`, va chi dung `pageNumber` duong tu chunk PDF/OCR. Khong suy ra trang tu `chunkIndex`. Neu DOCX, TXT, hoac vector cu khong co page metadata dang tin cay, `content` se noi ro khong xac dinh duoc trang chinh xac.
+Trang chỉ đến từ `pageNumber` dương của chunk PDF/OCR; không suy ra từ `chunkIndex`, thứ tự text, hay thông tin của model. Phần vị trí là nội dung text của câu trả lời, không phải citation array hay hệ thống citation theo từng claim.
 
-Migration `20260730071539_RemoveChatCitations` chi xoa bang metadata cu; lich su `ChatMessage.content` va session van con sau khi deploy.
+### Trạng thái sẵn sàng cho Chat
+
+`isChatReady` là cờ quyết định duy nhất việc gửi Chat. Hiển thị đúng copy tiếng Việt: `Tài liệu đang được chuẩn bị.` cho `Processing`, `Tài liệu đã sẵn sàng.` cho `Done`, `Không thể chuẩn bị tài liệu.` cho `Failed`, và `Loại tài liệu này không hỗ trợ Chat.` cho file không hỗ trợ. Dùng SignalR làm cập nhật tức thời và poll `GET /api/Document/{id}/status` làm fallback; trong lúc `Processing`, dùng spinner không xác định thay vì phần trăm giả.
+
+Response upload là `{ documentId, status, chunkCount, message, isChatReady, canRetry }`; status endpoint là `{ id, status, isChatReady, message, canRetry }`; response document/Chat attachment cũng có `status`, `isChatReady`, `message`, `canRetry`. Chỉ hiển thị Retry khi `canRetry=true`; ngay khi click phải disable nút rồi gọi `POST /api/Document/{id}/reprocess`.
+
+Có thể attach tài liệu `Processing` và `Failed`, nhưng không được gửi message nếu bất kỳ attachment nào có `isChatReady=false`. Backend trả `409` với code `DOCUMENTS_NOT_READY`, chỉ chứa các document đang chặn; request bị chặn không tạo user message và không dùng AI token. Không hiển thị hoặc lưu `ErrorMessage` nội bộ: REST và SignalR chỉ gửi các safe fields ở trên.
+
+Migration `20260730071539_RemoveChatCitations` chỉ xóa bảng metadata cũ; lịch sử `ChatMessage.content` và session vẫn còn sau khi deploy.
 
 > **Phiên bản**: cập nhật 2026-07-30
 > **Backend**: ASP.NET Core 8 Web API
@@ -55,7 +63,7 @@ AIStudyHub là nền tảng học tập cá nhân hoá bằng AI với 4 trụ c
 | Trụ cột | Mô tả |
 |---|---|
 | **Tài liệu (Document)** | User upload file PDF/Word/TXT/MD → hệ thống OCR, chunk, vector hoá để phục vụ RAG. |
-| **AI Hỏi đáp (RAG Chat)** | Hỏi đáp theo tài liệu của user, có trích dẫn nguồn và độ tin cậy. |
+| **AI Hỏi đáp (RAG Chat)** | Hỏi đáp theo tài liệu của user, có vị trí nội dung dạng văn bản thuần theo từng file và độ tin cậy. |
 | **Flashcard + Spaced Repetition (SM-2)** | Tạo flashcard (thủ công hoặc AI), ôn tập theo lịch SM-2 tự động. |
 | **Quiz + Gamification** | Sinh quiz từ tài liệu bằng AI, chấm điểm, cộng XP/level/streak, có leaderboard. |
 
@@ -133,15 +141,15 @@ sequenceDiagram
     U->>FE: Chọn file PDF + title + subject
     FE->>API: POST /api/Document/upload/file (multipart)
     API->>API: Lưu file + queue background job
-    API-->>FE: 202 Accepted { documentId, status: "processing" }
+    API-->>FE: 202 Accepted { documentId, status, message, isChatReady, canRetry }
     Note over API: Background worker xử lý: OCR → chunk → embed → vector store
     FE->>API: GET /api/Document/{id}/status (poll 3-5s)
-    API-->>FE: { status: "Done" | "Failed" | "Processing" }
-    Note over API: Khi xong, push qua SignalR: ReceiveNotification( DocumentProcessedPayload )
+    API-->>FE: { id, status, message, isChatReady, canRetry }
+    Note over API: Khi xong/lỗi, push qua SignalR: ReceiveNotification(payload readiness an toàn)
     FE->>U: Hiện toast "Tài liệu đã sẵn sàng"
 ```
 
-> **Lưu ý FE**: Status `5 = Processing`, `2 = Done`. Phải connect SignalR và join group `userId` **trước** khi upload để không miss notification.
+> **Lưu ý FE**: Dùng `isChatReady`, không suy luận từ mã enum status. Phải connect SignalR và join group `userId` **trước** khi upload để không bỏ lỡ notification; nếu mất kết nối, polling status vẫn phải cập nhật được trạng thái cuối.
 
 ### 3.5. Ôn tập Flashcard (Spaced Repetition - SM-2)
 
@@ -244,11 +252,18 @@ sequenceDiagram
 ```json
 {
   "userId": "guid",
-  "title": "Document processed",
-  "body": "\"Slide_Tuan3.pdf\" is ready.",
+  "title": "Tài liệu đã sẵn sàng",
+  "body": "\"Slide_Tuan3.pdf\" đã sẵn sàng để sử dụng.",
   "type": 2,
   "timestamp": "2026-06-28T10:30:00Z",
-  "payload": { "documentId": "guid", "title": "Slide_Tuan3.pdf" }
+  "payload": {
+    "documentId": "guid",
+    "title": "Slide_Tuan3.pdf",
+    "status": "Done",
+    "isChatReady": true,
+    "message": "Tài liệu đã sẵn sàng.",
+    "canRetry": false
+  }
 }
 ```
 
@@ -256,7 +271,7 @@ sequenceDiagram
 
 | `type` enum | Khi nào | `payload` shape |
 |---|---|---|
-| `2` Document | Document xử lý xong | `{ documentId, title }` |
+| `2` Document | Document sẵn sàng hoặc xử lý thất bại | `{ documentId, title, status, isChatReady, message, canRetry }` — không có `ErrorMessage` nội bộ |
 | `3` Quiz | Quiz AI sinh xong | `{ quizId, title }` |
 | `3` Quiz | Flashcards mới sẵn sàng | `{ documentId, title, count }` |
 | `1` System | Streak sắp mất (chưa học trong ngày) | `{ currentStreak, hoursRemaining }` |
@@ -289,7 +304,7 @@ sequenceDiagram
 | Tính năng UI | Gọi API theo thứ tự | Ghi chú |
 |---|---|---|
 | **Trang danh sách tài liệu (có filter + phân trang)** | `GET /api/Document?pageIndex=1&pageSize=20&subjectId=&searchTerm=` | Hỗ trợ `subjectId` để lọc theo môn |
-| **Upload file PDF/Word** | 1. `POST /api/Document/upload/file` (multipart) → 2. Poll `GET /api/Document/{id}/status` mỗi 3s HOẶC đợi SignalR `ReceiveNotification` với `type=2` | Bước 1 trả 202 ngay, không cần đợi xử lý xong |
+| **Upload file PDF/Word** | 1. `POST /api/Document/upload/file` (multipart) → 2. Đợi SignalR `ReceiveNotification` với `type=2`; poll `GET /api/Document/{id}/status` mỗi 3s là fallback | Bước 1 trả 202 ngay với readiness fields; hiển thị spinner không xác định, không dùng phần trăm giả |
 | **Xem chi tiết document (metadata)** | `GET /api/Document/{id}` | Trả 403 nếu không phải owner và không public |
 | **Xem file PDF inline** | `GET /api/Document/{id}/preview` (stream) | Dùng `<iframe src=...>` hoặc PDF.js |
 | **Tải file về máy** | `GET /api/Document/{id}/download` (stream) | Có thể dùng `<a download>` |
@@ -297,7 +312,7 @@ sequenceDiagram
 | **Chia sẻ cho người khác** | 1. `GET /api/User/shareable?keyword=` (gợi ý user) → 2. `POST /api/Document/{id}/share { sharedUserIds: [...] }` | Bước 1 cần để hiển thị dropdown chọn user |
 | **Xoá tài liệu** | `DELETE /api/Document/{id}` | Response 204; FE refetch list sau khi xoá |
 | **Xem lại nội dung text chunks (debug)** | `GET /api/Document/{id}/chunks` | Chỉ owner, chỉ dùng cho debug/admin |
-| **Upload lại khi fail** | `POST /api/Document/{id}/reprocess` | Dùng khi status = 6 (Failed) |
+| **Upload lại khi fail** | `POST /api/Document/{id}/reprocess` | Chỉ hiện khi `canRetry=true`; disable nút ngay sau click |
 
 ### 5.5.3. AI & Chat
 
@@ -310,7 +325,7 @@ sequenceDiagram
 | **Danh sách chat session (sidebar)** | `GET /api/Chat/sessions` | |
 | **Tạo session mới** | `POST /api/Chat/sessions { sessionTitle }` | |
 | **Mở 1 session, xem messages** | `GET /api/Chat/sessions/{sessionId}/messages` | |
-| **Gửi message trong session** | `POST /api/Chat/messages { sessionId, message }` | Response là message AI rút gọn; render `content`, không có source array/highlight metadata |
+| **Gửi message trong session** | `POST /api/Chat/messages { sessionId, message }` | Attachment `Processing`/`Failed` được phép, nhưng send trả `409 DOCUMENTS_NOT_READY` nếu có document chưa ready; response không tạo user message hay dùng token |
 
 ### 5.5.4. Flashcard & Spaced Repetition
 
@@ -1218,11 +1233,11 @@ Lấy lịch sử messages của 1 session.
 
 ### 17.4. POST `/api/Chat/messages`
 
-Gửi message mới theo hai giai đoạn: backend lưu user message trước khi gọi AI; sau đó lưu assistant message với nội dung trả lời và `isRelevant`. Token accounting vẫn được ghi từ kết quả orchestration.
+Khi tất cả attachment đã ready, backend lưu user message trước khi gọi AI; sau đó lưu assistant message với nội dung trả lời và `isRelevant`. Token accounting được ghi từ kết quả orchestration. Trước bước này, backend kiểm tra tất cả attachment: `Processing` và `Failed` vẫn có thể được attach, nhưng bất kỳ attachment chưa ready nào đều trả `409 DOCUMENTS_NOT_READY`. Response có `documents[]` chỉ gồm blocker với `{ documentId, title, status, isChatReady, message, canRetry }`; request bị chặn không lưu user message và không dùng AI token.
 
 **Body**: `{ "sessionId": "guid", "message": "string" }`
 
-**Response 200**: `ChatMessageResponseDto` với `id`, `chatSessionId`, `sender`, `content`, `createdAt`, `updatedAt`, và `isRelevant`. Không có `citations`, marker nguồn, source snippet, hay highlight metadata. Câu trả lời bình thường không tự nêu file/trang; câu hỏi vị trí chỉ nhận trang dương từ metadata PDF/OCR, còn DOCX/TXT/legacy không có trang tin cậy sẽ báo không xác định được trang chính xác.
+**Response 200**: `ChatMessageResponseDto` với `id`, `chatSessionId`, `sender`, `content`, `createdAt`, `updatedAt`, và `isRelevant`. Không có `citations`, marker nguồn, source snippet, hay highlight metadata. Mỗi câu trả lời grounded liên quan tự append phần `Vị trí nội dung liên quan trong tài liệu:` theo từng file; trang PDF/OCR đáng tin cậy được gộp thành range, file không có trang tin cậy hiển thị `không xác định được trang`, và trường hợp mixed thêm `một số đoạn không xác định được trang`. Đây là plain text, không phải citation contract; không dùng `chunkIndex` làm trang.
 
 `GET /api/Chat/sessions/{sessionId}/messages` trả cùng response shape. Sau migration loại bỏ bảng metadata cũ, text của các message đã lưu vẫn được giữ nguyên.
 
@@ -1638,7 +1653,7 @@ erDiagram
 
 Tài liệu này khác với bản trước ở các điểm sau (FE phải update code):
 
-1. **Có SignalR** - Bản cũ nói "Dự án không sử dụng SignalR" - **SAI**. Hiện tại có hub `/hubs/notifications`. FE **bắt buộc** connect SignalR để nhận document processed, flashcard ready, level up, streak warning.
+1. **Có SignalR** - Bản cũ nói "Dự án không sử dụng SignalR" - **SAI**. Hiện tại có hub `/hubs/notifications`. FE nên connect SignalR để nhận document readiness, flashcard ready, level up, streak warning; polling trạng thái document vẫn là fallback khi SignalR mất kết nối.
 2. ✅ **Đã bổ sung `POST /api/Quiz/{id}/submit`** - FE submit bài thi qua endpoint này (xem mục 5.5.5). Backend cũ `POST /api/QuizSubmission` vẫn bị xoá và không nên dùng.
 3. **`/api/Notification` POST/PUT/DELETE đã xóa** - Notification do hệ thống tự tạo, FE chỉ GET + mark-as-read.
 4. **`/api/User` POST/DELETE đã xóa** - Đăng ký qua `/api/Auth/register`, xóa user cần nghiệp vụ riêng (chưa có API).

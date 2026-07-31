@@ -116,6 +116,68 @@ Only the document owner may delete its deck. Missing and other-user documents bo
 
 Deletion removes every flashcard for that document. Database cascades remove each card's current `FlashcardReview` and immutable `FlashcardReviewAttempt` rows. It does not delete or modify the document, uploaded file, vector chunks, quizzes, questions, answers, quiz submissions, study logs, subject, or other document resources.
 
+## Document readiness and Chat
+
+### Upload and readiness status
+
+`POST /api/Document/upload/file` returns `202 Accepted` only after the source file and a `Processing` document have been stored. Its response has these readiness fields:
+
+```json
+{
+  "documentId": "00000000-0000-0000-0000-000000000000",
+  "status": "Processing",
+  "chunkCount": 0,
+  "message": "Tài liệu đang được chuẩn bị.",
+  "isChatReady": false,
+  "canRetry": false
+}
+```
+
+`GET /api/Document/{id}/status` returns `{ id, status, isChatReady, message, canRetry }`. `DocumentResponseDto` uses the same `status`, `isChatReady`, `message`, and `canRetry` readiness fields. `isChatReady` is authoritative: only an active, supported `Done` document is ready for Chat. The user-facing messages are `Tài liệu đang được chuẩn bị.` for `Processing`, `Tài liệu đã sẵn sàng.` for `Done`, `Không thể chuẩn bị tài liệu.` for `Failed`, and `Loại tài liệu này không hỗ trợ Chat.` for an unsupported file type.
+
+Clients use SignalR for the immediate terminal-state notification and poll `GET /api/Document/{id}/status` as the fallback. Render `Processing` with an indeterminate spinner, not fabricated percentage progress. Retry is shown only for `canRetry=true`; on click, disable the retry control and call `POST /api/Document/{id}/reprocess`, which returns the same upload readiness shape with `Processing` state.
+
+`ReceiveNotification` delivers a normal notification envelope with a document payload:
+
+```json
+{
+  "documentId": "00000000-0000-0000-0000-000000000000",
+  "title": "Slide_Tuan3.pdf",
+  "status": "Done",
+  "isChatReady": true,
+  "message": "Tài liệu đã sẵn sàng.",
+  "canRetry": false
+}
+```
+
+For a failure, `status` is `Failed`, `isChatReady` is `false`, `message` is `Không thể chuẩn bị tài liệu.`, and `canRetry` is `true`. REST responses and SignalR payloads never expose internal `ErrorMessage` content.
+
+### Session attachments and blocked sends
+
+`POST /api/Chat/sessions/{sessionId}/documents` accepts `{ "documentId": "guid" }`, including `Processing` and `Failed` documents. It and `GET /api/Chat/sessions/{sessionId}/documents` return `chatSessionId`, `documentId`, `title`, `fileName`, `addedAt`, `status`, `isChatReady`, `message`, and `canRetry`.
+
+`POST /api/Chat/messages` validates every currently attached document before token-quota validation or user-message persistence. If one or more attachments are unready, it returns `409 Conflict`:
+
+```json
+{
+  "statusCode": 409,
+  "code": "DOCUMENTS_NOT_READY",
+  "message": "Một hoặc nhiều tài liệu chưa sẵn sàng.",
+  "documents": [
+    {
+      "documentId": "00000000-0000-0000-0000-000000000000",
+      "title": "Slide_Tuan3.pdf",
+      "status": "Processing",
+      "isChatReady": false,
+      "message": "Tài liệu đang được chuẩn bị.",
+      "canRetry": false
+    }
+  ]
+}
+```
+
+The response contains only actual blockers. Rejected sends persist no user message and consume no AI tokens.
+
 ## Page-aware document chat
 
 `POST /api/Chat/messages` and `GET /api/Chat/sessions/{sessionId}/messages` return the same reduced `ChatMessageResponseDto` shape:
@@ -132,9 +194,9 @@ Deletion removes every flashcard for that document. Database cascades remove eac
 }
 ```
 
-Chat responses do not include a `citations` property, source snippets, highlight flags, source arrays, or bracketed source markers. Normal answers do not automatically name a document or page.
+Chat responses do not include a `citations` property, source snippets, highlight flags, source arrays, or bracketed source markers. Every relevant grounded answer appends a plain-text `Vị trí nội dung liên quan trong tài liệu:` section. It groups locations by document, renders trusted positive PDF/OCR pages as pages or consecutive ranges, uses `không xác định được trang` when a document has no trusted page, and adds `một số đoạn không xác định được trang` for mixed known/unknown context. Irrelevant or empty answers omit the section. This is not a citation array or claim-level citation system.
 
-When the user explicitly asks where content appears, the assistant may state a page only from a positive `pageNumber` attached to a supporting PDF or OCR chunk. It never derives a page from `chunkIndex`, text order, surrounding text, document length, or model knowledge. If every supporting chunk has no trustworthy page metadata—as with DOCX, TXT, or legacy vectors—the answer states that the exact page is unavailable.
+Location rendering never derives a page from `chunkIndex`, text order, surrounding text, document length, or model knowledge.
 
 Migration `20260730071539_RemoveChatCitations` drops only the obsolete chat-citation table. It does not delete or rewrite `ChatMessage`, `ChatSession`, or stored message text, so chat history content remains available after deployment.
 

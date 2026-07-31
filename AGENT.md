@@ -251,7 +251,7 @@ Enums (7+):
 - Gamification services (`IGamificationService`) live alongside ModuleServices and own XP / level / streak math, leaderboard queries, and `StudyLog` persistence.
 - Spaced-repetition services (`IFlashcardReviewService`) implement SM-2 (ease factor, interval, repetitions, next-review date). One row per (user, flashcard).
 - Recommendation services (`IRecommendationService`) compute per-subject mastery from `StudyLog` and produce AI-driven study suggestions.
-- Real-time push (`IRealTimeNotificationService` / `INotificationsHub`) wraps SignalR group messaging and is injected into services that need to push events (document processed, quiz ready, level up, streak at risk).
+- Real-time push (`IRealTimeNotificationService` / `INotificationsHub`) wraps SignalR group messaging and is injected into services that need to push events (document readiness, quiz ready, level up, streak at risk).
 - Services contain business rules and orchestration.
 - Services should depend on abstractions, not concrete data access classes.
 - Services should return DTOs.
@@ -297,12 +297,14 @@ Enums (7+):
 - RAG orchestration: use `ISemanticKernelOrchestrator` — handles L3-L5 pipeline.
 - RAG context selection must reject invalid/missing document IDs, enforce any supplied document allowlist, reject blank source/content, and deduplicate chunks before prompting.
 - Chat message responses contain answer text and relevance only; do not add citation arrays, source snippets, marker indexes, or highlightability metadata back to the public contract.
-- Normal chat answers must not automatically name a document/page. State a page only for an explicit location question and only from a positive `pageNumber`; never reinterpret `chunkIndex` as a page. When supporting chunks have no trustworthy page metadata, state that the exact page is unavailable.
+- Every relevant grounded chat answer appends the plain-text per-document heading `Vị trí nội dung liên quan trong tài liệu:`. Group sources by document; render trusted positive PDF/OCR pages as individual pages or consecutive ranges, say `không xác định được trang` when a document has no trusted page, and add `một số đoạn không xác định được trang` for mixed known/unknown pages. Do not append locations to irrelevant or empty answers. This is answer text, not a citation array or claim-level citation system; never reinterpret `chunkIndex` as a page.
 - AI generators: `IQuizAiService` and `IFlashcardAiService` require integer `numberOfQuestions` / `numberOfFlashcards` values from 1 through 20; they may generate only from the owner's `Done` document with nonempty processed context.
 - Generation is all-or-nothing: persist exactly the requested flashcards or quiz questions, or return `422 Unprocessable Entity` with no partial rows. Flashcard generation returns the persisted cards; quiz generation returns metadata with `Questions` null, so clients fetch `GET /api/Quiz/{id}` for persisted question items.
 - Guardrails: `IFaithfulnessFilter`, `IGroundingVerifier`, `IConfidenceScorer` validate responses.
 - Document ingestion: `IDocumentProcessingService` extracts and chunks text.
 - Background processing: an upload persists its file and `Processing` document before returning `202 Accepted`; `DocumentBackgroundProcessor` drives the async pipeline and recovers persisted active `Processing` documents at startup, marking a missing source `Failed`.
+- `isChatReady` is the authoritative document-attachment gate. `Processing` and `Failed` documents may be attached, but sending is rejected with `409 DOCUMENTS_NOT_READY` if any attached document is unready; the rejection persists no user message and consumes no AI tokens. The safe readiness fields are `status`, `isChatReady`, `message`, and `canRetry`; never expose internal `ErrorMessage`.
+- Frontends use SignalR `ReceiveNotification` as the immediate readiness update and `GET /api/Document/{id}/status` polling as the fallback. Use an indeterminate spinner, never a fabricated percentage. Show retry only for `canRetry=true`; disable it after click and call `POST /api/Document/{id}/reprocess`.
 - Never hardcode embedding dimensions — read from configuration (`VectorSize` / `VectorDimension`).
 
 ## Real-time Rules (SignalR)

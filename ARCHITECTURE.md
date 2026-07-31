@@ -590,7 +590,7 @@ sequenceDiagram
 
         Orch->>Orch: Validate document metadata + allowlist<br/>Deduplicate and preserve retrieval order
         Orch->>Orch: Build context with FILE_NAME,<br/>positive PAGE_NUMBER or unknown, and CONTENT
-        Orch->>Orch: Build shared system prompt:<br/>- Answer only from supplied content<br/>- Name document/page only for explicit location questions<br/>- Never infer a page from chunk order<br/>- No source markers, lists, or metadata labels<br/>- Vietnamese by default
+        Orch->>Orch: Build shared system prompt:<br/>- Answer only from supplied content<br/>- Do not generate source names/pages; backend appends locations<br/>- Never infer a page from chunk order<br/>- No source markers, lists, or metadata labels<br/>- Vietnamese by default
         Orch->>Orch: Build user prompt:<br/>"SOURCE CONTENT: [chunks]\nQUESTION: [question]"
 
         Orch->>LLM: SendMessageAsync(systemPrompt + userPrompt)
@@ -615,14 +615,21 @@ sequenceDiagram
     rect rgb(250, 240, 255)
         Note over Orch,Client: L5 — Response
 
-        Orch-->>Chat: RagResponseWithUsage(answer, confidence,<br/>tokens, isRelevant)
+        Orch->>Orch: Append plain-text locations per document<br/>for every relevant grounded answer
+        Orch-->>Chat: RagResponseWithUsage(answer + locations, confidence,<br/>tokens, isRelevant)
         Chat->>Chat: Persist ChatMessage text + relevance
         Chat-->>Controller: ChatMessageResponseDto
         Controller-->>Client: ChatMessageResponseDto<br/>(no source array or highlight metadata)
     end
 ```
 
-`pageNumber` remains internal retrieval context for chat and is used only when it is a positive value on a supporting PDF/OCR chunk and the user explicitly asks where content appears. DOCX, TXT, and legacy chunks without trustworthy page metadata produce an honest “exact page unavailable” answer. The search-only hybrid endpoint continues to expose nullable `PageNumber` and `ChunkIndex` for diagnostics, but not `IsHighlightable`. Removing the obsolete chat-citation table leaves existing `ChatMessage.Content` and sessions intact.
+Every relevant grounded chat answer receives a plain-text `Vị trí nội dung liên quan trong tài liệu:` section after generation. The formatter groups retrieved context by document, renders trusted positive PDF/OCR pages as individual pages or consecutive ranges, uses `không xác định được trang` for documents with no trusted page, and adds `một số đoạn không xác định được trang` when known and unknown pages are mixed. It is omitted for irrelevant or empty answers. This is not a citation array or claim-level citation system, and `chunkIndex` is never treated as a page number. The search-only hybrid endpoint continues to expose nullable `PageNumber` and `ChunkIndex` for diagnostics, but not `IsHighlightable`. Removing the obsolete chat-citation table leaves existing `ChatMessage.Content` and sessions intact.
+
+#### Document readiness and chat attachment gate
+
+Uploads return `202 Accepted` after durable storage with `documentId`, `status`, `chunkCount`, `message`, `isChatReady`, and `canRetry`; `GET /api/Document/{id}/status` returns `id`, `status`, `isChatReady`, `message`, and `canRetry`. `isChatReady` is authoritative: it is true only for active, supported `Done` documents. The Vietnamese UI messages are `Tài liệu đang được chuẩn bị.` (`Processing`), `Tài liệu đã sẵn sàng.` (`Done`), `Không thể chuẩn bị tài liệu.` (`Failed`), and `Loại tài liệu này không hỗ trợ Chat.` (unsupported type). SignalR `ReceiveNotification` provides the immediate terminal update, while status polling is the fallback; clients show an indeterminate spinner instead of fabricated progress.
+
+Chat sessions may attach `Processing` and `Failed` documents, and attachment responses carry `status`, `isChatReady`, `message`, and `canRetry`. Before writing a user message or consuming AI tokens, Chat rejects a send with `409 DOCUMENTS_NOT_READY` if any attachment is unready. The response identifies only those blockers with their safe readiness fields. UI retry is available only when `canRetry=true`; disable it after it is clicked and call `POST /api/Document/{id}/reprocess`. REST and SignalR contracts never expose the internal `ErrorMessage`.
 
 #### L6 — Flashcard Generation Flow
 

@@ -15,13 +15,17 @@
 
 The backend build succeeds. No database migration is applied automatically by the application or by the feature implementation workflow.
 
-## Page-aware chat and hybrid search
+## Document readiness, Chat, and locations
 
 | Capability | Status | Notes |
 | --- | --- | --- |
 | Reduced chat response | Implemented | Create-message and history responses contain message identity, sender, content, timestamps, and relevance only; no `citations` property is returned. |
-| Grounded normal answers | Implemented | Normal answers do not automatically name documents/pages or append source markers and source lists. |
-| Explicit page questions | Implemented | A page may be stated only from positive PDF/OCR `pageNumber` metadata; DOCX, TXT, and legacy chunks without that metadata report that the exact page is unavailable. `chunkIndex` is never treated as a page. |
+| Automatic grounded locations | Implemented | Every relevant grounded answer appends a plain-text per-document location section. Trusted pages are grouped into individual pages or ranges; unknown and mixed known/unknown pages use Vietnamese fallback text. Irrelevant and empty answers omit it. |
+| No citation contract | Implemented | Locations remain answer text, not citation arrays, source markers, or claim-level citations. `chunkIndex` is never treated as a page. |
+| Readiness contract | Implemented | Upload, document status, document list/detail, and Chat attachment responses expose `status`, `isChatReady`, `message`, and `canRetry`; `isChatReady` is authoritative. |
+| Readiness notification | Implemented | SignalR `ReceiveNotification` sends the same safe document readiness fields for `Done` and `Failed`; no REST or SignalR contract exposes internal `ErrorMessage`. |
+| Attachment send gate | Implemented | `Processing` and `Failed` documents may be attached, but any unready attachment produces `409 DOCUMENTS_NOT_READY` before user-message persistence or AI token use. |
+| Retry interaction | Implemented | The frontend presents retry only for `canRetry=true`, disables it after use, and calls `POST /api/Document/{id}/reprocess`. SignalR is immediate notification; status polling is fallback; use an indeterminate spinner while processing. |
 | Hybrid search diagnostics | Implemented | Results retain `PageNumber` and `ChunkIndex` but no longer expose `IsHighlightable`. |
 | Existing chat text | Preserved | `RemoveChatCitations` drops only obsolete source-snapshot rows; stored `ChatMessage` and `ChatSession` rows survive. |
 | Chat schema cleanup | Generated, pending deployment | Migration `20260730071539_RemoveChatCitations` must be applied manually by the repository owner to each intended database. |
