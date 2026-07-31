@@ -74,6 +74,5 @@ public interface IRealTimeNotificationService
         Guid userId,
         Guid documentId,
         string title,
-        string errorMessage,
         CancellationToken cancellationToken = default);
 }

@@ -4,4 +4,6 @@ public sealed record UploadDocumentResponseDto(
     Guid DocumentId,
     string Status,
     int ChunkCount,
-    string? Message);
+    string Message,
+    bool IsChatReady,
+    bool CanRetry);

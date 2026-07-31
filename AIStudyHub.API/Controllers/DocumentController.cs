@@ -3,6 +3,7 @@ using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.DTOs.Rag;
 using AIStudyHub.Business.Interfaces.AI.VectorStore;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Business.Services;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Enums;
 using AIStudyHub.Data.Interfaces;
@@ -146,7 +147,7 @@ public sealed class DocumentController : ControllerBase
         catch (KeyNotFoundException ex)
         {
             if (ex.Message.Contains("User"))
-                return BadRequest(new { message = ex.Message });
+                return BadRequest(new { message = "The sharing recipient could not be found." });
             return NotFound();
         }
         catch (UnauthorizedAccessException)
@@ -155,7 +156,8 @@ public sealed class DocumentController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            _logger.LogWarning(ex, "Document share failed for document {DocumentId}", id);
+            return BadRequest(new { message = "The document could not be shared." });
         }
     }
 
@@ -206,7 +208,7 @@ public sealed class DocumentController : ControllerBase
         catch (InvalidOperationException ex) when (
             ex.Message.Contains("unique document filename", StringComparison.OrdinalIgnoreCase))
         {
-            return Conflict(new { message = ex.Message });
+            return Conflict(new { message = "A document with this filename already exists." });
         }
     }
 
@@ -437,11 +439,13 @@ public sealed class DocumentController : ControllerBase
         if (document.UserId != userId)
             return Forbid();
 
-        return Ok(new
-        {
+        var readiness = DocumentReadinessEvaluator.Evaluate(document);
+        return Ok(new DocumentReadinessStatusResponseDto(
             document.Id,
-            Status = document.Status.ToString()
-        });
+            readiness.Status,
+            readiness.IsChatReady,
+            readiness.Message,
+            readiness.CanRetry));
     }
 
     [HttpGet("{id:guid}/chunks")]

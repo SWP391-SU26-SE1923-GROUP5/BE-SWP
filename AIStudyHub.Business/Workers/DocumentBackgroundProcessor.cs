@@ -627,7 +627,7 @@ public class DocumentBackgroundProcessor : BackgroundService
                 try
                 {
                     await realTimeNotifier.NotifyDocumentFailedAsync(
-                        request.UserId, request.DocumentId, request.FileName, ex.Message, ct);
+                        request.UserId, request.DocumentId, request.FileName, ct);
                 }
                 catch (Exception notifyEx)
                 {

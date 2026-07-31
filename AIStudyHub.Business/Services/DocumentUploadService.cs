@@ -138,11 +138,14 @@ public sealed class DocumentUploadService : IDocumentUploadService
                     documentId);
             }
 
+            var readiness = DocumentReadinessEvaluator.Evaluate(document);
             return new UploadDocumentResponseDto(
-                documentId,
-                "processing",
+                document.Id,
+                readiness.Status,
                 0,
-                "Document is being processed in the background");
+                readiness.Message,
+                readiness.IsChatReady,
+                readiness.CanRetry);
         }
         catch
         {
@@ -212,11 +215,14 @@ public sealed class DocumentUploadService : IDocumentUploadService
                 document.Id);
         }
 
+        var readiness = DocumentReadinessEvaluator.Evaluate(document);
         return new UploadDocumentResponseDto(
             document.Id,
-            "processing",
+            readiness.Status,
             0,
-            "Re-processing in progress");
+            readiness.Message,
+            readiness.IsChatReady,
+            readiness.CanRetry);
     }
 
     private void ValidateRequest(DocumentUploadRequest request)
