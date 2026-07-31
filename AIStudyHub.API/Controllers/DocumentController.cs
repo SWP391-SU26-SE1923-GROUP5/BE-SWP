@@ -147,7 +147,7 @@ public sealed class DocumentController : ControllerBase
         catch (KeyNotFoundException ex)
         {
             if (ex.Message.Contains("User"))
-                return BadRequest(new { message = "The sharing recipient could not be found." });
+                return BadRequest(new { message = ex.Message });
             return NotFound();
         }
         catch (UnauthorizedAccessException)
@@ -156,8 +156,7 @@ public sealed class DocumentController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            _logger.LogWarning(ex, "Document share failed for document {DocumentId}", id);
-            return BadRequest(new { message = "The document could not be shared." });
+            return BadRequest(new { message = ex.Message });
         }
     }
 
@@ -208,7 +207,7 @@ public sealed class DocumentController : ControllerBase
         catch (InvalidOperationException ex) when (
             ex.Message.Contains("unique document filename", StringComparison.OrdinalIgnoreCase))
         {
-            return Conflict(new { message = "A document with this filename already exists." });
+            return Conflict(new { message = ex.Message });
         }
     }
 

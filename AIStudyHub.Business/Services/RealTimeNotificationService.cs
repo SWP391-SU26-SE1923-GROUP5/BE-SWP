@@ -70,8 +70,8 @@ public sealed class RealTimeNotificationService : IRealTimeNotificationService
     public Task NotifyDocumentProcessedAsync(Guid userId, Guid documentId, string title, CancellationToken cancellationToken = default)
         => SendNotificationAsync(new RealTimeNotification(
             userId,
-            "TÃ i liá»‡u Ä‘Ã£ sáºµn sÃ ng",
-            $"\"{title}\" Ä‘Ã£ sáºµn sÃ ng Ä‘á»ƒ sá»­ dá»¥ng.",
+            "Tài liệu đã sẵn sàng",
+            $"\"{title}\" đã sẵn sàng để sử dụng.",
             NotificationType.Document,
             DateTime.UtcNow,
             new DocumentProcessedPayload(
@@ -79,7 +79,7 @@ public sealed class RealTimeNotificationService : IRealTimeNotificationService
                 title,
                 "Done",
                 true,
-                "TÃ i liá»‡u Ä‘Ã£ sáºµn sÃ ng.",
+                "Tài liệu đã sẵn sàng.",
                 false)), cancellationToken);
 
     public Task NotifyStreakAtRiskAsync(Guid userId, int currentStreak, int hoursRemaining, CancellationToken cancellationToken = default)
@@ -192,8 +192,8 @@ public sealed class RealTimeNotificationService : IRealTimeNotificationService
         CancellationToken cancellationToken = default)
         => SendNotificationAsync(new RealTimeNotification(
             userId,
-            "KhÃ´ng thá»ƒ chuáº©n bá»‹ tÃ i liá»‡u",
-            $"KhÃ´ng thá»ƒ chuáº©n bá»‹ \"{title}\". Vui lÃ²ng thá»­ láº¡i.",
+            "Không thể chuẩn bị tài liệu",
+            $"Không thể chuẩn bị \"{title}\". Vui lòng thử lại.",
             NotificationType.Document,
             DateTime.UtcNow,
             new DocumentFailedPayload(
@@ -201,6 +201,6 @@ public sealed class RealTimeNotificationService : IRealTimeNotificationService
                 title,
                 "Failed",
                 false,
-                "KhÃ´ng thá»ƒ chuáº©n bá»‹ tÃ i liá»‡u.",
+                "Không thể chuẩn bị tài liệu.",
                 true)), cancellationToken);
 }
