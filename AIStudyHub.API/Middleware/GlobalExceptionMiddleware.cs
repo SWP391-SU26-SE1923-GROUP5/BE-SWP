@@ -46,6 +46,19 @@ public sealed class GlobalExceptionMiddleware
         {
             await WriteLockedResponseAsync(context, exception);
         }
+        catch (DocumentsNotReadyException exception)
+        {
+            context.Response.ContentType = "application/json";
+            context.Response.StatusCode = StatusCodes.Status409Conflict;
+            var payload = new
+            {
+                statusCode = context.Response.StatusCode,
+                code = "DOCUMENTS_NOT_READY",
+                message = exception.Message,
+                documents = exception.Documents
+            };
+            await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
+        }
         catch (InvalidOperationException exception)
         {
             await WriteErrorResponseAsync(context, HttpStatusCode.Conflict, exception.Message);

@@ -111,12 +111,7 @@ public sealed class ApplicationMappingProfile : Profile
             .ForMember(dest => dest.Content, opt => opt.MapFrom(src => src.Message))
             .ForMember(dest => dest.Sender, opt => opt.MapFrom(_ => "user"));
         CreateMap<ChatSessionDocument, ChatSessionDocumentResponseDto>()
-            .ConstructUsing(src => new ChatSessionDocumentResponseDto(
-                src.ChatSessionId,
-                src.DocumentId,
-                src.Document.Title,
-                src.Document.FileName,
-                src.CreatedAt));
+            .ConstructUsing((source, _) => MapChatSessionDocument(source));
 
         CreateMap<TokenLedger, TokenWalletHistoryDto>()
             .ConstructUsing(src => new TokenWalletHistoryDto(
@@ -148,5 +143,20 @@ public sealed class ApplicationMappingProfile : Profile
             source.TrashedAt,
             source.CreatedAt,
             source.UpdatedAt);
+    }
+
+    private static ChatSessionDocumentResponseDto MapChatSessionDocument(ChatSessionDocument source)
+    {
+        var readiness = DocumentReadinessEvaluator.Evaluate(source.Document);
+        return new ChatSessionDocumentResponseDto(
+            source.ChatSessionId,
+            source.DocumentId,
+            source.Document.Title,
+            source.Document.FileName,
+            source.CreatedAt,
+            readiness.Status,
+            readiness.IsChatReady,
+            readiness.Message,
+            readiness.CanRetry);
     }
 }

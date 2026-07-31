@@ -19,4 +19,13 @@ public sealed record CreateChatMessageRequestDto(Guid? SessionId, string Message
 
 public sealed record AddDocumentToSessionRequestDto(Guid DocumentId);
 
-public sealed record ChatSessionDocumentResponseDto(Guid ChatSessionId, Guid DocumentId, string Title, string? FileName, DateTime AddedAt);
+public sealed record ChatSessionDocumentResponseDto(
+    Guid ChatSessionId,
+    Guid DocumentId,
+    string Title,
+    string? FileName,
+    DateTime AddedAt,
+    string Status,
+    bool IsChatReady,
+    string Message,
+    bool CanRetry);
