@@ -92,8 +92,17 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
                         WHERE [card_id] = {flashcardId}
                     """)
                     .SingleOrDefaultAsync(cancellationToken);
-                if (lockedFlashcard is null
-                    || lockedFlashcard.FlashcardDeck.DocumentId != authorizedDocumentId.Value)
+                if (lockedFlashcard is null)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
+                }
+
+                await _dbContext.Entry(lockedFlashcard)
+                    .Reference(f => f.FlashcardDeck)
+                    .LoadAsync(cancellationToken);
+
+                if (lockedFlashcard.FlashcardDeck.DocumentId != authorizedDocumentId.Value)
                 {
                     await transaction.RollbackAsync(cancellationToken);
                     return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
