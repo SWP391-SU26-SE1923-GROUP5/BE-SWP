@@ -1268,13 +1268,13 @@ public sealed class FlashcardService : IFlashcardService
         Guid userId,
         CancellationToken cancellationToken = default)
     {
-        var ownedDeckExists = await _unitOfWork.FlashcardDecks
+        var ownedDeck = await _unitOfWork.FlashcardDecks
             .Query()
             .AsNoTracking()
-            .AnyAsync(
+            .FirstOrDefaultAsync(
                 deck => deck.Id == deckId && deck.Document.UserId == userId,
                 cancellationToken);
-        if (!ownedDeckExists)
+        if (ownedDeck is null)
             throw new KeyNotFoundException("Deck not found.");
 
         var flashcards = await _unitOfWork.Flashcards
@@ -1282,8 +1282,34 @@ public sealed class FlashcardService : IFlashcardService
             .Where(flashcard => flashcard.DeckId == deckId)
             .ToListAsync(cancellationToken);
 
+        var flashcardIds = flashcards.Select(f => f.Id).ToList();
+
+        // Cascade in FK-safe order: attempts → reviews → flashcards → deck.
+        if (flashcardIds.Count > 0)
+        {
+            var attempts = await _unitOfWork.FlashcardReviewAttempts
+                .Query()
+                .Where(attempt => flashcardIds.Contains(attempt.FlashcardId))
+                .ToListAsync(cancellationToken);
+            foreach (var attempt in attempts)
+                _unitOfWork.FlashcardReviewAttempts.Remove(attempt);
+
+            var reviews = await _unitOfWork.FlashcardReviews
+                .Query()
+                .Where(review => flashcardIds.Contains(review.FlashcardId))
+                .ToListAsync(cancellationToken);
+            foreach (var review in reviews)
+                _unitOfWork.FlashcardReviews.Remove(review);
+        }
+
         foreach (var flashcard in flashcards)
             _unitOfWork.Flashcards.Remove(flashcard);
+
+        var deck = await _unitOfWork.FlashcardDecks
+            .Query()
+            .FirstOrDefaultAsync(deck => deck.Id == deckId, cancellationToken);
+        if (deck is not null)
+            _unitOfWork.FlashcardDecks.Remove(deck);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         return flashcards.Count;
@@ -1312,8 +1338,31 @@ public sealed class FlashcardService : IFlashcardService
             .Where(f => deckIds.Contains(f.DeckId))
             .ToListAsync(cancellationToken);
 
+        var flashcardIds = flashcards.Select(f => f.Id).ToList();
+
+        // Cascade in FK-safe order: attempts → reviews → flashcards → decks.
+        if (flashcardIds.Count > 0)
+        {
+            var attempts = await _unitOfWork.FlashcardReviewAttempts
+                .Query()
+                .Where(attempt => flashcardIds.Contains(attempt.FlashcardId))
+                .ToListAsync(cancellationToken);
+            foreach (var attempt in attempts)
+                _unitOfWork.FlashcardReviewAttempts.Remove(attempt);
+
+            var reviews = await _unitOfWork.FlashcardReviews
+                .Query()
+                .Where(review => flashcardIds.Contains(review.FlashcardId))
+                .ToListAsync(cancellationToken);
+            foreach (var review in reviews)
+                _unitOfWork.FlashcardReviews.Remove(review);
+        }
+
         foreach (var flashcard in flashcards)
             _unitOfWork.Flashcards.Remove(flashcard);
+
+        foreach (var deck in decks)
+            _unitOfWork.FlashcardDecks.Remove(deck);
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         return flashcards.Count;
