@@ -10,6 +10,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using AIStudyHub.Business.DTOs.AI;
+using AIStudyHub.Business.DTOs.Answers;
+using AIStudyHub.Business.DTOs.Questions;
 using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Exceptions;
@@ -205,12 +207,47 @@ public sealed class QuizAiService : IQuizAiService
             "Generated {Count}/{Requested} quiz questions for document {DocumentId}",
             allQuestions.Count, request.NumberOfQuestions, documentId);
 
+        // Re-fetch the quiz with its questions + answers so the response carries the
+        // freshly-assigned entity IDs and timestamps. Without this, the FE sees a
+        // quiz with Questions=null and has to do a second GET to load them.
+        var persisted = await _unitOfWork.Quizzes
+            .Query()
+            .AsNoTracking()
+            .Include(q => q.Questions)
+                .ThenInclude(question => question.Answers)
+            .Where(q => q.Id == quiz.Id)
+            .OrderBy(q => q.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var questionDtos = persisted?.Questions
+            .OrderBy(q => q.Position)
+            .Select(q => new QuestionResponseDto(
+                q.Id,
+                q.QuizId,
+                q.Title,
+                q.Type,
+                q.Position,
+                q.CreatedAt,
+                q.UpdatedAt,
+                q.Answers
+                    .OrderBy(a => a.CreatedAt)
+                    .Select(a => new AnswerResponseDto(
+                        a.Id,
+                        a.QuestionId,
+                        a.SelectedOption,
+                        a.IsCorrect,
+                        a.CreatedAt,
+                        a.UpdatedAt))
+                    .ToList()))
+            .ToList();
+
         return new QuizResponseDto(
             quiz.Id,
             quiz.DocumentId,
             quiz.Title,
             quiz.CreatedAt,
-            quiz.UpdatedAt
+            quiz.UpdatedAt,
+            questionDtos
         );
     }
 
