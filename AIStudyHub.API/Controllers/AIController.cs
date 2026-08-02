@@ -157,7 +157,7 @@ public sealed class AIController : ControllerBase
             var document = await _unitOfWork.Documents.GetByIdAsync(docId, cancellationToken);
             if (document is not null)
             {
-                await _realTimeNotifier.NotifyNewFlashcardsReadyAsync(userId, docId, document.Title ?? "Document", result.FlashcardLists.Count, cancellationToken);
+                await _realTimeNotifier.NotifyNewFlashcardsReadyAsync(userId, docId, result.DeckTitle, result.FlashcardLists.Count, cancellationToken);
             }
         }
         catch (Exception notifyEx)

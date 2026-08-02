@@ -187,23 +187,21 @@ public sealed class FlashcardAiService : IFlashcardAiService
                 flashcards.Count);
         }
 
-        // Create or get a deck for this document
-        var deckName = document.Title;
-        var deck = await _unitOfWork.FlashcardDecks
-            .Query()
-            .FirstOrDefaultAsync(d => d.DocumentId == documentId && d.Name == deckName, cancellationToken);
+        // Always create a brand-new deck so each generation call is its own study set.
+        var titleForDeck = document.Title ?? "Document";
+        const int suffixLen = 17; // " - dd/MM/yyyy HH:mm"
+        if (titleForDeck.Length > 255 - suffixLen)
+            titleForDeck = titleForDeck.Substring(0, 255 - suffixLen);
+        var deckName = $"{titleForDeck} - {DateTime.Now:dd/MM/yyyy HH:mm}";
 
-        if (deck is null)
+        var deck = new AIStudyHub.Data.Entities.FlashcardDeck
         {
-            deck = new AIStudyHub.Data.Entities.FlashcardDeck
-            {
-                Id = Guid.NewGuid(),
-                DocumentId = documentId,
-                Name = deckName,
-                CreatedAt = DateTime.UtcNow
-            };
-            await _unitOfWork.FlashcardDecks.AddAsync(deck, cancellationToken);
-        }
+            Id = Guid.NewGuid(),
+            DocumentId = documentId,
+            Name = deckName,
+            CreatedAt = DateTime.UtcNow
+        };
+        await _unitOfWork.FlashcardDecks.AddAsync(deck, cancellationToken);
 
         var entities = flashcards.Select(f => new AIStudyHub.Data.Entities.Flashcard
         {
