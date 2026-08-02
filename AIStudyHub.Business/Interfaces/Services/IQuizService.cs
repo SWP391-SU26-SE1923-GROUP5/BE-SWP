@@ -10,4 +10,8 @@ public interface IQuizService : ICrudService<QuizResponseDto, CreateQuizRequestD
         Guid documentId,
         Guid userId,
         CancellationToken cancellationToken = default);
+
+    Task<string> GetNextQuizTitleAsync(
+        Guid documentId,
+        CancellationToken cancellationToken = default);
 }

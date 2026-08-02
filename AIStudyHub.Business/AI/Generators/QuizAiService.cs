@@ -30,6 +30,7 @@ public sealed class QuizAiService : IQuizAiService
     private readonly IVectorStoreService _vectorStoreService;
     private readonly ILogger<QuizAiService> _logger;
     private readonly ITokenTrackerService _tokenTracker;
+    private readonly IQuizService _quizService;
 
     private const int MaxModelCalls = 4;
     private const int EstimatedTokensPerBatch = 1800; // was 2000
@@ -39,13 +40,15 @@ public sealed class QuizAiService : IQuizAiService
         IOpenAIService openAiService,
         IVectorStoreService vectorStoreService,
         ILogger<QuizAiService> logger,
-        ITokenTrackerService tokenTracker)
+        ITokenTrackerService tokenTracker,
+        IQuizService quizService)
     {
         _unitOfWork = unitOfWork;
         _openAiService = openAiService;
         _vectorStoreService = vectorStoreService;
         _logger = logger;
         _tokenTracker = tokenTracker;
+        _quizService = quizService;
     }
 
     public async Task<QuizResponseDto> GenerateAndPersistQuizAsync(
@@ -201,7 +204,8 @@ public sealed class QuizAiService : IQuizAiService
 
         var result = new AiGeneratedQuizResponseDto($"Quiz on {document.Title}", allQuestions);
 
-        var quiz = await PersistQuizAsync(documentId, document.Title, result, cancellationToken);
+        var quizTitle = await _quizService.GetNextQuizTitleAsync(documentId, cancellationToken);
+        var quiz = await PersistQuizAsync(documentId, quizTitle, result, cancellationToken);
 
         _logger.LogInformation(
             "Generated {Count}/{Requested} quiz questions for document {DocumentId}",
@@ -629,7 +633,7 @@ IMPORTANT:
         var quiz = new Quiz
         {
             DocumentId = documentId,
-            Title = string.IsNullOrWhiteSpace(result.QuizTitle) ? fallbackTitle : result.QuizTitle
+            Title = fallbackTitle
         };
         await _unitOfWork.Quizzes.AddAsync(quiz, cancellationToken);
 

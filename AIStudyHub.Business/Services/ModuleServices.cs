@@ -1534,6 +1534,17 @@ public sealed class QuizService : IQuizService
         return quizzes.Select(_mapper.Map<QuizSummaryDto>).ToList();
     }
 
+    public async Task<string> GetNextQuizTitleAsync(
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        var existingCount = await _unitOfWork.Quizzes
+            .Query()
+            .CountAsync(q => q.DocumentId == documentId, cancellationToken);
+
+        return $"Quiz {existingCount + 1}";
+    }
+
     public async Task<IReadOnlyList<QuizResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var quizzes = await _unitOfWork.Quizzes
@@ -1566,7 +1577,11 @@ public sealed class QuizService : IQuizService
             throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
         }
 
-        var quiz = _mapper.Map<Data.Entities.Quiz>(request);
+        var title = string.IsNullOrWhiteSpace(request.Title)
+            ? await GetNextQuizTitleAsync(request.DocumentId, cancellationToken)
+            : request.Title;
+
+        var quiz = _mapper.Map<Data.Entities.Quiz>(request with { Title = title });
         await _unitOfWork.Quizzes.AddAsync(quiz, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
