@@ -67,6 +67,7 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<UpdateFlashcardRequestDto, Flashcard>();
 
         CreateMap<Quiz, QuizResponseDto>();
+        CreateMap<Quiz, QuizSummaryDto>();
         CreateMap<CreateQuizRequestDto, Quiz>();
         CreateMap<UpdateQuizRequestDto, Quiz>();
 

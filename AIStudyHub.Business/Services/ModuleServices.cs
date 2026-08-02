@@ -1517,6 +1517,23 @@ public sealed class QuizService : IQuizService
         return new AIStudyHub.Business.DTOs.Common.PagedResultDto<QuizResponseDto>(dtos, totalCount, @params.Offset, @params.Limit);
     }
 
+    public async Task<IReadOnlyList<QuizSummaryDto>> GetByDocumentAsync(
+        Guid documentId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var quizzes = await _unitOfWork.Quizzes
+            .Query()
+            .Where(q =>
+                q.DocumentId == documentId
+                && (q.Document.UserId == userId || q.Document.ShareStatus == "public"))
+            .OrderByDescending(q => q.CreatedAt)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return quizzes.Select(_mapper.Map<QuizSummaryDto>).ToList();
+    }
+
     public async Task<IReadOnlyList<QuizResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
     {
         var quizzes = await _unitOfWork.Quizzes
