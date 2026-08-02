@@ -66,6 +66,7 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             .AsNoTracking()
             .Include(card => card.FlashcardDeck)
             .Where(card => card.Id == flashcardId
+                && card.FlashcardDeck.Document.LifecycleStatus == DocumentLifecycleStatus.Active
                 && (card.FlashcardDeck.Document.UserId == userId
                     || card.FlashcardDeck.Document.ShareStatus == "public"
                     || card.FlashcardDeck.Document.DocumentShares.Any(share => share.UserId == userId)))

@@ -1169,7 +1169,8 @@ public sealed class FlashcardService : IFlashcardService
     {
         var query = _unitOfWork.Flashcards.Query()
             .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
-            .Where(f => f.FlashcardDeck.Document.UserId == userId || f.FlashcardDeck.Document.ShareStatus == "public")
+            .Where(f => f.FlashcardDeck.Document.LifecycleStatus == DocumentLifecycleStatus.Active
+                        && (f.FlashcardDeck.Document.UserId == userId || f.FlashcardDeck.Document.ShareStatus == "public"))
             .AsNoTracking();
 
         if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
@@ -1386,7 +1387,9 @@ public sealed class FlashcardService : IFlashcardService
         var flashcards = await _unitOfWork.Flashcards
             .Query()
             .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
-            .Where(f => f.DeckId == deckId && (f.FlashcardDeck.Document.UserId == userId || f.FlashcardDeck.Document.ShareStatus == "public"))
+            .Where(f => f.DeckId == deckId
+                        && f.FlashcardDeck.Document.LifecycleStatus == DocumentLifecycleStatus.Active
+                        && (f.FlashcardDeck.Document.UserId == userId || f.FlashcardDeck.Document.ShareStatus == "public"))
             .OrderBy(f => f.CreatedAt)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
@@ -1399,26 +1402,25 @@ public sealed class FlashcardService : IFlashcardService
         Guid userId,
         CancellationToken cancellationToken = default)
     {
-        var decks = await _unitOfWork.FlashcardDecks
-            .Query()
-            .AsNoTracking()
-            .Where(d => d.DocumentId == documentId)
-            .OrderBy(d => d.CreatedAt)
-            .ToListAsync(cancellationToken);
-
-        if (decks.Count == 0)
-            return Array.Empty<FlashcardDeckSummaryDto>();
-
         var document = await _unitOfWork.Documents
             .Query()
             .AsNoTracking()
-            .FirstOrDefaultAsync(d => d.Id == documentId, cancellationToken);
+            .Where(d => d.Id == documentId
+                        && d.LifecycleStatus == DocumentLifecycleStatus.Active)
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (document is null)
             throw new KeyNotFoundException("Document not found.");
 
         if (document.UserId != userId && document.ShareStatus != "public")
             throw new KeyNotFoundException("Document not found.");
+
+        var decks = await _unitOfWork.FlashcardDecks
+            .Query()
+            .AsNoTracking()
+            .Where(d => d.DocumentId == documentId)
+            .OrderBy(d => d.CreatedAt)
+            .ToListAsync(cancellationToken);
 
         var deckIds = decks.Select(d => d.Id).ToList();
         var counts = await _unitOfWork.Flashcards
@@ -1489,7 +1491,8 @@ public sealed class QuizService : IQuizService
     {
         var query = _unitOfWork.Quizzes.Query()
             .Include(q => q.Document)
-            .Where(q => q.Document.UserId == userId || q.Document.ShareStatus == "public")
+            .Where(q => q.Document.LifecycleStatus == DocumentLifecycleStatus.Active
+                        && (q.Document.UserId == userId || q.Document.ShareStatus == "public"))
             .AsNoTracking();
 
         if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
@@ -1526,6 +1529,7 @@ public sealed class QuizService : IQuizService
             .Query()
             .Where(q =>
                 q.DocumentId == documentId
+                && q.Document.LifecycleStatus == DocumentLifecycleStatus.Active
                 && (q.Document.UserId == userId || q.Document.ShareStatus == "public"))
             .OrderByDescending(q => q.CreatedAt)
             .AsNoTracking()
