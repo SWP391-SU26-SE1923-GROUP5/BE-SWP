@@ -64,11 +64,12 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
 
         var authorizedDocumentId = await _dbContext.Flashcards
             .AsNoTracking()
+            .Include(card => card.FlashcardDeck)
             .Where(card => card.Id == flashcardId
-                && (card.Document.UserId == userId
-                    || card.Document.ShareStatus == "public"
-                    || card.Document.DocumentShares.Any(share => share.UserId == userId)))
-            .Select(card => (Guid?)card.DocumentId)
+                && (card.FlashcardDeck.Document.UserId == userId
+                    || card.FlashcardDeck.Document.ShareStatus == "public"
+                    || card.FlashcardDeck.Document.DocumentShares.Any(share => share.UserId == userId)))
+            .Select(card => (Guid?)card.FlashcardDeck.DocumentId)
             .SingleOrDefaultAsync(cancellationToken);
         if (!authorizedDocumentId.HasValue)
             return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
@@ -91,15 +92,24 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
                         WHERE [card_id] = {flashcardId}
                     """)
                     .SingleOrDefaultAsync(cancellationToken);
-                if (lockedFlashcard is null
-                    || lockedFlashcard.DocumentId != authorizedDocumentId.Value)
+                if (lockedFlashcard is null)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
+                }
+
+                await _dbContext.Entry(lockedFlashcard)
+                    .Reference(f => f.FlashcardDeck)
+                    .LoadAsync(cancellationToken);
+
+                if (lockedFlashcard.FlashcardDeck.DocumentId != authorizedDocumentId.Value)
                 {
                     await transaction.RollbackAsync(cancellationToken);
                     return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
                 }
 
                 await _dbContext.Entry(lockedFlashcard).ReloadAsync(cancellationToken);
-                if (lockedFlashcard.DocumentId != authorizedDocumentId.Value)
+                if (lockedFlashcard.FlashcardDeck.DocumentId != authorizedDocumentId.Value)
                 {
                     await transaction.RollbackAsync(cancellationToken);
                     return ServiceResult<ReviewFlashcardResultDto>.Fail("Flashcard not found.");
@@ -208,36 +218,57 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             }
         }
 
-        // Plan C2: award XP and accumulate TimeSpentSeconds. Wrapped so a failure
-        // does not roll back the SM-2 schedule the user just saw.
+        // Daily XP cap: only the first 3 attempts per (user, card, UTC day) award XP.
+        // Submissions beyond the 3rd still update the SM-2 schedule and append an attempt
+        // row (with XpEarned = 0); this just stops XP farming on the same card in a day.
+        // Count attempts whose CreatedAt falls in the same UTC day window as the new attempt.
         int xpEarned = 0;
         var xpAwardSucceeded = false;
         if (_gamificationService is not null)
         {
             try
             {
-                var documentId = flashcard.DocumentId;
-                var subjectCode = await _unitOfWork.Documents.Query()
-                    .Where(d => d.Id == documentId)
-                    .Select(d => d.Subject.SubjectCode)
-                    .FirstOrDefaultAsync(cancellationToken);
+                var newAttemptUtcDay = attempt.CreatedAt.Date;
+                var reviewsToday = await _unitOfWork.FlashcardReviewAttempts
+                    .Query()
+                    .CountAsync(a => a.UserId == userId
+                                  && a.FlashcardId == flashcardId
+                                  && a.CreatedAt >= newAttemptUtcDay
+                                  && a.CreatedAt <  newAttemptUtcDay.AddDays(1),
+                                  cancellationToken);
+                var withinDailyXpCap = reviewsToday <= 3;
 
-                var isCorrect = quality == ReviewQuality.Easy;
-                var xpResult = await _gamificationService.AwardXpAsync(
-                    new XpAwardRequest(
-                        UserId: userId,
-                        XpEarned: 0,
-                        IsCorrect: isCorrect,
-                        ActivityType: ActivityType.FlashcardReview,
-                        DocumentId: documentId,
-                        SubjectCode: subjectCode,
-                        TimeSpentSeconds: timeSpentSeconds),
-                    cancellationToken);
-
-                if (xpResult is { Success: true, Data: not null })
+                if (!withinDailyXpCap)
                 {
-                    xpEarned = xpResult.Data.XpEarned;
-                    xpAwardSucceeded = true;
+                    _logger.LogInformation(
+                        "Daily XP cap reached for user {UserId}, card {FlashcardId} on {Day}: {Count} attempt(s)",
+                        userId, flashcardId, newAttemptUtcDay, reviewsToday);
+                }
+                else
+                {
+                    var documentId = flashcard.DocumentId;
+                    var subjectCode = await _unitOfWork.Documents.Query()
+                        .Where(d => d.Id == documentId)
+                        .Select(d => d.Subject.SubjectCode)
+                        .FirstOrDefaultAsync(cancellationToken);
+
+                    var isCorrect = quality == ReviewQuality.Easy;
+                    var xpResult = await _gamificationService.AwardXpAsync(
+                        new XpAwardRequest(
+                            UserId: userId,
+                            XpEarned: 0,
+                            IsCorrect: isCorrect,
+                            ActivityType: ActivityType.FlashcardReview,
+                            DocumentId: documentId,
+                            SubjectCode: subjectCode,
+                            TimeSpentSeconds: timeSpentSeconds),
+                        cancellationToken);
+
+                    if (xpResult is { Success: true, Data: not null })
+                    {
+                        xpEarned = xpResult.Data.XpEarned;
+                        xpAwardSucceeded = true;
+                    }
                 }
             }
             catch (Exception ex)
@@ -333,7 +364,7 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             .Select(r => new DueFlashcardDto(
                 r.Id,
                 r.FlashcardId,
-                r.Flashcard!.DocumentId,
+                r.Flashcard!.FlashcardDeck.DocumentId,
                 r.Flashcard.Front,
                 r.Flashcard.Back,
                 r.NextReviewDate))
@@ -384,10 +415,14 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
         var query = _unitOfWork.FlashcardReviewAttempts
             .Query()
             .AsNoTracking()
+            .Include(attempt => attempt.Flashcard)
+                .ThenInclude(flashcard => flashcard.FlashcardDeck)
+                    .ThenInclude(deck => deck.Document)
+                        .ThenInclude(doc => doc.Subject)
             .Where(attempt => attempt.UserId == userId);
 
         if (documentId.HasValue)
-            query = query.Where(attempt => attempt.Flashcard.DocumentId == documentId.Value);
+            query = query.Where(attempt => attempt.Flashcard.FlashcardDeck.DocumentId == documentId.Value);
         if (flashcardId.HasValue)
             query = query.Where(attempt => attempt.FlashcardId == flashcardId.Value);
         if (fromDate.HasValue)
@@ -406,8 +441,8 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             .Select(attempt => new FlashcardReviewHistoryItemDto(
                 attempt.Id,
                 attempt.FlashcardId,
-                attempt.Flashcard.DocumentId,
-                attempt.Flashcard.Document.Title,
+                attempt.Flashcard.FlashcardDeck.DocumentId,
+                attempt.Flashcard.FlashcardDeck.Document.Title,
                 attempt.Flashcard.Front,
                 attempt.Quality,
                 attempt.TimeSpentSeconds,
@@ -431,14 +466,18 @@ public sealed class FlashcardReviewService : IFlashcardReviewService
             .Query()
             .AsNoTracking()
             .Where(attempt => attempt.UserId == userId && attempt.Id == attemptId)
+            .Include(attempt => attempt.Flashcard)
+                .ThenInclude(flashcard => flashcard.FlashcardDeck)
+                    .ThenInclude(deck => deck.Document)
+                        .ThenInclude(doc => doc.Subject)
             .Select(attempt => new FlashcardReviewHistoryDetailDto(
                 attempt.Id,
                 attempt.FlashcardId,
-                attempt.Flashcard.DocumentId,
-                attempt.Flashcard.Document.Title,
-                attempt.Flashcard.Document.SubjectId,
-                attempt.Flashcard.Document.Subject.SubjectCode,
-                attempt.Flashcard.Document.Subject.SubjectName,
+                attempt.Flashcard.FlashcardDeck.DocumentId,
+                attempt.Flashcard.FlashcardDeck.Document.Title,
+                attempt.Flashcard.FlashcardDeck.Document.SubjectId,
+                attempt.Flashcard.FlashcardDeck.Document.Subject.SubjectCode,
+                attempt.Flashcard.FlashcardDeck.Document.Subject.SubjectName,
                 attempt.Flashcard.Front,
                 attempt.Flashcard.Back,
                 attempt.Quality,

@@ -2,7 +2,7 @@ namespace AIStudyHub.Data.Entities;
 
 public sealed class Flashcard : BaseEntity
 {
-    public Guid DocumentId { get; set; }
+    public Guid DeckId { get; set; }
     public string Front { get; set; } = string.Empty;
     public string Back { get; set; } = string.Empty;
 
@@ -10,5 +10,8 @@ public sealed class Flashcard : BaseEntity
     /// Used to identify "leech" cards for recommendation generation.</summary>
     public int Lapses { get; set; }
 
-    public Document Document { get; set; } = null!;
+    public FlashcardDeck FlashcardDeck { get; set; } = null!;
+
+    /// <summary>Convenience property to access the DocumentId through the FlashcardDeck.</summary>
+    public Guid DocumentId => FlashcardDeck.DocumentId;
 }

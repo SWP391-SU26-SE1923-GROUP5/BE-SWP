@@ -11,6 +11,7 @@ public interface IUnitOfWork : IDisposable
     IRepository<Vote> Votes { get; }
     IRepository<Report> Reports { get; }
     IRepository<Flashcard> Flashcards { get; }
+    IRepository<FlashcardDeck> FlashcardDecks { get; }
     IRepository<FlashcardReview> FlashcardReviews { get; }
     IRepository<FlashcardReviewAttempt> FlashcardReviewAttempts { get; }
     IRepository<Quiz> Quizzes { get; }

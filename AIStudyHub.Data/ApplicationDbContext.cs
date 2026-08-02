@@ -19,6 +19,7 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
     public DbSet<Vote> Votes => Set<Vote>();
     public DbSet<Report> Reports => Set<Report>();
     public DbSet<Flashcard> Flashcards => Set<Flashcard>();
+    public DbSet<FlashcardDeck> FlashcardDecks => Set<FlashcardDeck>();
     public DbSet<FlashcardReview> FlashcardReviews => Set<FlashcardReview>();
     public DbSet<FlashcardReviewAttempt> FlashcardReviewAttempts => Set<FlashcardReviewAttempt>();
     public DbSet<Quiz> Quizzes => Set<Quiz>();

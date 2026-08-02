@@ -36,7 +36,7 @@ public sealed class Document : BaseEntity
     public Subject Subject { get; set; } = null!;
     public ICollection<Vote> Votes { get; set; } = new List<Vote>();
     public ICollection<Report> Reports { get; set; } = new List<Report>();
-    public ICollection<Flashcard> Flashcards { get; set; } = new List<Flashcard>();
+    public ICollection<FlashcardDeck> FlashcardDecks { get; set; } = new List<FlashcardDeck>();
     public ICollection<Quiz> Quizzes { get; set; } = new List<Quiz>();
     public ICollection<ChatSessionDocument> ChatSessionDocuments { get; set; } = new List<ChatSessionDocument>();
     public ICollection<DocumentShare> DocumentShares { get; set; } = new List<DocumentShare>();

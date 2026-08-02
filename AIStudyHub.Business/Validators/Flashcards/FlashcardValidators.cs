@@ -7,7 +7,7 @@ public sealed class CreateFlashcardRequestDtoValidator : AbstractValidator<Creat
 {
     public CreateFlashcardRequestDtoValidator()
     {
-        RuleFor(x => x.DocumentId).NotEmpty();
+        RuleFor(x => x.DeckId).NotEmpty();
         RuleFor(x => x.Front).NotEmpty();
         RuleFor(x => x.Back).NotEmpty();
     }

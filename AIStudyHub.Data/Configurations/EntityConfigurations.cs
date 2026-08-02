@@ -177,13 +177,28 @@ internal sealed class FlashcardConfiguration : IEntityTypeConfiguration<Flashcar
         builder.ToTable("Flashcard");
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).HasColumnName("card_id");
-        builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
+        builder.Property(x => x.DeckId).HasColumnName("deck_id").IsRequired();
         builder.Property(x => x.Front).HasColumnName("front").IsRequired();
         builder.Property(x => x.Back).HasColumnName("back").IsRequired();
         builder.Property(x => x.Lapses).HasColumnName("lapses").IsRequired().HasDefaultValue(0);
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
-        builder.HasOne(x => x.Document).WithMany(x => x.Flashcards).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne(x => x.FlashcardDeck).WithMany(x => x.Flashcards).HasForeignKey(x => x.DeckId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+internal sealed class FlashcardDeckConfiguration : IEntityTypeConfiguration<FlashcardDeck>
+{
+    public void Configure(EntityTypeBuilder<FlashcardDeck> builder)
+    {
+        builder.ToTable("FlashcardDeck");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("deck_id");
+        builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
+        builder.Property(x => x.Name).HasColumnName("name").HasMaxLength(255).IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+        builder.HasOne(x => x.Document).WithMany(x => x.FlashcardDecks).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 

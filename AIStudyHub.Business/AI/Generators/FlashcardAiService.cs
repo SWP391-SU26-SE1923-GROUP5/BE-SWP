@@ -49,7 +49,7 @@ public sealed class FlashcardAiService : IFlashcardAiService
         _tokenTracker = tokenTracker;
     }
 
-    public async Task<IReadOnlyList<FlashcardResponseDto>> GenerateFlashcardsAsync(
+    public async Task<FlashcardDeckResponseDto> GenerateFlashcardsAsync(
         Guid documentId,
         CreateFlashcardsViaAiRequestDto request,
         Guid userId,
@@ -187,9 +187,25 @@ public sealed class FlashcardAiService : IFlashcardAiService
                 flashcards.Count);
         }
 
+        // Always create a brand-new deck so each generation call is its own study set.
+        var titleForDeck = document.Title ?? "Document";
+        const int suffixLen = 17; // " - dd/MM/yyyy HH:mm"
+        if (titleForDeck.Length > 255 - suffixLen)
+            titleForDeck = titleForDeck.Substring(0, 255 - suffixLen);
+        var deckName = $"{titleForDeck} - {DateTime.Now:dd/MM/yyyy HH:mm}";
+
+        var deck = new AIStudyHub.Data.Entities.FlashcardDeck
+        {
+            Id = Guid.NewGuid(),
+            DocumentId = documentId,
+            Name = deckName,
+            CreatedAt = DateTime.UtcNow
+        };
+        await _unitOfWork.FlashcardDecks.AddAsync(deck, cancellationToken);
+
         var entities = flashcards.Select(f => new AIStudyHub.Data.Entities.Flashcard
         {
-            DocumentId = documentId,
+            DeckId = deck.Id,
             Front = f.Front,
             Back = f.Back
         }).ToList();
@@ -202,14 +218,14 @@ public sealed class FlashcardAiService : IFlashcardAiService
 
         var result = entities.Select(e => new FlashcardResponseDto(
             e.Id,
-            e.DocumentId,
+            e.DeckId,
             e.Front,
             e.Back,
             e.CreatedAt,
             e.UpdatedAt
         )).ToList();
 
-        return result;
+        return new FlashcardDeckResponseDto(deck.Id, deck.Name, result);
     }
 
     private async Task<(List<FlashcardResponseAiDto> cards, int inputTokens, int outputTokens)> RunBatchWithTrackingAsync(
