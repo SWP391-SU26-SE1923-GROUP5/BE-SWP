@@ -46,12 +46,14 @@ The deterministic yes/no shortcut does not use LLM attribution. It continues usi
 5. Format locations from validated supporting contexts only.
 6. Return the same public response DTO and fields as today.
 
-## Testing
+## Verification
 
-- A regression test reproduces an exhaustive answer whose input contexts cover pages 1-53 but whose declared supporting contexts cover pages 36-39; the output must cite only pages 36-39.
-- Parser tests cover valid IDs, duplicates, unknown IDs, malformed/missing attribution, and marker-like document content.
-- Contract tests confirm no internal source IDs appear in the returned answer and no DTO shape changes.
-- Existing non-exhaustive and deterministic yes/no behavior remains covered.
+Repository policy prohibits recreating the deleted test project or adding test-only hooks. Verification therefore consists of a clean solution build plus repository-owner manual flows.
+
+- Reproduce the exhaustive Business Rules question whose retrieved contexts cover pages 1-53; the returned location must cite only pages 36-39.
+- Manually exercise valid IDs, duplicates, unknown IDs, and malformed or missing attribution while observing that internal source IDs never appear in the public answer.
+- Confirm the Chat response DTO shape is unchanged.
+- Confirm non-exhaustive and deterministic yes/no answers still append locations.
 
 ## Non-Goals
 
