@@ -165,9 +165,6 @@ public sealed class UserService : IUserService
             throw new ArgumentException("Role must be 'admin' or 'student'.");
 
         var normalizedStatus = request.Status.Trim().ToLowerInvariant();
-        if (normalizedStatus is not "active")
-            throw new ArgumentException("Status must be 'active'.");
-
         var user = new User
         {
             Id = Guid.NewGuid(),
@@ -199,8 +196,6 @@ public sealed class UserService : IUserService
             throw new ArgumentException("Role must be 'admin' or 'student'.");
 
         var normalizedStatus = request.Status.Trim().ToLowerInvariant();
-        if (normalizedStatus is not "active")
-            throw new ArgumentException("Status must be 'active'.");
 
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(
             IsolationLevel.Serializable,
