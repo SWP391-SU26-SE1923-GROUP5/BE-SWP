@@ -148,7 +148,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
         var confidence = _confidenceScorer.Score(cleanAnswer, groundingResult, isFaithful);
 
-        var locationContexts = BuildLocationContexts(attributed.Sources, contexts);
+        var locationContexts = BuildLocationContexts(question, attributed.Sources, contexts);
         var answerWithLocation = RagLocationFormatter.AppendToAnswer(cleanAnswer, locationContexts);
         return new RagResponse(answerWithLocation, confidence, IsRelevant: true);
     }
@@ -192,7 +192,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             var answerWithLocation =
                 RagLocationFormatter.AppendToAnswer(
                     noAnswer,
-                    BuildLocationContexts([], contexts));
+                    BuildLocationContexts(question, [], contexts));
             return new RagResponseWithUsage(
                 answerWithLocation,
                 1.0,
@@ -247,7 +247,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
         var confidence = _confidenceScorer.Score(cleanAnswer, groundingResult, isFaithful);
 
-        var locationContexts = BuildLocationContexts(attributed.Sources, contexts);
+        var locationContexts = BuildLocationContexts(question, attributed.Sources, contexts);
         var trackedAnswerWithLocation = RagLocationFormatter.AppendToAnswer(cleanAnswer, locationContexts);
         return new RagResponseWithUsage(trackedAnswerWithLocation, confidence, totalInputTokens, totalOutputTokens, IsRelevant: true);
     }
@@ -468,9 +468,16 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             : string.Empty;
 
     private static IReadOnlyList<RagContextSource> BuildLocationContexts(
+        string question,
         IReadOnlyList<RagContextSource> attributedSources,
         IReadOnlyList<RagContextSource> retrievedContexts)
     {
+        var exhaustiveSectionContexts = SelectExhaustiveSectionContexts(
+            question,
+            retrievedContexts);
+        if (exhaustiveSectionContexts.Count > 0)
+            return exhaustiveSectionContexts;
+
         if (attributedSources.Count > 0)
             return attributedSources;
 
@@ -479,6 +486,77 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             .Select(source => source with { PageNumber = null })
             .ToList();
     }
+
+    private static IReadOnlyList<RagContextSource> SelectExhaustiveSectionContexts(
+        string question,
+        IReadOnlyList<RagContextSource> contexts)
+    {
+        if (!RagContextExpander.IsExhaustiveQuery(question))
+            return [];
+
+        var queryKeywords = Regex.Matches(
+                question.ToLowerInvariant(),
+                @"[\p{L}\p{N}]{3,}")
+            .Select(match => match.Value)
+            .Where(keyword => !ExhaustiveLocationStopWords.Contains(keyword))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (queryKeywords.Count == 0)
+            return [];
+
+        var anchor = contexts
+            .Select(context =>
+            {
+                var content = context.Result.Content;
+                var loweredContent = content.ToLowerInvariant();
+                var keywordHits = queryKeywords.Count(loweredContent.Contains);
+                var prefix = Regex.Matches(
+                        content,
+                        @"\b(?<prefix>[A-Z]{2,10})-\d+(?:\.\d+)*\b")
+                    .Select(match => match.Groups["prefix"].Value)
+                    .GroupBy(value => value, StringComparer.Ordinal)
+                    .OrderByDescending(group => group.Count())
+                    .Select(group => new
+                    {
+                        Value = group.Key,
+                        Count = group.Count()
+                    })
+                    .FirstOrDefault();
+
+                return new
+                {
+                    Context = context,
+                    KeywordHits = keywordHits,
+                    Prefix = prefix?.Value,
+                    PrefixCount = prefix?.Count ?? 0
+                };
+            })
+            .Where(candidate =>
+                candidate.KeywordHits > 0
+                && candidate.PrefixCount >= 2
+                && !string.IsNullOrWhiteSpace(candidate.Prefix))
+            .OrderByDescending(candidate => candidate.KeywordHits)
+            .ThenByDescending(candidate => candidate.PrefixCount)
+            .FirstOrDefault();
+        if (anchor is null)
+            return [];
+
+        var sectionPattern = $@"\b{Regex.Escape(anchor.Prefix!)}-\d+(?:\.\d+)*\b";
+        return contexts
+            .Where(context => Regex.IsMatch(
+                context.Result.Content,
+                sectionPattern,
+                RegexOptions.CultureInvariant))
+            .ToList();
+    }
+
+    private static readonly HashSet<string> ExhaustiveLocationStopWords = new(
+        [
+            "liệt", "kê", "các", "tất", "cả", "toàn", "bộ", "trong",
+            "tài", "liệu", "hãy", "cho", "biết", "list", "all", "the",
+            "from", "document", "documents"
+        ],
+        StringComparer.Ordinal);
 
     /// <summary>
     /// Fixes mojibake (UTF-8 bytes misread as Latin-1) commonly found in PDF-extracted Vietnamese text.
