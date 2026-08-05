@@ -188,11 +188,11 @@ public sealed class FlashcardAiService : IFlashcardAiService
         }
 
         // Always create a brand-new deck so each generation call is its own study set.
-        var titleForDeck = document.Title ?? "Document";
-        const int suffixLen = 17; // " - dd/MM/yyyy HH:mm"
-        if (titleForDeck.Length > 255 - suffixLen)
-            titleForDeck = titleForDeck.Substring(0, 255 - suffixLen);
-        var deckName = $"{titleForDeck} - {DateTime.Now:dd/MM/yyyy HH:mm}";
+        var existingCount = await _unitOfWork.FlashcardDecks
+            .Query()
+            .CountAsync(d => d.DocumentId == documentId, cancellationToken);
+
+        var deckName = $"Flashcard {existingCount + 1}";
 
         var deck = new AIStudyHub.Data.Entities.FlashcardDeck
         {
