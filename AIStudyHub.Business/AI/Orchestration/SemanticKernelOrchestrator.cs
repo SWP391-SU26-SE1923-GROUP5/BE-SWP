@@ -26,12 +26,22 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         ANSWERING RULES:
         - Answer from the supplied source content only.
         - Do not add document names, page numbers, source markers, or a source section; the backend appends trusted location information after generation.
-        - Never output metadata labels, bracketed source markers, a source list, or a source-attribution section.
+        - Never output metadata labels, bracketed source markers, a source list, or a source-attribution section in the answer prose. The only permitted marker is the required final internal [[USED_SOURCE_IDS:...]] line, which the backend removes.
         - If the user asks about the AIStudyHub system features or how to use it, use the ABOUT AI STUDY HUB information above to guide them naturally.
         - For YES/NO questions, use the source content to answer. If it answers the question indirectly, answer "Không" or "Có" with the supporting evidence instead of claiming the topic is absent.
         - For YES/NO technology questions, if the source content does not mention X but does mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly. If the source content contains no information about the topic, say so clearly in Vietnamese.
         - Answer in Vietnamese by default unless the user asks in English.
         - Answer only the user's current request. Do not append follow-up offers, suggested actions, or claims about additional capabilities.
+        """;
+
+    private const string AttributionInstruction = """
+        INTERNAL SOURCE ATTRIBUTION:
+        - Every context has a SOURCE_ID.
+        - After the answer, output exactly one final line in this format:
+          [[USED_SOURCE_IDS:S001,S002]]
+        - Include only SOURCE_ID values whose content directly supports the answer.
+        - If no supplied source supports the answer, output [[USED_SOURCE_IDS:]].
+        - Never mention SOURCE_ID values anywhere else in the answer.
         """;
 
     private readonly RagRetrievalPipeline _retrievalPipeline;
@@ -98,14 +108,14 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         }
 
         // L4: Generate answer using Custom LLM Prompt (Avoids duplicate KernelMemory search)
-        var contextBuilder = RagPromptContextBuilder.Build(contexts);
+        var promptContext = RagPromptContextBuilder.Build(contexts);
         var exhaustiveInstruction = GetExhaustiveInstruction(question);
 
         var systemPrompt = RagSystemPrompt;
 
         var userPrompt = $"""
             SOURCES:
-            {contextBuilder}
+            {promptContext.Text}
 
             CHAT HISTORY:
             {string.Join("\n", history.Select(m => $"{m.Sender}: {m.Content}"))}
@@ -113,13 +123,18 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             QUESTION: {question}
 
             {exhaustiveInstruction}
+            {AttributionInstruction}
 
             ANSWER:
             """;
 
         var fullPrompt = $"{systemPrompt}\n\n{userPrompt}";
         var answer = await _openAiService.SendMessageAsync(fullPrompt);
-        if (string.IsNullOrWhiteSpace(answer))
+        var attributed = RagAttributionParser.Parse(
+            answer,
+            promptContext.SourcesById);
+        var cleanAnswer = attributed.Answer;
+        if (string.IsNullOrWhiteSpace(cleanAnswer))
         {
             return new RagResponse(
                 "Xin lỗi, tôi không thể trả lời lúc này.",
@@ -128,12 +143,13 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         }
 
         // L5: Guardrails
-        var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
+        var isFaithful = await _faithfulnessFilter.ValidateAsync(cleanAnswer, resultList.Select(r => r.Content));
         // TODO: GroundingVerifier is too strict for short/Vietnamese answers - disabled temporarily
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
-        var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
+        var confidence = _confidenceScorer.Score(cleanAnswer, groundingResult, isFaithful);
 
-        var answerWithLocation = RagLocationFormatter.AppendToAnswer(answer, contexts);
+        var locationContexts = BuildLocationContexts(attributed.Sources, contexts);
+        var answerWithLocation = RagLocationFormatter.AppendToAnswer(cleanAnswer, locationContexts);
         return new RagResponse(answerWithLocation, confidence, IsRelevant: true);
     }
 
@@ -184,14 +200,14 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         }
 
         // L4: Generate answer using Custom LLM Prompt
-        var contextBuilder = RagPromptContextBuilder.Build(contexts);
+        var promptContext = RagPromptContextBuilder.Build(contexts);
         var exhaustiveInstruction = GetExhaustiveInstruction(question);
 
         var systemPrompt = RagSystemPrompt;
 
         var userPrompt = $"""
             SOURCES:
-            {contextBuilder}
+            {promptContext.Text}
 
             CHAT HISTORY:
             {string.Join("\n", history.Select(m => $"{m.Sender}: {m.Content}"))}
@@ -199,6 +215,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             QUESTION: {question}
 
             {exhaustiveInstruction}
+            {AttributionInstruction}
 
             ANSWER:
             """;
@@ -208,7 +225,11 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         var answer = usageResult.Text;
         var totalInputTokens = usageResult.InputTokens;
         var totalOutputTokens = usageResult.OutputTokens;
-        if (string.IsNullOrWhiteSpace(answer))
+        var attributed = RagAttributionParser.Parse(
+            answer,
+            promptContext.SourcesById);
+        var cleanAnswer = attributed.Answer;
+        if (string.IsNullOrWhiteSpace(cleanAnswer))
         {
             return new RagResponseWithUsage(
                 "Xin lỗi, tôi không thể trả lời lúc này.",
@@ -219,12 +240,13 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         }
 
         // L5: Guardrails
-        var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
+        var isFaithful = await _faithfulnessFilter.ValidateAsync(cleanAnswer, resultList.Select(r => r.Content));
         // TODO: GroundingVerifier is too strict for short/Vietnamese answers - disabled temporarily
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
-        var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
+        var confidence = _confidenceScorer.Score(cleanAnswer, groundingResult, isFaithful);
 
-        var trackedAnswerWithLocation = RagLocationFormatter.AppendToAnswer(answer, contexts);
+        var locationContexts = BuildLocationContexts(attributed.Sources, contexts);
+        var trackedAnswerWithLocation = RagLocationFormatter.AppendToAnswer(cleanAnswer, locationContexts);
         return new RagResponseWithUsage(trackedAnswerWithLocation, confidence, totalInputTokens, totalOutputTokens, IsRelevant: true);
     }
 
@@ -442,6 +464,19 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         RagContextExpander.IsExhaustiveQuery(question)
             ? "Inspect every provided source chunk and return every matching item. Do not sample, omit ranges, or claim completeness unless all provided chunks were considered."
             : string.Empty;
+
+    private static IReadOnlyList<RagContextSource> BuildLocationContexts(
+        IReadOnlyList<RagContextSource> attributedSources,
+        IReadOnlyList<RagContextSource> retrievedContexts)
+    {
+        if (attributedSources.Count > 0)
+            return attributedSources;
+
+        return retrievedContexts
+            .DistinctBy(source => source.DocumentId)
+            .Select(source => source with { PageNumber = null })
+            .ToList();
+    }
 
     /// <summary>
     /// Fixes mojibake (UTF-8 bytes misread as Latin-1) commonly found in PDF-extracted Vietnamese text.
