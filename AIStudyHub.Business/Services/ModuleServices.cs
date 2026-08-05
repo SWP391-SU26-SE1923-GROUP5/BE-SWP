@@ -2132,7 +2132,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
                     var xpResult = await _gamificationService.AwardXpAsync(
                         new AIStudyHub.Business.DTOs.Gamification.XpAwardRequest(
                             UserId: submission.UserId,
-                            XpEarned: 0, // computed inside service
+                            XpEarned: submission.TotalCorrect, // computed inside service
                             IsCorrect: allCorrect,
                             ActivityType: AIStudyHub.Data.Enums.ActivityType.QuizSubmission,
                             DocumentId: documentId,
