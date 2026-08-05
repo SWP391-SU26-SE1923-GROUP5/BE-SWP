@@ -190,7 +190,9 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         {
             _logger.LogInformation("Yes/No shortcut triggered: {Answer}", noAnswer);
             var answerWithLocation =
-                RagLocationFormatter.AppendToAnswer(noAnswer, contexts);
+                RagLocationFormatter.AppendToAnswer(
+                    noAnswer,
+                    BuildLocationContexts([], contexts));
             return new RagResponseWithUsage(
                 answerWithLocation,
                 1.0,

@@ -29,8 +29,9 @@ public static partial class RagAttributionParser
             return new RagAttributionResult(string.Empty, []);
 
         var match = FinalAttributionLine().Match(response);
-        var cleanAnswer = AnyAttributionProtocol()
-            .Replace(response, string.Empty)
+        var cleanAnswer = RemoveIssuedSourceIds(
+                AnyAttributionProtocol().Replace(response, string.Empty),
+                sourcesById.Keys)
             .TrimEnd();
 
         if (!match.Success)
@@ -46,5 +47,31 @@ public static partial class RagAttributionParser
             .ToList();
 
         return new RagAttributionResult(cleanAnswer, sources);
+    }
+
+    private static string RemoveIssuedSourceIds(
+        string answer,
+        IEnumerable<string> sourceIds)
+    {
+        var idPattern = string.Join(
+            "|",
+            sourceIds
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(Regex.Escape));
+        if (string.IsNullOrEmpty(idPattern))
+            return answer;
+
+        var issuedId = $@"(?<![A-Za-z0-9_])(?:{idPattern})(?![A-Za-z0-9_])";
+        var withoutMetadata = Regex.Replace(
+            answer,
+            $@"\bSOURCE_ID(?:\s*[:/]\s*|\s+){issuedId}",
+            string.Empty,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        return Regex.Replace(
+            withoutMetadata,
+            issuedId,
+            string.Empty,
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 }
