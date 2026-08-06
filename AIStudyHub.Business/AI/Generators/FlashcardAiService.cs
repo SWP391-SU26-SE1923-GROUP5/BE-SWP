@@ -411,20 +411,18 @@ RULES:
             : null;
     }
 
-    private static string BuildContextFromPayloads(List<Dictionary<string, string>> payloads)
+    private static string BuildContextFromPayloads(List<string> chunks)
     {
         var sb = new System.Text.StringBuilder();
-        foreach (var payload in payloads)
+        foreach (var text in chunks)
         {
-            if (payload.TryGetValue("text", out var text) && !string.IsNullOrWhiteSpace(text))
-            {
-                sb.AppendLine(text);
-                sb.AppendLine();
-            }
+            sb.AppendLine(text);
+            sb.AppendLine();
             if (sb.Length > 20_000) return sb.ToString();
         }
         return sb.ToString();
     }
 
     private static string Clean(string s) => TextSanitizer.CleanBracketedReferences(s);
+    private static string FixMojibake(string input) => TextSanitizer.FixMojibake(input);
 }
