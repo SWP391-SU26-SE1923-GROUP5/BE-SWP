@@ -1,5 +1,7 @@
+using System.Data;
 using AIStudyHub.Business.DTOs.Users;
 using AIStudyHub.Business.Interfaces.Services;
+using AIStudyHub.Data;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
@@ -11,15 +13,18 @@ namespace AIStudyHub.Business.Services;
 public sealed class UserService : IUserService
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ApplicationDbContext _dbContext;
     private readonly UserManager<User> _userManager;
     private readonly IMapper _mapper;
 
     public UserService(
         IUnitOfWork unitOfWork,
+        ApplicationDbContext dbContext,
         UserManager<User> userManager,
         IMapper mapper)
     {
         _unitOfWork = unitOfWork;
+        _dbContext = dbContext;
         _userManager = userManager;
         _mapper = mapper;
     }
@@ -39,6 +44,7 @@ public sealed class UserService : IUserService
         var user = await _unitOfWork.Users
             .Query()
             .Include(u => u.TierMembership)
+            .AsNoTracking()
             .FirstOrDefaultAsync(u => u.Id == id, cancellationToken);
         return user is null ? null : MapToDto(user);
     }
@@ -64,27 +70,38 @@ public sealed class UserService : IUserService
 
     public async Task UpdateUserTierAsync(Guid userId, UpdateUserTierRequestDto request, CancellationToken cancellationToken = default)
     {
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
         var user = await _userManager.FindByIdAsync(userId.ToString())
             ?? throw new KeyNotFoundException("User not found.");
+        await _dbContext.Entry(user).ReloadAsync(cancellationToken);
 
         var tier = await _unitOfWork.TierMemberships.GetByIdAsync(request.TierId, cancellationToken)
             ?? throw new KeyNotFoundException("Tier not found.");
 
         user.TierId = request.TierId;
         user.TierExpireAt = request.TierExpireAt;
-        await _userManager.UpdateAsync(user);
+        var updateResult = await _userManager.UpdateAsync(user);
+        EnsureIdentitySucceeded(updateResult);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task UpdateProfileAsync(Guid userId, UpdateProfileRequestDto request, CancellationToken cancellationToken = default)
     {
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
         var user = await _userManager.FindByIdAsync(userId.ToString())
             ?? throw new KeyNotFoundException("User not found.");
+        await _dbContext.Entry(user).ReloadAsync(cancellationToken);
 
         user.FullName = request.FullName.Trim();
         user.DateOfBirth = request.DateOfBirth;
 
         var result = await _userManager.UpdateAsync(user);
         EnsureIdentitySucceeded(result);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<ShareableUserDto>> GetShareableUsersAsync(
@@ -144,6 +161,10 @@ public sealed class UserService : IUserService
         }
 
         var normalizedRole = request.Role.Trim().ToLowerInvariant();
+        if (normalizedRole is not ("admin" or "student"))
+            throw new ArgumentException("Role must be 'admin' or 'student'.");
+
+        var normalizedStatus = request.Status.Trim().ToLowerInvariant();
         var user = new User
         {
             Id = Guid.NewGuid(),
@@ -170,17 +191,25 @@ public sealed class UserService : IUserService
 
     public async Task<UserResponseDto> UpdateAsync(Guid id, UpdateUserRequestDto request, CancellationToken cancellationToken = default)
     {
+        var normalizedRole = request.Role.Trim().ToLowerInvariant();
+        if (normalizedRole is not ("admin" or "student"))
+            throw new ArgumentException("Role must be 'admin' or 'student'.");
+
+        var normalizedStatus = request.Status.Trim().ToLowerInvariant();
+
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
         var user = await _userManager.FindByIdAsync(id.ToString())
             ?? throw new KeyNotFoundException("User not found.");
+        await _dbContext.Entry(user).ReloadAsync(cancellationToken);
 
         var previousRole = user.Role;
-        var normalizedRole = request.Role.Trim().ToLowerInvariant();
-
         user.FullName = request.FullName.Trim();
         user.DateOfBirth = request.DateOfBirth;
         user.CurrentStorageCapacity = request.CurrentStorageCapacity;
         user.CurrentAiTokenUsage = request.CurrentAiTokenUsage;
-        user.Status = request.Status.Trim().ToLowerInvariant();
+        user.Status = normalizedStatus;
         user.Role = normalizedRole;
         user.IsActive = string.Equals(user.Status, "active", StringComparison.OrdinalIgnoreCase);
 
@@ -205,6 +234,7 @@ public sealed class UserService : IUserService
             }
         }
 
+        await transaction.CommitAsync(cancellationToken);
         return _mapper.Map<UserResponseDto>(user);
     }
 

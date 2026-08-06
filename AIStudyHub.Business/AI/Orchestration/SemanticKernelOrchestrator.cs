@@ -16,6 +16,34 @@ namespace AIStudyHub.Business.AI.Orchestration;
 
 public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 {
+    private const string RagSystemPrompt = """
+        You are 'AIStudyHub Assistant', a helpful and friendly AI tutor for AIStudyHub.
+
+        ABOUT AI STUDY HUB (System Features):
+        - AIStudyHub allows users to upload documents (PDF, Word) and chat with them to extract knowledge.
+        - Users can request a "Summary" of any uploaded document.
+
+        ANSWERING RULES:
+        - Answer from the supplied source content only.
+        - Do not add document names, page numbers, source markers, or a source section; the backend appends trusted location information after generation.
+        - Never output metadata labels, bracketed source markers, a source list, or a source-attribution section in the answer prose. The only permitted marker is the required final internal [[USED_SOURCE_IDS:...]] line, which the backend removes.
+        - If the user asks about the AIStudyHub system features or how to use it, use the ABOUT AI STUDY HUB information above to guide them naturally.
+        - For YES/NO questions, use the source content to answer. If it answers the question indirectly, answer "Không" or "Có" with the supporting evidence instead of claiming the topic is absent.
+        - For YES/NO technology questions, if the source content does not mention X but does mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly. If the source content contains no information about the topic, say so clearly in Vietnamese.
+        - Answer in Vietnamese by default unless the user asks in English.
+        - Answer only the user's current request. Do not append follow-up offers, suggested actions, or claims about additional capabilities.
+        """;
+
+    private const string AttributionInstruction = """
+        INTERNAL SOURCE ATTRIBUTION:
+        - Every context has a SOURCE_ID.
+        - After the answer, output exactly one final line in this format:
+          [[USED_SOURCE_IDS:S001,S002]]
+        - Include only SOURCE_ID values whose content directly supports the answer.
+        - If no supplied source supports the answer, output [[USED_SOURCE_IDS:]].
+        - Never mention SOURCE_ID values anywhere else in the answer.
+        """;
+
     private readonly RagRetrievalPipeline _retrievalPipeline;
     private readonly IVectorStoreService _vectorStoreService;
     private readonly IFaithfulnessFilter _faithfulnessFilter;
@@ -23,7 +51,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
     private readonly IConfidenceScorer _confidenceScorer;
     private readonly SemanticKernelOptions _options;
     private readonly IOpenAIService _openAiService;
-    private readonly RagCitationFactory _citationFactory;
+    private readonly RagContextSelector _contextSelector;
     private readonly ILogger<SemanticKernelOrchestrator> _logger;
 
     public SemanticKernelOrchestrator(
@@ -34,7 +62,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         IConfidenceScorer confidenceScorer,
         IOptions<SemanticKernelOptions> options,
         IOpenAIService openAiService,
-        RagCitationFactory citationFactory,
+        RagContextSelector contextSelector,
         ILogger<SemanticKernelOrchestrator> logger)
     {
         _retrievalPipeline = retrievalPipeline;
@@ -44,7 +72,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         _confidenceScorer = confidenceScorer;
         _options = options.Value;
         _openAiService = openAiService;
-        _citationFactory = citationFactory;
+        _contextSelector = contextSelector;
         _logger = logger;
     }
 
@@ -54,16 +82,15 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         // L3: Retrieval with hybrid search and reranking
         var candidates = (await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct)).ToList();
-        var citationSources = _citationFactory.Create(candidates, documentIds);
-        var resultList = citationSources.Select(source => source.Result).ToList();
-        var citations = citationSources.Select(source => source.Citation).ToList();
+        var contexts = _contextSelector.Select(candidates, documentIds);
+        var resultList = contexts.Select(context => context.Result).ToList();
         _logger.LogInformation(
-            "RAG retrieval produced {CandidateCount} candidates and {ValidCount} valid citation sources",
+            "RAG retrieval produced {CandidateCount} candidates and {ValidCount} valid context chunks",
             candidates.Count,
             resultList.Count);
         if (!resultList.Any())
         {
-            return new RagResponse("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", new(), 0.0, IsRelevant: false);
+            return new RagResponse("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", 0.0, IsRelevant: false);
         }
 
         // Programmatic relevance check — skip LLM if chunks don't match question
@@ -77,34 +104,18 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             var suggestion = await SuggestRelatedTopicsAsync(question, resultList, "Vietnamese", ct);
             var combined = $"Tài liệu không đề cập đến chủ đề này.\n\n{suggestion}";
-            return new RagResponse(combined, new(), 0.0, IsRelevant: false);
+            return new RagResponse(combined, 0.0, IsRelevant: false);
         }
 
         // L4: Generate answer using Custom LLM Prompt (Avoids duplicate KernelMemory search)
-        var contextBuilder = RagPromptContextBuilder.Build(resultList);
+        var promptContext = RagPromptContextBuilder.Build(contexts);
         var exhaustiveInstruction = GetExhaustiveInstruction(question);
 
-        var systemPrompt = """
-            You are 'AIStudyHub Assistant', a helpful and friendly AI tutor for AIStudyHub.
-
-            ABOUT AI STUDY HUB (System Features):
-            - AIStudyHub allows users to upload documents (PDF, Word) and chat with them to extract knowledge.
-            - Users can request a "Summary" of any uploaded document.
-
-            ANSWERING RULES:
-            1. Base your answer ONLY on the provided SOURCES. Your answer must be strictly limited to what the SOURCES contain.
-            2. When providing information, you SHOULD explicitly mention which document and page number the information comes from (e.g. "Theo trang 5 của tài liệu X...").
-            3. If the user asks about the AIStudyHub system features or how to use it, use the 'ABOUT AI STUDY HUB' info above to guide them naturally.
-            4. YES/NO questions: use the SOURCES to answer. If the SOURCES answer the question indirectly (e.g. user asks "Does it use Java?" and SOURCES say "The backend uses .NET"), answer "Không" or "Có" with the supporting evidence. Never say "Tài liệu không đề cập" if the SOURCES provide enough information to infer the answer.
-            5. YES/NO questions about technologies: if SOURCES don't mention X but do mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly (e.g. ".NET", "JavaScript", "TypeScript", "Python", "React", "Angular"). If SOURCES contain zero information about the topic at all, say so clearly in Vietnamese (e.g. "Tài liệu không đề cập đến chủ đề này.").
-            6. Answer in Vietnamese by default unless the user asks in English.
-            7. For page citations, use only AUTHORITATIVE_CITATION_PAGE. If PAGE_CITATION_AVAILABLE is false, do not mention a page and never print metadata field names or placeholders. Never infer a page number from CONTENT.
-            8. Answer only the user's current request. Do not append follow-up offers, suggested actions, or claims about additional capabilities. Never offer functionality that is not explicitly available in the current workflow. End the response after the grounded answer and citations.
-            """;
+        var systemPrompt = RagSystemPrompt;
 
         var userPrompt = $"""
             SOURCES:
-            {contextBuilder}
+            {promptContext.Text}
 
             CHAT HISTORY:
             {string.Join("\n", history.Select(m => $"{m.Sender}: {m.Content}"))}
@@ -112,19 +123,34 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             QUESTION: {question}
 
             {exhaustiveInstruction}
+            {AttributionInstruction}
 
             ANSWER:
             """;
 
         var fullPrompt = $"{systemPrompt}\n\n{userPrompt}";
-        var answer = await _openAiService.SendMessageAsync(fullPrompt) ?? "Xin lỗi, tôi không thể trả lời lúc này.";
+        var answer = await _openAiService.SendMessageAsync(fullPrompt);
+        var attributed = RagAttributionParser.Parse(
+            answer,
+            promptContext.SourcesById);
+        var cleanAnswer = attributed.Answer;
+        if (string.IsNullOrWhiteSpace(cleanAnswer))
+        {
+            return new RagResponse(
+                "Xin lỗi, tôi không thể trả lời lúc này.",
+                0.0,
+                IsRelevant: false);
+        }
+
         // L5: Guardrails
-        var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
+        var isFaithful = await _faithfulnessFilter.ValidateAsync(cleanAnswer, resultList.Select(r => r.Content));
         // TODO: GroundingVerifier is too strict for short/Vietnamese answers - disabled temporarily
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
-        var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
+        var confidence = _confidenceScorer.Score(cleanAnswer, groundingResult, isFaithful);
 
-        return new RagResponse(answer, citations, confidence, IsRelevant: true);
+        var locationContexts = BuildLocationContexts(question, attributed.Sources, contexts);
+        var answerWithLocation = RagLocationFormatter.AppendToAnswer(cleanAnswer, locationContexts);
+        return new RagResponse(answerWithLocation, confidence, IsRelevant: true);
     }
 
 
@@ -134,12 +160,15 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         // L3: Retrieval with hybrid search and reranking
         var candidates = (await _retrievalPipeline.RetrieveAsync(question, userId, documentIds, ct)).ToList();
-        var citationSources = _citationFactory.Create(candidates, documentIds);
-        var resultList = citationSources.Select(source => source.Result).ToList();
-        var citations = citationSources.Select(source => source.Citation).ToList();
+        var contexts = _contextSelector.Select(candidates, documentIds);
+        var resultList = contexts.Select(context => context.Result).ToList();
+        _logger.LogInformation(
+            "RAG retrieval produced {CandidateCount} candidates and {ValidCount} valid context chunks",
+            candidates.Count,
+            resultList.Count);
         if (!resultList.Any())
         {
-            return new RagResponseWithUsage("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", new(), 0.0, 0, 0, IsRelevant: false);
+            return new RagResponseWithUsage("Tài liệu của bạn không chứa thông tin này hoặc không tìm thấy tài liệu.", 0.0, 0, 0, IsRelevant: false);
         }
 
         // Programmatic relevance check — skip LLM if chunks don't match question
@@ -153,41 +182,34 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             var suggestion = await SuggestRelatedTopicsAsync(question, resultList, "Vietnamese", ct);
             var combined = $"Tài liệu không đề cập đến chủ đề này.\n\n{suggestion}";
-            return new RagResponseWithUsage(combined, new(), 0.0, 0, 0, IsRelevant: false);
+            return new RagResponseWithUsage(combined, 0.0, 0, 0, IsRelevant: false);
         }
 
         // L4: Pre-check for yes/no tech questions — short-circuit if answer is clearly "Không"
         if (TryDetectNoAnswer(question, resultList, out var noAnswer))
         {
             _logger.LogInformation("Yes/No shortcut triggered: {Answer}", noAnswer);
-            return new RagResponseWithUsage(noAnswer, citations, 1.0, 0, 0, IsRelevant: true);
+            var answerWithLocation =
+                RagLocationFormatter.AppendToAnswer(
+                    noAnswer,
+                    BuildLocationContexts(question, [], contexts));
+            return new RagResponseWithUsage(
+                answerWithLocation,
+                1.0,
+                0,
+                0,
+                IsRelevant: true);
         }
 
         // L4: Generate answer using Custom LLM Prompt
-        var contextBuilder = RagPromptContextBuilder.Build(resultList);
+        var promptContext = RagPromptContextBuilder.Build(contexts);
         var exhaustiveInstruction = GetExhaustiveInstruction(question);
 
-        var systemPrompt = """
-            You are 'AIStudyHub Assistant', a helpful and friendly AI tutor for AIStudyHub.
-
-            ABOUT AI STUDY HUB (System Features):
-            - AIStudyHub allows users to upload documents (PDF, Word) and chat with them to extract knowledge.
-            - Users can request a "Summary" of any uploaded document.
-
-            ANSWERING RULES:
-            1. Base your answer ONLY on the provided SOURCES. Your answer must be strictly limited to what the SOURCES contain.
-            2. When providing information, you SHOULD explicitly mention which document and page number the information comes from (e.g. "Theo trang 5 của tài liệu X...").
-            3. If the user asks about the AIStudyHub system features or how to use it, use the 'ABOUT AI STUDY HUB' info above to guide them naturally.
-            4. YES/NO questions: use the SOURCES to answer. If the SOURCES answer the question indirectly (e.g. user asks "Does it use Java?" and SOURCES say "The backend uses .NET"), answer "Không" or "Có" with the supporting evidence. Never say "Tài liệu không đề cập" if the SOURCES provide enough information to infer the answer.
-            5. YES/NO questions about technologies: if SOURCES don't mention X but do mention Y, respond with "Không, hệ thống sử dụng Y chứ không phải X." in Vietnamese. Capitalize technology names properly (e.g. ".NET", "JavaScript", "TypeScript", "Python", "React", "Angular"). If SOURCES contain zero information about the topic at all, say so clearly in Vietnamese (e.g. "Tài liệu không đề cập đến chủ đề này.").
-            6. Answer in Vietnamese by default unless the user asks in English.
-            7. For page citations, use only AUTHORITATIVE_CITATION_PAGE. If PAGE_CITATION_AVAILABLE is false, do not mention a page and never print metadata field names or placeholders. Never infer a page number from CONTENT.
-            8. Answer only the user's current request. Do not append follow-up offers, suggested actions, or claims about additional capabilities. Never offer functionality that is not explicitly available in the current workflow. End the response after the grounded answer and citations.
-            """;
+        var systemPrompt = RagSystemPrompt;
 
         var userPrompt = $"""
             SOURCES:
-            {contextBuilder}
+            {promptContext.Text}
 
             CHAT HISTORY:
             {string.Join("\n", history.Select(m => $"{m.Sender}: {m.Content}"))}
@@ -195,22 +217,39 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             QUESTION: {question}
 
             {exhaustiveInstruction}
+            {AttributionInstruction}
 
             ANSWER:
             """;
 
         var fullPrompt = $"{systemPrompt}\n\n{userPrompt}";
         var usageResult = await _openAiService.SendMessageWithUsageAsync(fullPrompt);
-        var answer = usageResult.Text ?? "Xin lỗi, tôi không thể trả lời lúc này.";
+        var answer = usageResult.Text;
         var totalInputTokens = usageResult.InputTokens;
         var totalOutputTokens = usageResult.OutputTokens;
+        var attributed = RagAttributionParser.Parse(
+            answer,
+            promptContext.SourcesById);
+        var cleanAnswer = attributed.Answer;
+        if (string.IsNullOrWhiteSpace(cleanAnswer))
+        {
+            return new RagResponseWithUsage(
+                "Xin lỗi, tôi không thể trả lời lúc này.",
+                0.0,
+                totalInputTokens,
+                totalOutputTokens,
+                IsRelevant: false);
+        }
+
         // L5: Guardrails
-        var isFaithful = await _faithfulnessFilter.ValidateAsync(answer, resultList.Select(r => r.Content));
+        var isFaithful = await _faithfulnessFilter.ValidateAsync(cleanAnswer, resultList.Select(r => r.Content));
         // TODO: GroundingVerifier is too strict for short/Vietnamese answers - disabled temporarily
         var groundingResult = new GroundingResult(IsGrounded: true, Score: 1.0, UngroundedClaims: new());
-        var confidence = _confidenceScorer.Score(answer, groundingResult, isFaithful);
+        var confidence = _confidenceScorer.Score(cleanAnswer, groundingResult, isFaithful);
 
-        return new RagResponseWithUsage(answer, citations, confidence, totalInputTokens, totalOutputTokens, IsRelevant: true);
+        var locationContexts = BuildLocationContexts(question, attributed.Sources, contexts);
+        var trackedAnswerWithLocation = RagLocationFormatter.AppendToAnswer(cleanAnswer, locationContexts);
+        return new RagResponseWithUsage(trackedAnswerWithLocation, confidence, totalInputTokens, totalOutputTokens, IsRelevant: true);
     }
 
     public async Task<string> SummarizeAsync(Guid documentId, Guid userId, CancellationToken ct = default)
@@ -281,7 +320,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
     /// <summary>
     /// Generates related-topic suggestions based ONLY on the content of the retrieved document chunks.
-    /// The LLM is strictly constrained to cite phrases that appear verbatim in the excerpts.
+    /// The LLM is strictly constrained to use phrases that appear verbatim in the excerpts.
     /// </summary>
     private async Task<string> SuggestRelatedTopicsAsync(
         string question,
@@ -294,7 +333,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
         var contextSnippet = string.Join(
             "\n\n",
-            chunks.Take(5).Select(c => $"[{c.Source}]\n{c.Content}"));
+            chunks.Take(5).Select(c => c.Content));
 
         var suggestionPrompt = $"""
             The user asked: "{question}"
@@ -306,6 +345,7 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
 
             IMPORTANT: You may ONLY suggest topics that appear as exact words or phrases in the excerpts above.
             Do NOT use your own knowledge to add topics not found in the document.
+            Do NOT output or mention filenames, source markers, metadata labels, source lists, or reference sections.
             Based only on what appears in the excerpts above, suggest 2-4 specific questions
             the user could ask that ARE answered by the document. Each suggestion must
             contain at least one phrase that appears verbatim in the excerpts.
@@ -314,14 +354,13 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
             Format: a short friendly paragraph. No invented topics.
             """;
 
-        var fallbackLabel = language == "Vietnamese"
-            ? "Gợi ý chủ đề liên quan:"
-            : "Related topics you might be interested in:";
+        var suggestion = await _openAiService.SendMessageAsync(suggestionPrompt);
+        if (!string.IsNullOrWhiteSpace(suggestion))
+            return suggestion;
 
-        var suggestion = await _openAiService.SendMessageAsync(suggestionPrompt)
-            ?? $"{fallbackLabel} {string.Join(", ", chunks.Take(3).Select(c => c.Source))}";
-
-        return suggestion;
+        return language == "Vietnamese"
+            ? "Bạn có thể đặt câu hỏi khác về nội dung được trình bày trực tiếp trong tài liệu."
+            : "You can ask another question about content presented directly in the document.";
     }
 
     /// <summary>
@@ -427,6 +466,97 @@ public class SemanticKernelOrchestrator : ISemanticKernelOrchestrator
         RagContextExpander.IsExhaustiveQuery(question)
             ? "Inspect every provided source chunk and return every matching item. Do not sample, omit ranges, or claim completeness unless all provided chunks were considered."
             : string.Empty;
+
+    private static IReadOnlyList<RagContextSource> BuildLocationContexts(
+        string question,
+        IReadOnlyList<RagContextSource> attributedSources,
+        IReadOnlyList<RagContextSource> retrievedContexts)
+    {
+        var exhaustiveSectionContexts = SelectExhaustiveSectionContexts(
+            question,
+            retrievedContexts);
+        if (exhaustiveSectionContexts.Count > 0)
+            return exhaustiveSectionContexts;
+
+        if (attributedSources.Count > 0)
+            return attributedSources;
+
+        return retrievedContexts
+            .DistinctBy(source => source.DocumentId)
+            .Select(source => source with { PageNumber = null })
+            .ToList();
+    }
+
+    private static IReadOnlyList<RagContextSource> SelectExhaustiveSectionContexts(
+        string question,
+        IReadOnlyList<RagContextSource> contexts)
+    {
+        if (!RagContextExpander.IsExhaustiveQuery(question))
+            return [];
+
+        var queryKeywords = Regex.Matches(
+                question.ToLowerInvariant(),
+                @"[\p{L}\p{N}]{3,}")
+            .Select(match => match.Value)
+            .Where(keyword => !ExhaustiveLocationStopWords.Contains(keyword))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (queryKeywords.Count == 0)
+            return [];
+
+        var anchor = contexts
+            .Select(context =>
+            {
+                var content = context.Result.Content;
+                var loweredContent = content.ToLowerInvariant();
+                var keywordHits = queryKeywords.Count(loweredContent.Contains);
+                var prefix = Regex.Matches(
+                        content,
+                        @"\b(?<prefix>[A-Z]{2,10})-\d+(?:\.\d+)*\b")
+                    .Select(match => match.Groups["prefix"].Value)
+                    .GroupBy(value => value, StringComparer.Ordinal)
+                    .OrderByDescending(group => group.Count())
+                    .Select(group => new
+                    {
+                        Value = group.Key,
+                        Count = group.Count()
+                    })
+                    .FirstOrDefault();
+
+                return new
+                {
+                    Context = context,
+                    KeywordHits = keywordHits,
+                    Prefix = prefix?.Value,
+                    PrefixCount = prefix?.Count ?? 0
+                };
+            })
+            .Where(candidate =>
+                candidate.KeywordHits > 0
+                && candidate.PrefixCount >= 2
+                && !string.IsNullOrWhiteSpace(candidate.Prefix))
+            .OrderByDescending(candidate => candidate.KeywordHits)
+            .ThenByDescending(candidate => candidate.PrefixCount)
+            .FirstOrDefault();
+        if (anchor is null)
+            return [];
+
+        var sectionPattern = $@"\b{Regex.Escape(anchor.Prefix!)}-\d+(?:\.\d+)*\b";
+        return contexts
+            .Where(context => Regex.IsMatch(
+                context.Result.Content,
+                sectionPattern,
+                RegexOptions.CultureInvariant))
+            .ToList();
+    }
+
+    private static readonly HashSet<string> ExhaustiveLocationStopWords = new(
+        [
+            "liệt", "kê", "các", "tất", "cả", "toàn", "bộ", "trong",
+            "tài", "liệu", "hãy", "cho", "biết", "list", "all", "the",
+            "from", "document", "documents"
+        ],
+        StringComparer.Ordinal);
 
     /// <summary>
     /// Fixes mojibake (UTF-8 bytes misread as Latin-1) commonly found in PDF-extracted Vietnamese text.

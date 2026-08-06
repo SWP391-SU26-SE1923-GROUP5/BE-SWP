@@ -1,4 +1,5 @@
 using AIStudyHub.Business.DTOs.Documents;
+using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Options;
 using AIStudyHub.Business.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,20 +14,17 @@ public sealed class DocumentReindexWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IDocumentProcessingQueue _queue;
     private readonly DocumentReindexOptions _options;
-    private readonly DocumentStorageOptions _storage;
     private readonly ILogger<DocumentReindexWorker> _logger;
 
     public DocumentReindexWorker(
         IServiceScopeFactory scopeFactory,
         IDocumentProcessingQueue queue,
         IOptions<DocumentReindexOptions> options,
-        IOptions<DocumentStorageOptions> storage,
         ILogger<DocumentReindexWorker> logger)
     {
         _scopeFactory = scopeFactory;
         _queue = queue;
         _options = options.Value;
-        _storage = storage.Value;
         _logger = logger;
     }
 
@@ -34,6 +32,7 @@ public sealed class DocumentReindexWorker : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var claimService = scope.ServiceProvider.GetRequiredService<IDocumentReindexClaimService>();
+        var fileStorage = scope.ServiceProvider.GetRequiredService<IFileStorageService>();
         var claims = await claimService.ClaimBatchAsync(
             _options.BatchSize,
             TimeSpan.FromMinutes(_options.ClaimTimeoutMinutes),
@@ -45,7 +44,8 @@ public sealed class DocumentReindexWorker : BackgroundService
         {
             try
             {
-                var filePath = ResolveSourcePath(claim.FileLink);
+                var filePath = fileStorage.ResolveFullPath(
+                    GetStoredRelativePath(claim.FileLink));
                 if (!File.Exists(filePath))
                     throw new FileNotFoundException("Document source file not found.");
 
@@ -59,7 +59,16 @@ public sealed class DocumentReindexWorker : BackgroundService
                     IsReindex: true,
                     ReindexClaimId: claim.ClaimId);
 
-                await _queue.EnqueueAsync(request, ct);
+                if (!_queue.TryEnqueue(request))
+                {
+                    await claimService.FailClaimAsync(
+                        claim.DocumentId,
+                        claim.ClaimId,
+                        "Document is already queued.",
+                        ct);
+                    continue;
+                }
+
                 queued++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -108,21 +117,16 @@ public sealed class DocumentReindexWorker : BackgroundService
         }
     }
 
-    private string ResolveSourcePath(string fileLink)
+    private static string GetStoredRelativePath(string fileLink)
     {
-        var relativePath = fileLink.Replace('\\', '/').TrimStart('/');
-        if (relativePath.StartsWith("uploads/", StringComparison.OrdinalIgnoreCase))
-            relativePath = relativePath["uploads/".Length..];
+        const string uploadUrlPrefix = "/uploads/";
+        if (!fileLink.StartsWith(uploadUrlPrefix, StringComparison.Ordinal)
+            || fileLink.Length == uploadUrlPrefix.Length)
+        {
+            throw new InvalidOperationException(
+                "Document source path is invalid.");
+        }
 
-        var root = Path.GetFullPath(_storage.BasePath);
-        var source = Path.GetFullPath(Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar)));
-        var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar)
-            ? root
-            : root + Path.DirectorySeparatorChar;
-
-        if (!source.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Document source path is outside the configured storage root.");
-
-        return source;
+        return fileLink[uploadUrlPrefix.Length..];
     }
 }

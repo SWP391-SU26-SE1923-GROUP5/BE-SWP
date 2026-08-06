@@ -10,7 +10,7 @@ x86/
 bld/
 build/
 artifacts/
-wwwroot/
+wwwroot/*
 docs/superpowers/plans
 
 # Visual Studio

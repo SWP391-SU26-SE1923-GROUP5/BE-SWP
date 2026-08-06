@@ -1,5 +1,7 @@
 # Persistent Chat Citations Design
 
+> **Superseded:** This historical design is replaced by the [2026-07-30 mentor backend remediation design](2026-07-30-mentor-backend-remediation-design.md). Its original body is retained for migration history and context.
+
 ## Goal
 
 Persist the citations attached to assistant chat messages so citation deep-links continue to work after a page refresh or a later session reload. This change is Backend-only. The Frontend will use the existing session APIs and place `sessionId` in its route.

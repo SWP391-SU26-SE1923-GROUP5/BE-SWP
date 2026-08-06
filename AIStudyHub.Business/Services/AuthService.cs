@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Data;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -66,7 +67,7 @@ public sealed class AuthService : IAuthService
             throw new InvalidOperationException("Email is already registered.");
         }
 
-        var user = await BuildStudentUserAsync(normalizedEmail, request.FullName, request.DateOfBirth, cancellationToken);
+        var user = await BuildStudentUserAsync(normalizedEmail, request.FullName, cancellationToken);
         var createResult = await _userManager.CreateAsync(user, request.Password);
         EnsureIdentitySucceeded(createResult);
 
@@ -169,7 +170,7 @@ public sealed class AuthService : IAuthService
                 ? normalizedEmail.Split('@')[0]
                 : request.FullName.Trim();
 
-            user = await BuildStudentUserAsync(normalizedEmail, fullName, null, cancellationToken);
+            user = await BuildStudentUserAsync(normalizedEmail, fullName, cancellationToken);
             user.EmailConfirmed = true; // OAuth provider verified email
             var tempPassword = $"Ext#{Guid.NewGuid():N}aA1!";
             var createResult = await _userManager.CreateAsync(user, tempPassword);
@@ -233,8 +234,26 @@ public sealed class AuthService : IAuthService
         otpRecord.UsedAt = DateTime.UtcNow;
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        user.EmailConfirmed = true;
-        await _userManager.UpdateAsync(user);
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+        try
+        {
+            await _dbContext.Entry(user).ReloadAsync(cancellationToken);
+            if (!user.EmailConfirmed)
+            {
+                user.EmailConfirmed = true;
+                var updateResult = await _userManager.UpdateAsync(user);
+                EnsureIdentitySucceeded(updateResult);
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
     }
 
     public async Task ResendRegistrationOtpAsync(ResendOtpRequestDto request, CancellationToken cancellationToken = default)
@@ -346,13 +365,26 @@ public sealed class AuthService : IAuthService
             throw new OtpInvalidException("OTP has expired. Please request a new one.");
         }
 
-        var token = await _userManager.GeneratePasswordResetTokenAsync(user);
-        var result = await _userManager.ResetPasswordAsync(user, token, request.NewPassword);
-        EnsureIdentitySucceeded(result);
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+        try
+        {
+            await _dbContext.Entry(user).ReloadAsync(cancellationToken);
+            var token = await _userManager.GeneratePasswordResetTokenAsync(user);
+            var result = await _userManager.ResetPasswordAsync(user, token, request.NewPassword);
+            EnsureIdentitySucceeded(result);
 
-        await _dbContext.OtpRecords
-            .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.PasswordReset)
-            .ExecuteDeleteAsync(cancellationToken);
+            await _dbContext.OtpRecords
+                .Where(o => o.Email == normalizedEmail && o.UserId == user.Id && o.Type == OtpType.PasswordReset)
+                .ExecuteDeleteAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
+        }
     }
 
     public async Task ChangePasswordAsync(ClaimsPrincipal userPrincipal, ChangePasswordRequestDto request, CancellationToken cancellationToken = default)
@@ -363,20 +395,33 @@ public sealed class AuthService : IAuthService
             throw new UnauthorizedAccessException("User not found.");
         }
 
-        var user = await _userManager.FindByIdAsync(userGuid.ToString());
-        if (user is null)
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+        try
         {
-            throw new UnauthorizedAccessException("User not found.");
-        }
+            var user = await _userManager.FindByIdAsync(userGuid.ToString());
+            if (user is null)
+            {
+                throw new UnauthorizedAccessException("User not found.");
+            }
 
-        var isCurrentPasswordValid = await _userManager.CheckPasswordAsync(user, request.CurrentPassword);
-        if (!isCurrentPasswordValid)
+            await _dbContext.Entry(user).ReloadAsync(cancellationToken);
+            var isCurrentPasswordValid = await _userManager.CheckPasswordAsync(user, request.CurrentPassword);
+            if (!isCurrentPasswordValid)
+            {
+                throw new UnauthorizedAccessException("Current password is incorrect.");
+            }
+
+            var result = await _userManager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
+            EnsureIdentitySucceeded(result);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch
         {
-            throw new UnauthorizedAccessException("Current password is incorrect.");
+            await transaction.RollbackAsync(CancellationToken.None);
+            throw;
         }
-
-        var result = await _userManager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
-        EnsureIdentitySucceeded(result);
     }
 
     public async Task LogoutAsync(LogoutRequestDto request, CancellationToken cancellationToken = default)
@@ -439,7 +484,7 @@ public sealed class AuthService : IAuthService
         return new AuthResponseDto(response, accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt);
     }
 
-    private async Task<User> BuildStudentUserAsync(string normalizedEmail, string fullName, DateOnly? dateOfBirth, CancellationToken cancellationToken = default)
+    private async Task<User> BuildStudentUserAsync(string normalizedEmail, string fullName, CancellationToken cancellationToken)
     {
         var freeTier = await _unitOfWork.TierMemberships
             .Query()
@@ -455,7 +500,6 @@ public sealed class AuthService : IAuthService
             FullName = fullName.Trim(),
             UserName = normalizedEmail,
             Email = normalizedEmail,
-            DateOfBirth = dateOfBirth,
             TierId = freeTier.Id,
             CurrentStorageCapacity = 0,
             CurrentAiTokenUsage = 0,

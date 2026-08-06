@@ -25,15 +25,15 @@ public sealed class FlashcardController : ControllerBase
         return claim != null && Guid.TryParse(claim, out var userId) ? userId : Guid.Empty;
     }
 
-    [HttpGet("{docId:guid}/flashcards")]
-    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> GetByDocument(
-        Guid docId,
+    [HttpGet("{deckId:guid}/flashcards")]
+    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> GetByDeck(
+        Guid deckId,
         CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
         if (userId == Guid.Empty) return Unauthorized();
 
-        var result = await _service.GetByDocumentAsync(docId, userId, cancellationToken);
+        var result = await _service.GetByDeckAsync(deckId, userId, cancellationToken);
         return Ok(result);
     }
 
@@ -53,7 +53,7 @@ public sealed class FlashcardController : ControllerBase
         var result = await _service.GetByIdAsync(id, cancellationToken);
         if (result == null) return NotFound();
 
-        var document = await _documentService.GetByIdAsync(result.DocumentId, cancellationToken);
+        var document = await _documentService.GetByIdAsync(result.DeckId, cancellationToken);
         if (document == null) return NotFound();
 
         var userId = GetCurrentUserId();
@@ -75,7 +75,7 @@ public sealed class FlashcardController : ControllerBase
         var flashcard = await _service.GetByIdAsync(id, cancellationToken);
         if (flashcard == null) return NotFound();
 
-        var document = await _documentService.GetByIdAsync(flashcard.DocumentId, cancellationToken);
+        var document = await _documentService.GetByIdAsync(flashcard.DeckId, cancellationToken);
         if (document == null) return NotFound();
 
         var userId = GetCurrentUserId();
@@ -91,7 +91,7 @@ public sealed class FlashcardController : ControllerBase
         var flashcard = await _service.GetByIdAsync(id, cancellationToken);
         if (flashcard == null) return NotFound();
 
-        var document = await _documentService.GetByIdAsync(flashcard.DocumentId, cancellationToken);
+        var document = await _documentService.GetByIdAsync(flashcard.DeckId, cancellationToken);
         if (document == null) return NotFound();
 
         var userId = GetCurrentUserId();
@@ -99,5 +99,42 @@ public sealed class FlashcardController : ControllerBase
 
         await _service.DeleteAsync(id, cancellationToken);
         return NoContent();
+    }
+
+    [HttpDelete("by-deck/{deckId:guid}")]
+    public async Task<IActionResult> DeleteDeck(
+        Guid deckId,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        await _service.DeleteDeckAsync(deckId, userId, cancellationToken);
+        return NoContent();
+    }
+
+    [HttpDelete("document/{documentId:guid}")]
+    public async Task<IActionResult> DeleteByDocument(
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var count = await _service.DeleteByDocumentAsync(documentId, userId, cancellationToken);
+        return Ok(new { deletedCount = count });
+    }
+
+    /// <summary>Get all flashcard decks belonging to a document.</summary>
+    [HttpGet("document/{documentId:guid}")]
+    public async Task<ActionResult<IReadOnlyList<FlashcardDeckSummaryDto>>> GetDecksByDocument(
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var decks = await _service.GetDecksByDocumentAsync(documentId, userId, cancellationToken);
+        return Ok(decks);
     }
 }

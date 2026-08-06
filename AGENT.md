@@ -38,6 +38,7 @@ Technology stack:
 ## Main Features
 
 - Authentication (register with OTP, login, JWT refresh, OAuth, password reset)
+- Subject Management (authenticated students manage only their own Subjects)
 - User Management (profiles, tiers, sharing)
 - Document Management (upload, extract, chunk, vectorize, share, vote, report)
 - RAG Pipeline (hybrid search, reranking, LLM orchestration, guardrails)
@@ -63,6 +64,7 @@ Technology stack:
 
 **Student:**
 - Can manage own profile.
+- Can create, list, update, and delete own Subjects; Subject codes are unique per student.
 - Can upload and manage own documents.
 - Can vote and report documents.
 - Can use AI chat, flashcards, quizzes, submissions, notifications, payments.
@@ -75,6 +77,7 @@ Technology stack:
 - Can moderate users, documents, reports, and system data.
 - Can reindex documents and review platform-wide activity.
 - Can grant / change user tiers.
+- Does not have an override for another student's Subjects.
 
 ## Coding Rules
 
@@ -89,6 +92,17 @@ Technology stack:
 - Keep controllers thin: validate request, call service, return response.
 - **NEVER use generic base controllers (like `CrudControllerBase`).** Controllers must explicitly define only the endpoints required by business rules (e.g., Vote only needs POST and DELETE, no PUT).
 - Do not introduce additional projects without explicit instruction.
+
+## Mandatory Testing and Verification Policy
+
+- Do not recreate the deleted `AIStudyHub.Tests` project.
+- Do not create unit-test projects, unit-test files, test fixtures, mocks, test packages, or test-only production hooks when adding or fixing features.
+- Do not add xUnit, NUnit, MSTest, Moq, FluentAssertions, or equivalent unit-testing dependencies unless the repository owner explicitly reverses this policy.
+- Create integration or end-to-end test projects only when the repository owner explicitly requests them.
+- Do not create, run, require, or recommend smoke tests.
+- Agents may run `dotnet build` to verify that the solution compiles.
+- Functional verification is performed manually by the repository owner.
+- Every feature handoff must list the manual flows that the repository owner should verify.
 
 ## Naming Conventions
 
@@ -162,6 +176,7 @@ Technology stack:
 - User 1-N FlashcardReviews (SM-2 schedule, one per flashcard)
 - User 1-N StudyLogs (append-only learning activity)
 - User N-1 TierMembership (via TierUser join)
+- User 1-N Subjects (each Subject is private to its owner; `SubjectCode` is unique per owner)
 - Subject 1-N Documents
 - TierMembership 1-N TierUsers
 - TierMembership 1-N Payments
@@ -184,7 +199,7 @@ Core entities:
 
 Enums (7+):
 
-`DocumentStatus` (Draft/Published/Archived/Banned/Processing/Failed), `NotificationType`, `PaymentStatus`, `QuestionType` (SingleChoice/MultipleChoice/TrueFalse), `UserRole` (Student/Admin), `ReportStatus`, `VoteType` (Upvote/Downvote), `ActivityType` (FlashcardReview/QuizSubmit/DocumentUpload/ChatMessage), `ShareStatus` (Private/Public).
+`DocumentStatus` (Draft/Done/Archived/Banned/Processing/Failed), `NotificationType`, `PaymentStatus`, `QuestionType` (SingleChoice/MultipleChoice/TrueFalse), `UserRole` (Student/Admin), `ReportStatus`, `VoteType` (Upvote/Downvote), `ActivityType` (FlashcardReview/QuizSubmit/DocumentUpload/ChatMessage), `ShareStatus` (Private/Public).
 
 ## API Design Rules
 
@@ -217,7 +232,13 @@ Enums (7+):
 - Configure string max lengths.
 - Configure decimal precision.
 - Use enum-to-string conversions for readable database values.
-- Use migrations for schema changes.
+- A new EF Core migration may be created when an approved schema change requires one.
+- Every migration that already exists in the repository is immutable.
+- Never edit, rename, move, regenerate, squash, or delete an existing migration `.cs` file, designer file, migration name, timestamp, ordering, or historical model operation.
+- Never run `dotnet ef migrations remove` against a committed migration.
+- `ApplicationDbContextModelSnapshot.cs` may change only as the generated result of adding a new migration. Never edit it manually to rewrite migration history.
+- Inspect every newly generated migration before accepting it and confirm that it contains only the schema changes required by the current feature.
+- Applying migrations to a database, dropping a database, or resetting database data requires explicit authorization from the repository owner.
 - Put seed data in `Seed/SeedData.cs`.
 
 ## Service Layer Rules
@@ -230,7 +251,7 @@ Enums (7+):
 - Gamification services (`IGamificationService`) live alongside ModuleServices and own XP / level / streak math, leaderboard queries, and `StudyLog` persistence.
 - Spaced-repetition services (`IFlashcardReviewService`) implement SM-2 (ease factor, interval, repetitions, next-review date). One row per (user, flashcard).
 - Recommendation services (`IRecommendationService`) compute per-subject mastery from `StudyLog` and produce AI-driven study suggestions.
-- Real-time push (`IRealTimeNotificationService` / `INotificationsHub`) wraps SignalR group messaging and is injected into services that need to push events (document processed, quiz ready, level up, streak at risk).
+- Real-time push (`IRealTimeNotificationService` / `INotificationsHub`) wraps SignalR group messaging and is injected into services that need to push events (document readiness, quiz ready, level up, streak at risk).
 - Services contain business rules and orchestration.
 - Services should depend on abstractions, not concrete data access classes.
 - Services should return DTOs.
@@ -274,10 +295,16 @@ Enums (7+):
 - Hybrid search: use `IHybridSearchService` — combines dense + sparse (BM25) via RRF.
 - Reranking: use `IRerankingService` — applies positional decay after initial retrieval.
 - RAG orchestration: use `ISemanticKernelOrchestrator` — handles L3-L5 pipeline.
-- AI generators: `IQuizAiService` and `IFlashcardAiService` auto-persist results.
+- RAG context selection must reject invalid/missing document IDs, enforce any supplied document allowlist, reject blank source/content, and deduplicate chunks before prompting.
+- Chat message responses contain answer text and relevance only; do not add citation arrays, source snippets, marker indexes, or highlightability metadata back to the public contract.
+- Every relevant grounded chat answer appends the plain-text per-document heading `Vị trí nội dung liên quan trong tài liệu:`. Group sources by document; render trusted positive PDF/OCR pages as individual pages or consecutive ranges, say `không xác định được trang` when a document has no trusted page, and add `một số đoạn không xác định được trang` for mixed known/unknown pages. Do not append locations to irrelevant or empty answers. This is answer text, not a citation array or claim-level citation system; never reinterpret `chunkIndex` as a page.
+- AI generators: `IQuizAiService` and `IFlashcardAiService` require integer `numberOfQuestions` / `numberOfFlashcards` values from 1 through 20; they may generate only from the owner's `Done` document with nonempty processed context.
+- Generation is all-or-nothing: persist exactly the requested flashcards or quiz questions, or return `422 Unprocessable Entity` with no partial rows. Flashcard generation returns the persisted cards; quiz generation returns metadata with `Questions` null, so clients fetch `GET /api/Quiz/{id}` for persisted question items.
 - Guardrails: `IFaithfulnessFilter`, `IGroundingVerifier`, `IConfidenceScorer` validate responses.
 - Document ingestion: `IDocumentProcessingService` extracts and chunks text.
-- Background processing: `DocumentBackgroundProcessor` drives the async pipeline via channel queue.
+- Background processing: an upload persists its file and `Processing` document before returning `202 Accepted`; `DocumentBackgroundProcessor` drives the async pipeline and recovers persisted active `Processing` documents at startup, marking a missing source `Failed`.
+- `isChatReady` is the authoritative document-attachment gate. `Processing` and `Failed` documents may be attached, but sending is rejected with `409 DOCUMENTS_NOT_READY` if any attached document is unready; the rejection persists no user message and consumes no AI tokens. The safe readiness fields are `status`, `isChatReady`, `message`, and `canRetry`; never expose internal `ErrorMessage`.
+- Frontends use SignalR `ReceiveNotification` as the immediate readiness update and `GET /api/Document/{id}/status` polling as the fallback. Use an indeterminate spinner, never a fabricated percentage. Show retry only for `canRetry=true`; disable it after click and call `POST /api/Document/{id}/reprocess`.
 - Never hardcode embedding dimensions — read from configuration (`VectorSize` / `VectorDimension`).
 
 ## Real-time Rules (SignalR)
@@ -317,7 +344,7 @@ Enums (7+):
 - Hash passwords before persistence when authentication logic is implemented.
 - Apply role checks to admin endpoints.
 - Enforce ownership checks in services for student-owned resources.
-- Validate uploaded document metadata and file constraints before persistence.
+- Validate uploaded document metadata and file constraints before persistence. File content is capped at exactly 5,242,880 bytes; exceeding it returns `413 Payload Too Large`.
 - VNPay webhook signature must be validated in `VnPayService.ValidateSignature`.
 - Treat AI chat content and generated learning content as user data.
 
@@ -346,5 +373,5 @@ Enums (7+):
 
 - **Implemented:** Authentication (JWT + OTP + OAuth), User management, Document management (upload/chunk/vectorize), RAG pipeline (hybrid search + reranking + SK orchestration + guardrails), Flashcard generation, Quiz generation, Quiz submission with auto-grading, AI Chat, **Spaced Repetition review (SM-2)**, **Gamification (XP / level / streak / leaderboard)**, **Recommendations (per-subject mastery + AI study suggestions)**, **Real-time SignalR notifications** (`/hubs/notifications`), DB-backed notifications, Payments (VNPay), Tier memberships, Admin reindexing, **4 background workers** (document processing, tier expiration, unverified-account cleanup, daily streak reset).
 - **AI Stack:** OpenAI (`text-embedding-3-small` for embeddings, `gpt-4o-mini` for generation) + Qdrant vector store + Semantic Kernel orchestration + local BM25 sparse search.
-- **Pending:** Integration tests, unit tests for validators and business rules.
+- **Verification:** Agents verify compilation with `dotnet build`; the repository owner performs functional testing manually.
 - **Pre-production checklist:** Review `appsettings.json`, move all secrets to user secrets / environment variables, configure real SMTP, configure real VNPay credentials, set correct CORS origins, replace `/api/Gamification/award-xp` with a server-to-server auth scheme before exposing externally.

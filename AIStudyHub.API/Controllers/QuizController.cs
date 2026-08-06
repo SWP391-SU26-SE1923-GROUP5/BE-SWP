@@ -59,6 +59,24 @@ public sealed class QuizController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>Lấy tất cả quiz thuộc một document (gọn, không kèm câu hỏi/đáp án).</summary>
+    [HttpGet("document/{documentId:guid}")]
+    public async Task<ActionResult<IReadOnlyList<QuizSummaryDto>>> GetByDocument(
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var document = await _documentService.GetByIdAsync(documentId, cancellationToken);
+        if (document == null) return NotFound();
+
+        if (document.UserId != userId && document.ShareStatus != "public") return Forbid();
+
+        var result = await _service.GetByDocumentAsync(documentId, userId, cancellationToken);
+        return Ok(result);
+    }
+
     /// <summary>Lấy danh sách câu hỏi của một quiz.</summary>
     [HttpGet("{id:guid}/questions")]
     public async Task<ActionResult<IReadOnlyList<QuestionResponseDto>>> GetQuestions(Guid id, CancellationToken cancellationToken)
@@ -184,11 +202,14 @@ public sealed class QuizController : ControllerBase
         [FromQuery] int limit = 20,
         CancellationToken ct = default)
     {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
         var quiz = await _service.GetByIdAsync(quizId, ct);
         if (quiz == null) return NotFound("Quiz not found");
 
         var @params = new AIStudyHub.Business.DTOs.Common.PaginationParams { Offset = offset, Limit = limit };
-        var result = await _submissionService.GetQuizHistoryAsync(quizId, fromDate, toDate, @params, ct);
+        var result = await _submissionService.GetQuizHistoryAsync(quizId, userId, fromDate, toDate, @params, ct);
         return Ok(result);
     }
 

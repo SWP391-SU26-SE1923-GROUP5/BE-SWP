@@ -46,6 +46,19 @@ public sealed class GlobalExceptionMiddleware
         {
             await WriteLockedResponseAsync(context, exception);
         }
+        catch (DocumentsNotReadyException exception)
+        {
+            context.Response.ContentType = "application/json";
+            context.Response.StatusCode = StatusCodes.Status409Conflict;
+            var payload = new
+            {
+                statusCode = context.Response.StatusCode,
+                code = "DOCUMENTS_NOT_READY",
+                message = exception.Message,
+                documents = exception.Documents
+            };
+            await context.Response.WriteAsJsonAsync(payload);
+        }
         catch (InvalidOperationException exception)
         {
             await WriteErrorResponseAsync(context, HttpStatusCode.Conflict, exception.Message);
@@ -53,6 +66,25 @@ public sealed class GlobalExceptionMiddleware
         catch (QuotaExceededException exception)
         {
             await WriteQuotaExceededResponseAsync(context, exception);
+        }
+        catch (FileSizeLimitExceededException exception)
+        {
+            await WriteFileSizeLimitExceededResponseAsync(context, exception);
+        }
+        catch (StorageQuotaExceededException exception)
+        {
+            await WriteStorageQuotaExceededResponseAsync(context, exception);
+        }
+        catch (ExactGenerationCountException exception)
+        {
+            await WriteErrorResponseAsync(
+                context,
+                HttpStatusCode.UnprocessableEntity,
+                exception.Message);
+        }
+        catch (CorruptedQuizSubmissionException)
+        {
+            await WriteCorruptedQuizSubmissionResponseAsync(context);
         }
         catch (Exception exception)
         {
@@ -110,6 +142,60 @@ public sealed class GlobalExceptionMiddleware
             currentUsage = exception.CurrentUsage,
             limit = exception.Limit,
             requestedTokens = exception.RequestedTokens
+        };
+
+        await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
+    }
+
+    private static async Task WriteCorruptedQuizSubmissionResponseAsync(HttpContext context)
+    {
+        context.Response.ContentType = "application/json";
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+
+        var payload = new
+        {
+            statusCode = context.Response.StatusCode,
+            message = "Stored quiz answers are invalid.",
+            error = "CorruptedQuizSubmission"
+        };
+
+        await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
+    }
+
+    private static async Task WriteFileSizeLimitExceededResponseAsync(
+        HttpContext context,
+        FileSizeLimitExceededException exception)
+    {
+        context.Response.ContentType = "application/json";
+        context.Response.StatusCode = StatusCodes.Status413PayloadTooLarge;
+
+        var payload = new
+        {
+            statusCode = context.Response.StatusCode,
+            message = exception.Message,
+            error = "FileSizeLimitExceeded",
+            actualBytes = exception.ActualBytes,
+            limitBytes = exception.LimitBytes
+        };
+
+        await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
+    }
+
+    private static async Task WriteStorageQuotaExceededResponseAsync(
+        HttpContext context,
+        StorageQuotaExceededException exception)
+    {
+        context.Response.ContentType = "application/json";
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+
+        var payload = new
+        {
+            statusCode = context.Response.StatusCode,
+            message = exception.Message,
+            error = "StorageQuotaExceeded",
+            currentBytes = exception.CurrentBytes,
+            limitBytes = exception.LimitBytes,
+            requestedBytes = exception.RequestedBytes
         };
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(payload));

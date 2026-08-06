@@ -5,5 +5,4 @@ namespace AIStudyHub.Business.DTOs.Documents;
 public sealed record ExtractedTextSegment(
     string Text,
     DocumentContentType ContentType,
-    int? PageNumber,
-    bool IsHighlightable);
+    int? PageNumber);

@@ -23,8 +23,7 @@ public static class DocumentChunkAssembler
             {
                 Text = summary.Trim(),
                 PageNumber = null,
-                ContentType = DocumentContentType.Summary,
-                IsHighlightable = false
+                ContentType = DocumentContentType.Summary
             });
         }
 

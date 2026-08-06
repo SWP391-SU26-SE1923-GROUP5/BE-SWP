@@ -341,7 +341,7 @@ public sealed class GamificationService : IGamificationService
         req.ActivityType switch
         {
             Data.Enums.ActivityType.FlashcardReview => req.IsCorrect ? XpPerFlashcardCorrect : XpPerFlashcardIncorrect,
-            Data.Enums.ActivityType.QuizSubmission => req.IsCorrect ? XpPerQuizCorrect : XpPerQuizIncorrect,
+            Data.Enums.ActivityType.QuizSubmission => req.XpEarned*XpPerQuizCorrect,
             _ => req.IsCorrect ? 10 : 2
         };
 

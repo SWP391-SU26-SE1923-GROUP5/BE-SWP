@@ -147,7 +147,6 @@ AIStudyHub.slnx
 │   ├── Interfaces/          (IGenericRepository, IUnitOfWork)
 │   ├── Repositories/        (GenericRepository, UnitOfWork)
 │   └── Migrations/          (21 EF Core migrations)
-├── AIStudyHub.Tests/
 ├── docs/                     (FRONTEND_GUIDE.md, EF_MIGRATION_COMMANDS.md, ...)
 ├── AGENT.md                  (coding conventions & rules)
 ├── ARCHITECTURE.md           (this file)
@@ -228,7 +227,7 @@ All entities inherit from `BaseEntity` (Id: Guid, CreatedAt, UpdatedAt), **excep
 | `User` | `Users` | FullName, DateOfBirth, CurrentStorageCapacity, CurrentAiTokenUsage, Status, Role, IsActive, TierId, TierExpireAt |
 | `RefreshToken` | `RefreshTokens` | TokenHash, ExpiresAt, RevokedAt, ReplacedByTokenHash |
 | `OtpRecord` | `OtpRecords` | Email, OtpHash, OtpType, ExpiresAt, UsedAt, FailedAttempts, LockedUntil |
-| `Subject` | `Subjects` | SubjectCode, SubjectName, Description |
+| `Subject` | `Subjects` | OwnerUserId (required), SubjectCode (unique per owner), SubjectName, Description |
 | `TierMembership` | `TierMembership` | TierName, StorageLimitMb, AiTokens |
 | `TierUser` | `TierUser` | UserId, TierMembershipId (join table) |
 | `Document` | `Document` | UserId, SubjectId, Title, FileLink, FileName, FileExtension, FileType, FileSizeBytes, SharedUsers, ShareStatus, Status |
@@ -250,7 +249,7 @@ All entities inherit from `BaseEntity` (Id: Guid, CreatedAt, UpdatedAt), **excep
 
 ### Enums (8)
 
-`DocumentStatus` (Draft/Published/Archived/Banned/Processing/Failed), `NotificationType` (incl. Document/Quiz/FlashcardsReady/StreakAtRisk/TierUpgraded/Payment variants), `PaymentStatus`, `QuestionType` (SingleChoice/MultipleChoice/TrueFalse), `UserRole` (Student/Admin), `ReportStatus`, `VoteType` (Upvote/Downvote), **`ActivityType`** (FlashcardReview / QuizSubmit / DocumentUpload / ChatMessage), **`ShareStatus`** (Private / Public).
+`DocumentStatus` (Draft/Done/Archived/Banned/Processing/Failed), `NotificationType` (incl. Document/Quiz/FlashcardsReady/StreakAtRisk/TierUpgraded/Payment variants), `PaymentStatus`, `QuestionType` (SingleChoice/MultipleChoice/TrueFalse), `UserRole` (Student/Admin), `ReportStatus`, `VoteType` (Upvote/Downvote), **`ActivityType`** (FlashcardReview / QuizSubmit / DocumentUpload / ChatMessage), **`ShareStatus`** (Private / Public).
 
 ### Entity Relationships
 
@@ -290,7 +289,8 @@ erDiagram
 
     Subject {
         guid Id PK
-        string SubjectCode UK
+        guid OwnerUserId FK
+        string SubjectCode "unique per owner"
         string SubjectName
         string Description
     }
@@ -462,6 +462,7 @@ erDiagram
     User ||--o{ FlashcardReview : "tracks"
     User ||--o{ StudyLog : "logs"
     User }o--|| TierMembership : "subscribes_to"
+    User ||--o{ Subject : "owns"
 
     Subject ||--o{ Document : "categorizes"
     TierMembership ||--o{ Payment : "associated_with"
@@ -489,61 +490,51 @@ erDiagram
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Controller as DocumentUploadController
+    participant Controller as DocumentController
     participant Storage as LocalFileStorageService
-    participant DocSvc as DocumentService
+    participant UploadSvc as IDocumentUploadService
     participant Queue as DocumentProcessingQueue
     participant Processor as DocumentBackgroundProcessor
-    participant KM as KernelMemoryService
-    participant EmbedSvc as EmbeddingService
+    participant Extract as IDocumentProcessingService
+    participant Assemble as DocumentChunkAssembler
+    participant EmbedSvc as IEmbeddingService
     participant SparseGen as Bm25SparseGenerator
     participant Qdrant as QdrantVectorService
     participant DB as DbContext
 
-    Client->>Controller: POST /api/Document/upload (multipart/form-data)
-    Controller->>Storage: SaveFileAsync(file)
-    Storage-->>Controller: filePath
-
-    Controller->>DocSvc: CreateAsync(dto)
-    DocSvc->>DB: Insert Document (Status=Processing)
-    DocSvc-->>Controller: documentId
-
-    Controller->>Queue: EnqueueAsync(request)
+    Client->>Controller: POST /api/Document/upload/file (multipart/form-data)
+    Controller->>UploadSvc: UploadAsync(stream request)
+    UploadSvc->>Storage: SaveFileAsync(stream)
+    Storage-->>UploadSvc: stored path + exact bytes
+    UploadSvc->>DB: Insert Document (Status=Processing)
+    UploadSvc->>Queue: TryEnqueue(request)
+    UploadSvc-->>Controller: documentId
+    Note over UploadSvc,DB: File and Processing document are durable before acceptance
     Controller-->>Client: 202 Accepted (documentId)
 
     par Async Background Processing
         Processor->>Processor: DequeueAsync() — blocking loop
 
-        Processor->>KM: ImportDocumentAsync(filePath, docId, userId, fileName)
-        Note over KM: PdfPig / OpenXML<br/>Extracts raw text
-        Note over KM: Splits into chunks<br/>(sentence-split, overlapping)
-        Note over KM: Tags: user_id, file_name<br/>Stores in configured backend
+        Processor->>Extract: ExtractSegmentsAsync(fileContent, extension)
+        Note over Extract: Extracts text or OCR segments from the stored file
+        Processor->>Assemble: AssembleAsync(segments, summary, chunk options)
+        Note over Assemble: Builds ordered chunks with configured overlap
 
-        Processor->>KM: SearchAsync("", userId, limit=1000)
-        Note over KM: Returns Citation[] with<br/>DocumentId + Partitions[]
+        Processor->>Qdrant: EnsureCollectionExistsAsync()
+        Processor->>EmbedSvc: GenerateEmbeddingsAsync(chunkTexts)
+        Note over EmbedSvc: Batch OpenAI embeddings API call<br/>returns dense vectors
 
-        loop For each Citation (one per source file)
-            loop For each Partition (one per chunk)
-                Processor->>EmbedSvc: GenerateEmbeddingAsync(chunkText)
-                Note over EmbedSvc: Calls LocalAIService<br/>OpenAI embeddings API
-                Note over EmbedSvc: Returns float[] dense vector
-
-                Processor->>SparseGen: GenerateSparseVector(chunkText)
-                Note over SparseGen: FNV-1a word hashing<br/>Sub-linear TF scoring
-
-                Processor->>Qdrant: EnsureCollectionExistsAsync()
-                Note over Qdrant: Creates collection if missing<br/>Registers sparse-text named vector
-
-                Processor->>Qdrant: UpsertVectorAsync(id, dense, sparse, metadata)
-                Note over Qdrant: Stores: dense "" vector +<br/>sparse "sparse-text" named vector<br/>Payload: documentId, userId, text,<br/>fileName, chunkIndex
-            end
+        loop For each assembled chunk
+            Processor->>SparseGen: GenerateSparseVector(chunkText)
+            Processor->>Qdrant: UpsertVectorAsync(id, dense, sparse, metadata)
+            Note over Qdrant: Stores dense + sparse vectors and chunk metadata
         end
 
-        Processor->>DB: Update Document (Status=Published)
+        Processor->>DB: Update Document (Status=Done or Failed)
     end
 ```
 
-#### L2-L5 — Legacy RAG Query Flow (Chat with Document)
+#### L2-L5 — Page-Aware RAG Query Flow (Chat with Document)
 
 > Current API contract: `POST /api/AI/rag/ask` is search-only and returns reranked chunks. Chat answer generation uses `POST /api/Chat/messages`. The sequence below documents the orchestration used by the chat flow, not the search-only endpoint.
 
@@ -551,6 +542,7 @@ sequenceDiagram
 sequenceDiagram
     participant Client
     participant Controller as ChatController
+    participant Chat as AIChatService
     participant Orch as SemanticKernelOrchestrator
     participant Hybrid as HybridSearchService
     participant EmbedSvc as EmbeddingService
@@ -563,7 +555,8 @@ sequenceDiagram
     participant Score as ConfidenceScorer
 
     Client->>Controller: POST /api/Chat/messages { sessionId, message }
-    Controller->>Orch: AskWithTrackingAsync(userId, documentIds, question, history)
+    Controller->>Chat: CreateMessageAsync(request, userId)
+    Chat->>Orch: AskWithTrackingAsync(userId, documentIds, question, history)
 
     rect rgb(235, 245, 255)
         Note over Orch,Qdrant: L2 — Retrieval (Hybrid Search + Reranking)
@@ -588,16 +581,17 @@ sequenceDiagram
         Rerank-->>Orch: List<SearchResult> (5 items, adjusted scores)
 
         alt No relevant results
-            Orch-->>Controller: RagResponse("no info found", confidence=0)
+            Orch-->>Chat: RagResponse("no info found", confidence=0)
         end
     end
 
     rect rgb(240, 255, 240)
         Note over Orch,LLM: L3 — Generation (LLM Prompt Assembly)
 
-        Orch->>Orch: Build context string<br/>"--- Source: fileName ---\nchunkText"
-        Orch->>Orch: Build system prompt:<br/>- Answer ONLY from SOURCES<br/>- Guide on AIStudyHub features<br/>- Never reveal backend details<br/>- Vietnamese by default
-        Orch->>Orch: Build user prompt:<br/>"SOURCES: [chunks]\nQUESTION: [question]"
+        Orch->>Orch: Validate document metadata + allowlist<br/>Deduplicate and preserve retrieval order
+        Orch->>Orch: Build context with FILE_NAME,<br/>positive PAGE_NUMBER or unknown, and CONTENT
+        Orch->>Orch: Build shared system prompt:<br/>- Answer only from supplied content<br/>- Do not generate source names/pages; backend appends locations<br/>- Never infer a page from chunk order<br/>- No source markers, lists, or metadata labels<br/>- Vietnamese by default
+        Orch->>Orch: Build user prompt:<br/>"SOURCE CONTENT: [chunks]\nQUESTION: [question]"
 
         Orch->>LLM: SendMessageAsync(systemPrompt + userPrompt)
         Note over LLM: OpenAI Chat Completions API<br/>Sends full prompt to configured model
@@ -621,11 +615,21 @@ sequenceDiagram
     rect rgb(250, 240, 255)
         Note over Orch,Client: L5 — Response
 
-        Orch->>Orch: Build CitationInfo[]<br/>from searchResults
-        Orch-->>Controller: RagResponse(answer, citations, confidence)
-        Controller-->>Client: 200 OK
+        Orch->>Orch: Append plain-text locations per document<br/>for every relevant grounded answer
+        Orch-->>Chat: RagResponseWithUsage(answer + locations, confidence,<br/>tokens, isRelevant)
+        Chat->>Chat: Persist ChatMessage text + relevance
+        Chat-->>Controller: ChatMessageResponseDto
+        Controller-->>Client: ChatMessageResponseDto<br/>(no source array or highlight metadata)
     end
 ```
+
+Every relevant grounded chat answer receives a plain-text `Vị trí nội dung liên quan trong tài liệu:` section after generation. The formatter groups retrieved context by document, renders trusted positive PDF/OCR pages as individual pages or consecutive ranges, uses `không xác định được trang` for documents with no trusted page, and adds `một số đoạn không xác định được trang` when known and unknown pages are mixed. It is omitted for irrelevant or empty answers. This is not a citation array or claim-level citation system, and `chunkIndex` is never treated as a page number. The search-only hybrid endpoint continues to expose nullable `PageNumber` and `ChunkIndex` for diagnostics, but not `IsHighlightable`. Removing the obsolete chat-citation table leaves existing `ChatMessage.Content` and sessions intact.
+
+#### Document readiness and chat attachment gate
+
+Uploads return `202 Accepted` after durable storage with `documentId`, `status`, `chunkCount`, `message`, `isChatReady`, and `canRetry`; `GET /api/Document/{id}/status` returns `id`, `status`, `isChatReady`, `message`, and `canRetry`. `isChatReady` is authoritative: it is true only for active, supported `Done` documents. The Vietnamese UI messages are `Tài liệu đang được chuẩn bị.` (`Processing`), `Tài liệu đã sẵn sàng.` (`Done`), `Không thể chuẩn bị tài liệu.` (`Failed`), and `Loại tài liệu này không hỗ trợ Chat.` (unsupported type). SignalR `ReceiveNotification` provides the immediate terminal update, while status polling is the fallback; clients show an indeterminate spinner instead of fabricated progress.
+
+Chat sessions may attach `Processing` and `Failed` documents, and attachment responses carry `status`, `isChatReady`, `message`, and `canRetry`. Before writing a user message or consuming AI tokens, Chat rejects a send with `409 DOCUMENTS_NOT_READY` if any attachment is unready. The response identifies only those blockers with their safe readiness fields. UI retry is available only when `canRetry=true`; disable it after it is clicked and call `POST /api/Document/{id}/reprocess`. REST and SignalR contracts never expose the internal `ErrorMessage`.
 
 #### L6 — Flashcard Generation Flow
 
@@ -634,23 +638,24 @@ sequenceDiagram
     participant Client
     participant Controller as FlashcardController
     participant FlashSvc as FlashcardAiService
-    participant KM as KernelMemoryService
+    participant Store as QdrantVectorService
     participant LLM as LocalAIService
     participant DB as DbContext
 
-    Client->>Controller: POST /api/Flashcard/generate-ai { numberOfFlashcards }
+    Client->>Controller: POST /api/AI/flashcards/generate?docId={guid} { numberOfFlashcards }
     Controller->>FlashSvc: GenerateFlashcardsAsync(docId, request, userId)
 
-    FlashSvc->>FlashSvc: Validate document ownership
+    FlashSvc->>FlashSvc: Require owner, Done status, and nonempty processed context
+    Note over Controller,FlashSvc: numberOfFlashcards is required integer 1..20
 
-    FlashSvc->>KM: SearchAsync("", filter=documentId, limit=1000)
-    Note over KM: Retrieves all chunks for document
-    KM-->>FlashSvc: MemoryAnswer.Results[]
+    FlashSvc->>Store: GetPayloadsByDocumentIdAsync(documentId)
+    Note over Store: Retrieves all chunk payloads for document
+    Store-->>FlashSvc: List<Dictionary<string,string>>
 
-    FlashSvc->>FlashSvc: BuildContext(citations)
-    Note over FlashSvc: Concatenates all partition.Text<br/>Limited to 30,000 chars
+    FlashSvc->>FlashSvc: BuildContext(chunk payloads)
+    Note over FlashSvc: Concatenates chunk text<br/>Limited to 20,000 chars
 
-    loop Batch generation (batchSize=5, maxAttempts=80)
+    loop Up to four model calls (remaining requested cards; batch cap 20)
         FlashSvc->>LLM: SendMessageAsync(batchPrompt, temp=0.2)
         Note over LLM: System: Extract N facts → JSON flashcards<br/>"front": question ending with ?<br/>"back": short factual answer
 
@@ -662,7 +667,8 @@ sequenceDiagram
         FlashSvc->>FlashSvc: Normalize & dedupe<br/>Enforce: front=question, back=answer<br/>Reject placeholders
     end
 
-    FlashSvc->>DB: Insert Flashcard entities
+    Note over FlashSvc,DB: Require exactly requested count; otherwise 422 and no rows
+    FlashSvc->>DB: Insert exactly requested Flashcard entities
     FlashSvc-->>Controller: FlashcardResponseDto[]
     Controller-->>Client: 200 OK
 ```
@@ -678,10 +684,11 @@ sequenceDiagram
     participant LLM as LocalAIService
     participant DB as DbContext
 
-    Client->>Controller: POST /api/Quiz/generate-ai { numberOfQuestions }
+    Client->>Controller: POST /api/AI/quizzes/generate?docId={guid} { numberOfQuestions }
     Controller->>QuizSvc: GenerateAndPersistQuizAsync(docId, request, userId)
 
-    QuizSvc->>QuizSvc: Validate document + ownership
+    QuizSvc->>QuizSvc: Require owner, Done status, and nonempty processed context
+    Note over Controller,QuizSvc: numberOfQuestions is required integer 1..20
 
     QuizSvc->>Qdrant: GetPayloadsByDocumentIdAsync(documentId)
     Note over Qdrant: REST scroll API<br/>Returns all payload dicts for doc
@@ -692,7 +699,7 @@ sequenceDiagram
 
     QuizSvc->>QuizSvc: Concatenate chunks as context
 
-    loop Batch generation (batchSize=3, maxAttempts=60)
+    loop Up to four model calls (remaining count with bounded buffer; batch cap 15)
         QuizSvc->>LLM: SendMessageAsync(batchPrompt, temp=0.2)
         Note over LLM: System: Read TEXT → JSON quiz<br/>Exactly N questions<br/>Each: questionTitle + 4 answers<br/>Exactly 1 isCorrect=true
 
@@ -705,6 +712,7 @@ sequenceDiagram
     end
 
     QuizSvc->>DB: Insert Quiz → Questions → Answers
+    Note over QuizSvc,DB: Require exactly requested count; otherwise 422 and no rows
     QuizSvc-->>Controller: QuizResponseDto
     Controller-->>Client: 200 OK
 ```
@@ -724,11 +732,11 @@ sequenceDiagram
 | `IFaithfulnessFilter` | `FaithfulnessFilter` | Detects evasive answers ("cannot find", "I don't know") despite available context |
 | `IGroundingVerifier` | `GroundingVerifier` | Word-overlap grounding score (source words vs answer words coverage) |
 | `IConfidenceScorer` | `ConfidenceScorer` | Combined confidence: grounding × faithfulness × length × threshold bonus, clamped [0,1] |
-| `IQuizAiService` | `QuizAiService` | Batch-prompt quiz generation (3 questions/batch, 3 duplicate-then-abort policy, 3-stage JSON parser) |
-| `IFlashcardAiService` | `FlashcardAiService` | Batch-prompt flashcard generation (5 cards/batch, Kernel Memory context, deduplication) |
+| `IQuizAiService` | `QuizAiService` | Exact-count quiz generation with up to four model calls, a 15-question batch cap, validation, and deduplication |
+| `IFlashcardAiService` | `FlashcardAiService` | Exact-count flashcard generation with up to four model calls, a 20-card batch cap, validation, and deduplication |
 | `IDocumentProcessingService` | `DocumentProcessingService` | Text extraction from PDF (PdfPig), DOCX (OpenXML), TXT/MD; sentence-split chunking with overlap |
-| `IDocumentProcessingQueue` | `DocumentProcessingQueue` | In-memory channel-based async job queue for document processing |
-| `DocumentBackgroundProcessor` | `DocumentBackgroundProcessor` | `BackgroundService` — dequeues jobs, calls KernelMemory import + generates dense/sparse vectors → Qdrant |
+| `IDocumentProcessingQueue` | `DocumentProcessingQueue` | Unbounded, single-reader/multi-writer in-process dispatch queue with document deduplication and coalesced pending reprocess requests; durable `Processing` records are recovered and re-enqueued at startup |
+| `DocumentBackgroundProcessor` | `DocumentBackgroundProcessor` | `BackgroundService` — resumes durable active `Processing` documents, extracts and assembles chunks, generates batch dense embeddings and sparse vectors, upserts directly to Qdrant, then sets `Done` or `Failed` |
 
 ### AI / LLM Configuration
 
@@ -851,6 +859,12 @@ Client -> AuthController
 
 JWT tokens: short-lived access tokens (60 min default) + long-lived refresh tokens (7 days), stored as SHA-256 hashes in the database.
 
+## Subject Ownership Contract
+
+`GET`, `POST`, `PUT`, and `DELETE /api/Subject` are authenticated student operations. The current JWT user owns the results and all writes. Subject operations have no Admin override.
+
+Missing or foreign IDs return `404`. A Subject referenced by a Document cannot be deleted and returns `409`. Document creation accepts only a Subject owned by the requesting student.
+
 ## Payment Flow
 
 ```mermaid
@@ -888,6 +902,31 @@ sequenceDiagram
 - Use explicit access modifiers.
 - Avoid static state for request-specific behavior.
 - Avoid circular project references.
+
+## Repository Change Policy
+
+These rules are architectural constraints and apply to every feature, bug fix, and refactor.
+
+### Migration History
+
+- A new EF Core migration may be created when an approved schema change requires one.
+- Every migration that already exists in the repository is immutable.
+- Never edit, rename, move, regenerate, squash, or delete an existing migration `.cs` file, designer file, migration name, timestamp, ordering, or historical model operation.
+- Never run `dotnet ef migrations remove` against a committed migration.
+- `ApplicationDbContextModelSnapshot.cs` may change only as the generated result of adding a new migration. Never edit it manually to rewrite migration history.
+- Inspect every newly generated migration before accepting it and confirm that it contains only the schema changes required by the current feature.
+- Applying migrations to a database, dropping a database, or resetting database data requires explicit authorization from the repository owner.
+
+### Testing and Verification
+
+- Do not recreate the deleted `AIStudyHub.Tests` project.
+- Do not create unit-test projects, unit-test files, test fixtures, mocks, test packages, or test-only production hooks when adding or fixing features.
+- Do not add xUnit, NUnit, MSTest, Moq, FluentAssertions, or equivalent unit-testing dependencies unless the repository owner explicitly reverses this policy.
+- Create integration or end-to-end test projects only when the repository owner explicitly requests them.
+- Do not create, run, require, or recommend smoke tests.
+- Agents may run `dotnet build` to verify that the solution compiles.
+- Functional verification is performed manually by the repository owner.
+- Every feature handoff must list the manual flows that the repository owner should verify.
 
 ## Dependency Injection Strategy
 
@@ -963,9 +1002,10 @@ Recommended log levels:
 ## Background Services
 
 1. **DocumentBackgroundProcessor** (`BackgroundService`)
-   - Reads from `IDocumentProcessingQueue` (bounded channel).
-   - Processes: text extraction, Kernel Memory import, embedding, Qdrant upsert.
-   - Updates document status to Published or Failed.
+   - Accepts uploads only after file and `Processing` document persistence; content above exactly 5,242,880 bytes is rejected with `413 Payload Too Large`.
+   - Reads from `IDocumentProcessingQueue`, an unbounded single-reader/multi-writer queue with document deduplication and coalesced pending reprocess requests, and recovers active `Processing` documents from persistence at startup.
+   - Processes: text/OCR extraction, chunk assembly, batch embeddings, sparse-vector generation, and direct Qdrant upsert.
+   - Updates document status to `Done` or `Failed`; recovery marks the document `Failed` when its stored source file is missing.
    - Graceful error handling per job.
    - On completion, pushes `ReceiveNotification` with `type=Document` so FE can show "Document ready".
 
@@ -990,16 +1030,13 @@ Recommended log levels:
 Recommended evolution paths:
 
 - Add caching (Redis) for frequently accessed public document metadata.
-- Add integration tests with a test database.
-- Add unit tests for validators, business rules, and repository behavior.
 - Add health checks for SQL Server and Qdrant.
 - Add rate limiting on AI and upload endpoints.
 - Add API versioning before public clients depend on the API.
 - Add observability with metrics (Prometheus) and distributed tracing.
 - Add object storage (Azure Blob / S3) for production file storage.
 - Add audit logging for admin and payment actions.
-- Add message queue (RabbitMQ / Azure Queue) for resilient background processing — the in-memory channel queue is single-process only.
+- Add an external message queue (RabbitMQ / Azure Queue) for multi-instance dispatch and coordination.
 - Replace the public `/api/Gamification/award-xp` endpoint with a server-to-server auth scheme (mTLS or shared HMAC) before going to production.
 - Split AI provider implementations behind interfaces for multi-provider support.
 - Keep the current 3-layer architecture unless scaling requirements justify a larger architecture.
-- Add unit tests for SM-2 math and XP/level/streak math (currently untested, and small off-by-one bugs here corrupt user-facing stats silently).

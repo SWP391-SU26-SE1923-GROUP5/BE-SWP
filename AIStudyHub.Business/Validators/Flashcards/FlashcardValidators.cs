@@ -7,7 +7,7 @@ public sealed class CreateFlashcardRequestDtoValidator : AbstractValidator<Creat
 {
     public CreateFlashcardRequestDtoValidator()
     {
-        RuleFor(x => x.DocumentId).NotEmpty();
+        RuleFor(x => x.DeckId).NotEmpty();
         RuleFor(x => x.Front).NotEmpty();
         RuleFor(x => x.Back).NotEmpty();
     }
@@ -19,5 +19,14 @@ public sealed class UpdateFlashcardRequestDtoValidator : AbstractValidator<Updat
     {
         RuleFor(x => x.Front).NotEmpty();
         RuleFor(x => x.Back).NotEmpty();
+    }
+}
+
+public sealed class CreateFlashcardsViaAiValidator : AbstractValidator<CreateFlashcardsViaAiRequestDto>
+{
+    public CreateFlashcardsViaAiValidator()
+    {
+        RuleFor(request => request.NumberOfFlashcards)
+            .InclusiveBetween(1, 20);
     }
 }

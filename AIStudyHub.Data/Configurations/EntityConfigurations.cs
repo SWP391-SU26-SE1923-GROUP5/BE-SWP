@@ -55,35 +55,17 @@ internal sealed class SubjectConfiguration : IEntityTypeConfiguration<Subject>
         builder.Property(x => x.SubjectCode).HasColumnName("subject_code").HasMaxLength(20).IsRequired();
         builder.Property(x => x.SubjectName).HasColumnName("subject_name").HasMaxLength(255).IsRequired();
         builder.Property(x => x.Description).HasColumnName("description");
+        builder.Property(x => x.OwnerUserId)
+            .HasColumnName("owner_user_id")
+            .IsRequired();
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
-        builder.HasIndex(x => x.SubjectCode).IsUnique();
-
-        // Hardcode subjects based on user requirement
-        var now = new DateTime(2026, 6, 24, 0, 0, 0, DateTimeKind.Utc);
-        builder.HasData(
-            new Subject { Id = Guid.Parse("3d093807-a8d5-4a51-aa77-635a5548ad58"), SubjectCode = "CS", SubjectName = "Computer Science", Description = "Documents related to algorithms, programming languages, software development, and computing theory.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("63be61df-3336-4d71-aac4-c4e03f77337a"), SubjectCode = "MATH", SubjectName = "Mathematics", Description = "Materials covering algebra, calculus, geometry, statistics, and applied mathematics.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("aadad9a0-a847-4437-8c1a-2443ef5c4543"), SubjectCode = "PHYS", SubjectName = "Physics", Description = "Study materials for classical mechanics, electromagnetism, thermodynamics, and quantum physics.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("f6dd951c-b8e4-4f41-b6e6-ad04707e6c61"), SubjectCode = "CHEM", SubjectName = "Chemistry", Description = "Resources on organic, inorganic, physical chemistry, and chemical reactions.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("8a716c82-f3de-472c-ab02-acf5e9fd51d6"), SubjectCode = "BIO", SubjectName = "Biology", Description = "Documents about genetics, anatomy, ecology, botany, and zoology.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("a2af6d40-1d8c-4940-bd0e-13629c85a480"), SubjectCode = "ECON", SubjectName = "Economics", Description = "Materials discussing microeconomics, macroeconomics, market behavior, and economic policies.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("955e64cf-01ad-42b1-9e2f-3176527c0eaa"), SubjectCode = "BUS", SubjectName = "Business", Description = "Resources on management, entrepreneurship, corporate strategy, and organizational behavior.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("54084e95-a302-4c09-bbf2-5fb34f6b5b2e"), SubjectCode = "ACC", SubjectName = "Accounting", Description = "Documents related to financial reporting, auditing, taxation, and bookkeeping.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("3d9d068a-bf45-48e3-80b4-ad2c438354e0"), SubjectCode = "FIN", SubjectName = "Finance", Description = "Materials on investments, corporate finance, financial markets, and wealth management.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("7217e917-a145-487f-b597-d2066d7f9ec9"), SubjectCode = "MKT", SubjectName = "Marketing", Description = "Resources covering consumer behavior, market research, advertising, and digital marketing.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("8e159166-e735-4db5-a32d-5931f8401483"), SubjectCode = "LAW", SubjectName = "Law", Description = "Documents related to legal systems, civil rights, corporate law, and criminal justice.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("c5790423-d558-4347-bf0b-39f6addfe9fb"), SubjectCode = "MED", SubjectName = "Medicine", Description = "Materials covering human health, diseases, pharmacology, and clinical practices.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("a8c0cdcd-7939-44f1-887a-1a9ebc70b9ad"), SubjectCode = "ENG", SubjectName = "English", Description = "Resources for English literature, grammar, linguistics, and writing skills.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("88ee3df8-aeea-4440-b610-74f7ba55ac9e"), SubjectCode = "HIST", SubjectName = "History", Description = "Documents about past events, ancient civilizations, world wars, and historical analysis.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("dfe0ea06-daa1-469d-b4cf-0774c3bac0c5"), SubjectCode = "GEO", SubjectName = "Geography", Description = "Materials on physical environments, human geography, maps, and earth sciences.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("a611af01-0c29-45af-9d1a-ad792d97e863"), SubjectCode = "PSY", SubjectName = "Psychology", Description = "Study materials on human behavior, cognitive processes, and mental health.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("9fad3be5-9e10-4d1b-b2de-55e585c7f98c"), SubjectCode = "ENGR", SubjectName = "Engineering", Description = "Resources for civil, mechanical, electrical, and other engineering disciplines.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("8ca7c447-5702-4e45-b4af-406953ab030d"), SubjectCode = "AI", SubjectName = "Artificial Intelligence", Description = "Documents on machine learning, neural networks, robotics, and natural language processing.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("9ee16682-c880-4074-8bf7-c9299e690d76"), SubjectCode = "DS", SubjectName = "Data Science", Description = "Materials covering data analysis, big data, data visualization, and statistical modeling.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("4d6dd566-14a4-46e8-9c1f-e7b064b41354"), SubjectCode = "CYBER", SubjectName = "Cybersecurity", Description = "Resources on information security, cryptography, network protection, and ethical hacking.", CreatedAt = now },
-            new Subject { Id = Guid.Parse("9c12d917-5c56-4238-b96b-d1a3c831bf40"), SubjectCode = "OTHER", SubjectName = "Other", Description = "For any document that does not fit into the predefined categories above.", CreatedAt = now }
-        );
+        builder.HasIndex(x => new { x.OwnerUserId, x.SubjectCode })
+            .IsUnique();
+        builder.HasOne(x => x.OwnerUser)
+            .WithMany(x => x.Subjects)
+            .HasForeignKey(x => x.OwnerUserId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }
 
@@ -195,13 +177,28 @@ internal sealed class FlashcardConfiguration : IEntityTypeConfiguration<Flashcar
         builder.ToTable("Flashcard");
         builder.HasKey(x => x.Id);
         builder.Property(x => x.Id).HasColumnName("card_id");
-        builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
+        builder.Property(x => x.DeckId).HasColumnName("deck_id").IsRequired();
         builder.Property(x => x.Front).HasColumnName("front").IsRequired();
         builder.Property(x => x.Back).HasColumnName("back").IsRequired();
         builder.Property(x => x.Lapses).HasColumnName("lapses").IsRequired().HasDefaultValue(0);
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
-        builder.HasOne(x => x.Document).WithMany(x => x.Flashcards).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
+        builder.HasOne(x => x.FlashcardDeck).WithMany(x => x.Flashcards).HasForeignKey(x => x.DeckId).OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+internal sealed class FlashcardDeckConfiguration : IEntityTypeConfiguration<FlashcardDeck>
+{
+    public void Configure(EntityTypeBuilder<FlashcardDeck> builder)
+    {
+        builder.ToTable("FlashcardDeck");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("deck_id");
+        builder.Property(x => x.DocumentId).HasColumnName("doc_id").IsRequired();
+        builder.Property(x => x.Name).HasColumnName("name").HasMaxLength(255).IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+        builder.HasOne(x => x.Document).WithMany(x => x.FlashcardDecks).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
     }
 }
 
@@ -226,6 +223,54 @@ internal sealed class FlashcardReviewConfiguration : IEntityTypeConfiguration<Fl
 
         // Hot path: "due today" query
         builder.HasIndex(x => new { x.UserId, x.NextReviewDate });
+
+        builder.HasOne(x => x.User)
+            .WithMany()
+            .HasForeignKey(x => x.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.HasOne(x => x.Flashcard)
+            .WithMany()
+            .HasForeignKey(x => x.FlashcardId)
+            .OnDelete(DeleteBehavior.Cascade);
+    }
+}
+
+internal sealed class FlashcardReviewAttemptConfiguration : IEntityTypeConfiguration<FlashcardReviewAttempt>
+{
+    public void Configure(EntityTypeBuilder<FlashcardReviewAttempt> builder)
+    {
+        builder.ToTable("FlashcardReviewAttempt");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("attempt_id");
+        builder.Property(x => x.UserId).HasColumnName("u_id").IsRequired();
+        builder.Property(x => x.FlashcardId).HasColumnName("card_id").IsRequired();
+        builder.Property(x => x.Quality)
+            .HasColumnName("quality")
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .IsRequired();
+        builder.Property(x => x.TimeSpentSeconds).HasColumnName("time_spent_seconds");
+        builder.Property(x => x.PreviousEaseFactor).HasColumnName("previous_ease_factor").IsRequired();
+        builder.Property(x => x.ResultEaseFactor).HasColumnName("result_ease_factor").IsRequired();
+        builder.Property(x => x.PreviousInterval).HasColumnName("previous_interval").IsRequired();
+        builder.Property(x => x.ResultInterval).HasColumnName("result_interval").IsRequired();
+        builder.Property(x => x.PreviousRepetitions).HasColumnName("previous_repetitions").IsRequired();
+        builder.Property(x => x.ResultRepetitions).HasColumnName("result_repetitions").IsRequired();
+        builder.Property(x => x.PreviousNextReviewDate)
+            .HasColumnName("previous_next_review_date")
+            .HasColumnType("datetime")
+            .IsRequired();
+        builder.Property(x => x.ResultNextReviewDate)
+            .HasColumnName("result_next_review_date")
+            .HasColumnType("datetime")
+            .IsRequired();
+        builder.Property(x => x.XpEarned).HasColumnName("xp_earned").IsRequired();
+        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
+        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
+
+        builder.HasIndex(x => new { x.UserId, x.CreatedAt });
+        builder.HasIndex(x => new { x.UserId, x.FlashcardId, x.CreatedAt });
 
         builder.HasOne(x => x.User)
             .WithMany()
@@ -361,6 +406,7 @@ internal sealed class QuizSubmissionConfiguration : IEntityTypeConfiguration<Qui
         builder.Property(x => x.QuizId).HasColumnName("quiz_id").IsRequired();
         builder.Property(x => x.Answers).HasColumnName("answers").IsRequired();
         builder.Property(x => x.Score).HasColumnName("score").HasPrecision(5, 2);
+        builder.Property(x => x.DurationSeconds).HasColumnName("duration_seconds");
         builder.Property(x => x.SubmittedAt).HasColumnName("submitted_at").HasColumnType("datetime");
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
@@ -465,41 +511,6 @@ internal sealed class ChatMessageConfiguration : IEntityTypeConfiguration<ChatMe
         builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
         builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
         builder.HasOne(x => x.ChatSession).WithMany(x => x.ChatMessages).HasForeignKey(x => x.ChatSessionId).OnDelete(DeleteBehavior.Cascade);
-    }
-}
-
-internal sealed class ChatMessageCitationConfiguration : IEntityTypeConfiguration<ChatMessageCitation>
-{
-    public void Configure(EntityTypeBuilder<ChatMessageCitation> builder)
-    {
-        builder.ToTable("ChatMessageCitation", table =>
-        {
-            table.HasCheckConstraint(
-                "CK_ChatMessageCitation_CitationIndex_Positive",
-                "[citation_index] > 0");
-            table.HasCheckConstraint(
-                "CK_ChatMessageCitation_DocumentId_NotEmpty",
-                "[document_id] <> '00000000-0000-0000-0000-000000000000'");
-        });
-        builder.HasKey(x => x.Id);
-        builder.Property(x => x.Id).HasColumnName("citation_id");
-        builder.Property(x => x.ChatMessageId).HasColumnName("message_id").IsRequired();
-        builder.Property(x => x.CitationIndex).HasColumnName("citation_index").IsRequired();
-        builder.Property(x => x.DocumentId).HasColumnName("document_id").IsRequired();
-        builder.Property(x => x.Source).HasColumnName("source").HasMaxLength(500).IsRequired();
-        builder.Property(x => x.Snippet).HasColumnName("snippet").IsRequired();
-        builder.Property(x => x.PageNumber).HasColumnName("page_number");
-        builder.Property(x => x.Relevance).HasColumnName("relevance").IsRequired();
-        builder.Property(x => x.MatchType).HasColumnName("match_type").HasMaxLength(50).IsRequired();
-        builder.Property(x => x.IsHighlightable).HasColumnName("is_highlightable").IsRequired();
-        builder.Property(x => x.Reason).HasColumnName("reason").HasMaxLength(100);
-        builder.Property(x => x.CreatedAt).HasColumnName("create_at").HasColumnType("datetime");
-        builder.Property(x => x.UpdatedAt).HasColumnName("update_at").HasColumnType("datetime");
-        builder.HasIndex(x => new { x.ChatMessageId, x.CitationIndex }).IsUnique();
-        builder.HasOne(x => x.ChatMessage)
-            .WithMany(x => x.Citations)
-            .HasForeignKey(x => x.ChatMessageId)
-            .OnDelete(DeleteBehavior.Cascade);
     }
 }
 

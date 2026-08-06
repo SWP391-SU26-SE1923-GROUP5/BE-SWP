@@ -1,32 +1,38 @@
+using System.Globalization;
 using System.Text;
-using AIStudyHub.Business.Interfaces.AI.Search;
 
 namespace AIStudyHub.Business.AI.Orchestration;
 
+public sealed record RagPromptContext(
+    string Text,
+    IReadOnlyDictionary<string, RagContextSource> SourcesById);
+
 public static class RagPromptContextBuilder
 {
-    public static string Build(IEnumerable<SearchResult> results)
+    public static RagPromptContext Build(
+        IReadOnlyList<RagContextSource> contexts)
     {
-        var context = new StringBuilder();
-        foreach (var result in results)
+        var text = new StringBuilder();
+        var sourcesById = new Dictionary<string, RagContextSource>(
+            StringComparer.Ordinal);
+
+        for (var index = 0; index < contexts.Count; index++)
         {
-            context.AppendLine("--- SOURCE ---");
-            context.AppendLine($"DOCUMENT: {result.Source}");
-            if (result.Metadata.TryGetValue("pageNumber", out var page))
-            {
-                context.AppendLine($"PDF_PHYSICAL_PAGE: {page}");
-                context.AppendLine($"AUTHORITATIVE_CITATION_PAGE: {page}");
-            }
-            else
-            {
-                context.AppendLine("PAGE_CITATION_AVAILABLE: false");
-            }
-            context.AppendLine("CONTENT:");
-            context.AppendLine(result.Content);
-            context.AppendLine("--- END SOURCE ---");
-            context.AppendLine();
+            var sourceId = $"S{index + 1:D3}";
+            var source = contexts[index];
+            sourcesById.Add(sourceId, source);
+
+            text.AppendLine("--- DOCUMENT CONTEXT ---");
+            text.AppendLine($"SOURCE_ID: {sourceId}");
+            text.AppendLine($"FILE_NAME: {source.Result.Source}");
+            text.AppendLine(
+                $"PAGE_NUMBER: {source.PageNumber?.ToString(CultureInfo.InvariantCulture) ?? "unknown"}");
+            text.AppendLine("CONTENT:");
+            text.AppendLine(source.Result.Content);
+            text.AppendLine("--- END CONTEXT ---");
+            text.AppendLine();
         }
 
-        return context.ToString();
+        return new RagPromptContext(text.ToString(), sourcesById);
     }
 }

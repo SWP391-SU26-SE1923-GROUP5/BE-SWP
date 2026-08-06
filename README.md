@@ -51,20 +51,23 @@ Data access layer. Holds **21 entity classes** (all inheriting `BaseEntity`, exc
 | Module | Description |
 |--------|-------------|
 | **Authentication** | Register with email OTP verification, login with JWT + refresh tokens, password reset, Google/GitHub OAuth, logout |
+| **Subject Management** | Authenticated students create, list, update, and delete only their own Subjects |
 | **User Management** | CRUD, profile update, tier info, document sharing |
 | **Document Management** | Upload (multipart/form-data), text extraction (PDF/DOCX/TXT/MD), chunking, versioning, sharing, vote/report |
-| **RAG Pipeline** | Hybrid search (dense + sparse BM25 via Qdrant RRF), reranking, Semantic Kernel orchestration, guardrails (faithfulness, grounding, confidence), document Q&A, summarization |
+| **RAG Pipeline** | Hybrid search (dense + sparse BM25 via Qdrant RRF), reranking, validated context selection, page-aware Semantic Kernel orchestration, guardrails (faithfulness, grounding, confidence), document Q&A, summarization |
 | **Flashcard Generation** | AI-powered flashcard creation from document chunks, auto-persisted |
 | **Spaced Repetition Review** | SM-2 algorithm — per-user schedule (ease factor / interval / repetitions), due-today list, daily counts |
 | **Quiz Generation** | AI-powered multiple-choice quiz creation, auto-persisted with questions and answers |
 | **Quiz Submission** | Submit answers, auto-grading, score tracking |
-| **AI Chat** | Session-based chat with document context, RAG-augmented responses |
+| **AI Chat** | Session-based chat with document context; readiness-gated attachments and answer text with plain-text per-document locations, without citation arrays or highlight metadata |
 | **Gamification** | XP / level / current-best streak, leaderboard, activity logging via `StudyLog` |
 | **Recommendations** | Per-subject mastery analytics + AI-driven study suggestions |
 | **Notifications** | DB-backed list + real-time push via SignalR `/hubs/notifications` |
 | **Payments** | VNPay checkout, webhook processing, tier upgrade on success |
 | **Tier Memberships** | Subscription tiers with storage and AI token quotas |
 | **Admin** | Dashboard data, document reindexing, user/document/report moderation |
+
+Every relevant grounded document-chat answer appends a plain-text `Vị trí nội dung liên quan trong tài liệu:` section grouped by file. Trusted positive PDF/OCR pages are rendered as pages or consecutive ranges; documents with no trusted page show `không xác định được trang`, and mixed known/unknown context adds `một số đoạn không xác định được trang`. This is not a citation array or claim-level citation system, and `chunkIndex` is never a page number. Irrelevant or empty answers do not receive the location section. Hybrid-search diagnostics still return `pageNumber` and `chunkIndex`, but not `isHighlightable`. Removing the obsolete chat-citation schema preserves existing session and message text.
 
 ## AI Architecture
 
@@ -75,41 +78,40 @@ See full sequence diagrams in [`ARCHITECTURE.md`](ARCHITECTURE.md). Key flows:
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Ctrl as DocumentUploadController
+    participant Ctrl as DocumentController
     participant Storage as LocalFileStorageService
-    participant DocSvc as DocumentService
+    participant UploadSvc as IDocumentUploadService
     participant Queue as DocumentProcessingQueue
     participant Proc as DocumentBackgroundProcessor
-    participant KM as KernelMemoryService
-    participant Embed as EmbeddingService
+    participant Extract as IDocumentProcessingService
+    participant Assemble as DocumentChunkAssembler
+    participant Embed as IEmbeddingService
     participant Sparse as Bm25SparseGenerator
     participant Qdrant as QdrantVectorService
     participant DB as DbContext
 
-    Client->>Ctrl: POST /api/Document/upload (multipart/form-data)
-    Ctrl->>Storage: SaveFileAsync(file)
-    Storage-->>Ctrl: filePath
-    Ctrl->>DocSvc: CreateAsync(dto)
-    DocSvc->>DB: Insert Document (Status=Processing)
-    DocSvc-->>Ctrl: documentId
-    Ctrl->>Queue: EnqueueAsync(request)
+    Client->>Ctrl: POST /api/Document/upload/file (multipart/form-data)
+    Ctrl->>UploadSvc: UploadAsync(stream request)
+    UploadSvc->>Storage: SaveFileAsync(stream)
+    Storage-->>UploadSvc: stored path + exact bytes
+    UploadSvc->>DB: Insert Document (Status=Processing)
+    UploadSvc->>Queue: TryEnqueue(request)
+    UploadSvc-->>Ctrl: documentId
     Ctrl-->>Client: 202 Accepted
 
     par Async Background Processing
-        Proc->>KM: ImportDocumentAsync(filePath, docId, userId, fileName)
-        Note over KM: PdfPig / OpenXML → raw text
-        Note over KM: Sentence-split chunking + overlapping
-        Note over KM: Tags: user_id, file_name
-
-        Proc->>KM: SearchAsync("", userId, limit=1000)
-        Proc->>Embed: GenerateEmbeddingAsync(chunk)
-        Note over Embed: OpenAI SDK → float[] dense vector
+        Proc->>Extract: ExtractSegmentsAsync(fileContent, extension)
+        Note over Extract: Extract text/OCR segments from the stored file
+        Proc->>Assemble: AssembleAsync(segments, summary, chunk options)
+        Note over Assemble: Produces ordered chunks with configured overlap
+        Proc->>Embed: GenerateEmbeddingsAsync(chunkTexts)
+        Note over Embed: Batch OpenAI embeddings → dense vectors
         Proc->>Sparse: GenerateSparseVector(chunk)
         Note over Sparse: FNV-1a word hashing + sub-linear TF
-        Proc->>Qdrant: UpsertVectorAsync(dense, sparse, metadata)
+        Proc->>Qdrant: UpsertVectorAsync(dense, sparse, metadata) for each chunk
         Note over Qdrant: Stores: "" dense + "sparse-text" named vector
 
-        Proc->>DB: Update Document (Status=Published)
+        Proc->>DB: Update Document (Status=Done or Failed)
     end
 ```
 
@@ -118,7 +120,8 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Ctrl as RagController
+    participant Ctrl as ChatController
+    participant Chat as AIChatService
     participant Orch as SemanticKernelOrchestrator
     participant Hybrid as HybridSearchService
     participant Embed as EmbeddingService
@@ -130,8 +133,9 @@ sequenceDiagram
     participant Ground as GroundingVerifier
     participant Score as ConfidenceScorer
 
-    Client->>Ctrl: POST /api/Rag/chat { question }
-    Ctrl->>Orch: AskAsync(userId, question)
+    Client->>Ctrl: POST /api/Chat/messages { sessionId, message }
+    Ctrl->>Chat: CreateMessageAsync(request, userId)
+    Chat->>Orch: AskWithTrackingAsync(userId, documentIds, question, history)
 
     rect rgb(235, 245, 255)
         Note over Orch,Qdrant: L2 — Retrieval
@@ -152,7 +156,7 @@ sequenceDiagram
     rect rgb(240, 255, 240)
         Note over Orch,LLM: L3 — Generation
 
-        Orch->>Orch: Build context + system prompt + user prompt
+        Orch->>Orch: Select validated chunks + build page-aware context and prompt
         Orch->>LLM: SendMessageAsync(systemPrompt + userPrompt)
         Note over LLM: OpenAI Chat Completions API
         LLM-->>Orch: answer
@@ -169,8 +173,10 @@ sequenceDiagram
         Note over Score: Combined + clamped [0,1]
     end
 
-    Orch-->>Ctrl: RagResponse(answer, citations, confidence)
-    Ctrl-->>Client: 200 OK
+    Orch-->>Chat: RagResponseWithUsage(answer, confidence, tokens, isRelevant)
+    Chat->>Chat: Persist answer text + relevance
+    Chat-->>Ctrl: ChatMessageResponseDto
+    Ctrl-->>Client: ChatMessageResponseDto (no source array)
 ```
 
 #### L6 — Flashcard Generation
@@ -180,17 +186,17 @@ sequenceDiagram
     participant Client
     participant Ctrl as FlashcardController
     participant Svc as FlashcardAiService
-    participant KM as KernelMemoryService
+    participant Store as QdrantVectorService
     participant LLM as LocalAIService
     participant DB as DbContext
 
-    Client->>Ctrl: POST /api/Flashcard/generate-ai { numberOfFlashcards }
+    Client->>Ctrl: POST /api/AI/flashcards/generate?docId={guid} { numberOfFlashcards }
     Ctrl->>Svc: GenerateFlashcardsAsync(docId, request, userId)
-    Svc->>KM: SearchAsync("", filter=documentId, limit=1000)
-    KM-->>Svc: MemoryAnswer.Results[]
-    Svc->>Svc: BuildContext(citations) — max 30k chars
+    Svc->>Store: GetPayloadsByDocumentIdAsync(documentId)
+    Store-->>Svc: ordered chunk payloads
+    Svc->>Svc: BuildContext(chunk payloads) — max 20k chars
 
-    loop Batch (batchSize=5, maxAttempts=80)
+    loop Up to four model calls (remaining requested cards; batch cap 20)
         Svc->>LLM: SendMessageAsync(batchPrompt, temp=0.2)
         Note over LLM: Extract N facts → JSON flashcards
         LLM-->>Svc: aiText (raw JSON)
@@ -213,14 +219,14 @@ sequenceDiagram
     participant LLM as LocalAIService
     participant DB as DbContext
 
-    Client->>Ctrl: POST /api/Quiz/generate-ai { numberOfQuestions }
+    Client->>Ctrl: POST /api/AI/quizzes/generate?docId={guid} { numberOfQuestions }
     Ctrl->>Svc: GenerateAndPersistQuizAsync(docId, request, userId)
     Svc->>Qdrant: GetPayloadsByDocumentIdAsync(documentId)
     Note over Qdrant: REST scroll API → all chunks
     Qdrant-->>Svc: List<Dictionary<string,string>>
     Svc->>Svc: Sort by chunkIndex + FixMojibake<br/>Concatenate chunks as context
 
-    loop Batch (batchSize=3, maxAttempts=60)
+    loop Up to four model calls (remaining count with bounded buffer; batch cap 15)
         Svc->>LLM: SendMessageAsync(batchPrompt, temp=0.2)
         Note over LLM: Read TEXT → JSON quiz<br/>N questions × 4 answers, 1 correct
         LLM-->>Svc: aiText (raw JSON)
@@ -282,7 +288,6 @@ AIStudyHub.slnx
 │   ├── Interfaces/            (Repository + UnitOfWork interfaces)
 │   ├── Repositories/         (GenericRepository, UnitOfWork)
 │   └── Migrations/           (21 EF Core migrations)
-├── AIStudyHub.Tests/
 ├── docs/
 │   ├── FRONTEND_GUIDE.md         (frontend integration guide)
 │   └── EF_MIGRATION_COMMANDS.md  (database migration cheatsheet)
@@ -329,7 +334,8 @@ erDiagram
 
     Subject {
         guid Id PK
-        string SubjectCode UK
+        guid OwnerUserId FK
+        string SubjectCode "unique per owner"
         string SubjectName
         string Description
     }
@@ -466,6 +472,7 @@ erDiagram
     User ||--o{ Payment : "makes"
     User ||--o{ QuizSubmission : "submits"
     User ||--o{ ChatSession : "initiates"
+    User ||--o{ Subject : "owns"
     User }o--|| TierMembership : "subscribes_to"
 
     Subject ||--o{ Document : "categorizes"
@@ -499,7 +506,7 @@ erDiagram
 | `VoteController` | `/api/Vote` | Upvote/downvote documents, ownership-protected |
 | `ReportController` | `/api/Report` | Document violation reports (workflow status) |
 | `NotificationController` | `/api/Notification` | User notifications |
-| `SubjectController` | `/api/Subject` | Academic subjects |
+| `SubjectController` | `/api/Subject` | Authenticated, student-owned Subject CRUD; no Admin override |
 | `PaymentController` | `/api/Payment` | VNPay checkout and webhook |
 | `TierMembershipController` | `/api/TierMembership` | Subscription tiers |
 | `AIController` | `/api/AI` | RAG query, summarization, AI flashcard/quiz generation |
@@ -512,7 +519,7 @@ erDiagram
 
 ## Background Workers
 
-1. **DocumentBackgroundProcessor** — dequeues uploaded documents, extracts text, chunks, embeds via OpenAI, upserts to Qdrant, updates DB status, and pushes a `ReceiveNotification` event when done.
+1. **DocumentBackgroundProcessor** — dequeues uploaded documents, extracts text/OCR segments, assembles chunks, generates batch embeddings and sparse vectors, upserts directly to Qdrant, updates DB status, and pushes a safe `ReceiveNotification` readiness event when processing completes or fails.
 2. **TierExpirationCleanupService** — runs every 24h, downgrades expired subscriptions to Free tier.
 3. **UnverifiedAccountCleanupService** — runs daily, removes accounts older than 7 days that are still unverified.
 4. **DailyStreakResetWorker** — runs daily, resets `CurrentStreak` to 0 for users whose `LastActivityDate` is older than yesterday, and pushes a `StreakAtRisk` notification when a streak is about to lapse.
@@ -571,6 +578,46 @@ Create `AIStudyHub.API/appsettings.json` from the example. Key sections:
 ```
 
 **Do not commit real credentials.** Use user secrets, environment variables, or a secure secret store.
+
+### Document upload limit
+
+File content is capped at exactly `5,242,880` bytes (5 MiB); an upload above
+that limit returns `413 Payload Too Large`. The API returns `202 Accepted` only
+after the file and its `Processing` document record have been persisted and the
+processing work has been queued. It does not wait for extraction or embedding.
+
+The background processor transitions the document to `Done` or `Failed`. On
+application startup, it resumes active `Processing` documents from their
+persisted records; if a stored source file is missing, the document is marked
+`Failed`.
+
+### Document readiness and Chat
+
+The upload response includes `documentId`, `status`, `chunkCount`, `message`, `isChatReady`, and `canRetry`; `GET /api/Document/{id}/status` returns `id`, `status`, `isChatReady`, `message`, and `canRetry`. `isChatReady` is authoritative. Display `Tài liệu đang được chuẩn bị.` while `Processing`, `Tài liệu đã sẵn sàng.` when ready, `Không thể chuẩn bị tài liệu.` when failed, and `Loại tài liệu này không hỗ trợ Chat.` for an unsupported type. Use SignalR as the immediate update and poll status as fallback; show an indeterminate spinner rather than invented percentage progress.
+
+`Processing` and `Failed` documents may be attached to a Chat session, but sending is blocked when any attachment is unready. The API returns `409 DOCUMENTS_NOT_READY` before it persists a user message or consumes AI tokens. Offer retry only when `canRetry=true`; disable it immediately after use and call `POST /api/Document/{id}/reprocess`. Readiness responses and SignalR payloads expose only safe fields and never the internal `ErrorMessage`.
+
+Copy or merge the `DocumentStorage` section from
+`AIStudyHub.API/appsettings.DocumentStorage.example.json` into your ignored runtime
+`AIStudyHub.API/appsettings.json`. The maximum file size is exactly 5 MiB
+(`5242880` bytes); the API permits a 6 MiB multipart request body for form-data
+overhead.
+
+### AI generation contract
+
+`POST /api/AI/flashcards/generate?docId={guid}` requires the integer body field
+`numberOfFlashcards`; `POST /api/AI/quizzes/generate?docId={guid}` likewise
+requires `numberOfQuestions`. Each value is inclusive from `1` through `20`—no
+default count is applied. Generation is allowed only for the caller's own
+document when its status is `Done` and its processed context is nonempty.
+
+On success, flashcard generation persists and returns exactly the requested
+number of flashcards. Quiz generation persists exactly the requested number of
+questions, but its create response contains quiz metadata with `questions: null`
+rather than question items; clients fetch `GET /api/Quiz/{id}` for the persisted
+questions and answers. If bounded AI generation cannot produce the exact count,
+the API returns `422 Unprocessable Entity` and persists no partial flashcard,
+quiz, question, or answer rows.
 
 ## Getting Started
 

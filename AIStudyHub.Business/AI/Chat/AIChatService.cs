@@ -4,8 +4,10 @@ using AIStudyHub.Business.Interfaces.AI.Chat;
 using AIStudyHub.Business.Interfaces.AI.LLM;
 using AIStudyHub.Business.Interfaces.AI.Tracking;
 using AIStudyHub.Business.DTOs.AIChat;
+using AIStudyHub.Business.DTOs.Documents;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Exceptions;
+using AIStudyHub.Business.Services;
 using AIStudyHub.Data.Entities;
 using AIStudyHub.Data.Interfaces;
 using AutoMapper;
@@ -120,7 +122,6 @@ public sealed class AIChatService : IAIChatService
         var messages = await _unitOfWork.ChatMessages
             .Query()
             .Where(message => message.ChatSessionId == sessionId)
-            .Include(message => message.Citations)
             .OrderBy(message => message.CreatedAt)
             .AsNoTracking()
             .ToListAsync(ct);
@@ -130,16 +131,55 @@ public sealed class AIChatService : IAIChatService
 
     public async Task<ChatMessageResponseDto> CreateMessageAsync(CreateChatMessageRequestDto request, Guid userId, CancellationToken ct = default)
     {
-        // Check AI token quota before processing
+        ChatSession? session = null;
+        List<ChatSessionDocument> sessionDocumentLinks = [];
+        if (request.SessionId.HasValue)
+        {
+            session = await _unitOfWork.ChatSessions.GetByIdAsync(request.SessionId.Value, ct);
+            if (session is null || session.UserId != userId)
+            {
+                throw new KeyNotFoundException($"Chat session with ID {request.SessionId} not found or access denied.");
+            }
+
+            sessionDocumentLinks = await _unitOfWork.ChatSessionDocuments
+                .Query()
+                .Include(link => link.Document)
+                .Where(link => link.ChatSessionId == session.Id)
+                .AsNoTracking()
+                .ToListAsync(ct);
+
+            var blockers = sessionDocumentLinks
+                .Select(link => new
+                {
+                    Link = link,
+                    Readiness = DocumentReadinessEvaluator.Evaluate(link.Document)
+                })
+                .Where(item => !item.Readiness.IsChatReady)
+                .Select(item => new BlockingDocumentResponseDto(
+                    item.Link.DocumentId,
+                    item.Link.Document.Title,
+                    item.Readiness.Status,
+                    item.Readiness.IsChatReady,
+                    item.Readiness.Message,
+                    item.Readiness.CanRetry))
+                .ToList();
+
+            if (blockers.Count > 0)
+            {
+                throw new DocumentsNotReadyException(blockers);
+            }
+        }
+
+        // Check AI token quota only after validating every existing attachment.
         if (!await _tokenTracker.HasQuotaAsync(userId, EstimatedChatTokens, ct))
         {
             var (current, limit) = await _tokenTracker.GetUsageInfoAsync(userId, ct);
             throw new QuotaExceededException(current, limit, EstimatedChatTokens);
         }
 
-        ChatSession? session;
         if (!request.SessionId.HasValue)
         {
+            // New sessions have no attachments and retain the existing prompt to attach one.
             var title = request.Message.Length > 50 ? request.Message.Substring(0, 47) + "..." : request.Message;
             session = new ChatSession
             {
@@ -149,18 +189,11 @@ public sealed class AIChatService : IAIChatService
             await _unitOfWork.ChatSessions.AddAsync(session, ct);
             await _unitOfWork.SaveChangesAsync(ct);
         }
-        else
-        {
-            session = await _unitOfWork.ChatSessions.GetByIdAsync(request.SessionId.Value, ct);
-            if (session is null || session.UserId != userId)
-            {
-                throw new KeyNotFoundException($"Chat session with ID {request.SessionId} not found or access denied.");
-            }
-        }
 
+        var activeSession = session!;
         var userMessage = new ChatMessage
         {
-            ChatSessionId = session.Id,
+            ChatSessionId = activeSession.Id,
             Sender = "user",
             Content = request.Message
         };
@@ -169,25 +202,21 @@ public sealed class AIChatService : IAIChatService
 
         var history = await _unitOfWork.ChatMessages
             .Query()
-            .Where(m => m.ChatSessionId == session.Id)
+            .Where(m => m.ChatSessionId == activeSession.Id)
             .OrderByDescending(m => m.CreatedAt)
             .Take(10)
             .ToListAsync(ct);
         history.Reverse();
 
         // Use all documents attached to the session
-        var sessionDocs = await _unitOfWork.ChatSessionDocuments
-                .Query()
-                .Where(x => x.ChatSessionId == session.Id)
-                .Select(x => x.DocumentId)
-                .ToListAsync(ct);
-        IReadOnlyList<Guid>? docIds = sessionDocs.Count > 0 ? sessionDocs : null;
+        IReadOnlyList<Guid>? docIds = sessionDocumentLinks.Count > 0
+            ? sessionDocumentLinks.Select(link => link.DocumentId).ToList()
+            : null;
 
         string aiResponse;
         int inputTokens = 0;
         int outputTokens = 0;
         bool isRelevant = false;
-        IReadOnlyList<ChatCitationDto> citations = Array.Empty<ChatCitationDto>();
 
         if (docIds != null && docIds.Count > 0)
         {
@@ -196,22 +225,6 @@ public sealed class AIChatService : IAIChatService
             inputTokens = ragResponse.InputTokens;
             outputTokens = ragResponse.OutputTokens;
             isRelevant = ragResponse.IsRelevant;
-
-            if (ragResponse.Citations is { Count: > 0 })
-            {
-                citations = ragResponse.Citations
-                    .Select(c => new ChatCitationDto(
-                        c.CitationIndex,
-                        c.DocumentId,
-                        c.Source,
-                        c.Content.Length > 300 ? c.Content[..300] : c.Content,
-                        c.PageNumber,
-                        c.Relevance,
-                        c.MatchType,
-                        c.IsHighlightable,
-                        c.Reason))
-                    .ToList();
-            }
         }
         else
         {
@@ -227,33 +240,10 @@ public sealed class AIChatService : IAIChatService
 
         var assistantMessage = new ChatMessage
         {
-            ChatSessionId = session.Id,
+            ChatSessionId = activeSession.Id,
             Sender = "assistant",
             Content = aiResponse,
-            IsRelevant = isRelevant,
-            Citations = citations.Select(citation =>
-            {
-                if (citation.CitationIndex <= 0
-                    || citation.DocumentId == Guid.Empty
-                    || string.IsNullOrWhiteSpace(citation.Source)
-                    || string.IsNullOrWhiteSpace(citation.Snippet))
-                {
-                    throw new InvalidOperationException("Citation snapshot is missing required source metadata.");
-                }
-
-                return new ChatMessageCitation
-                {
-                    CitationIndex = citation.CitationIndex,
-                    DocumentId = citation.DocumentId,
-                    Source = citation.Source,
-                    Snippet = citation.Snippet,
-                    PageNumber = citation.PageNumber,
-                    Relevance = citation.Relevance,
-                    MatchType = citation.MatchType,
-                    IsHighlightable = citation.IsHighlightable,
-                    Reason = citation.Reason
-                };
-            }).ToList()
+            IsRelevant = isRelevant
         };
 
         await _unitOfWork.ChatMessages.AddAsync(assistantMessage, ct);
@@ -290,12 +280,7 @@ public sealed class AIChatService : IAIChatService
 
         if (existing is not null)
         {
-            return new ChatSessionDocumentResponseDto(
-                existing.ChatSessionId,
-                existing.DocumentId,
-                document.Title,
-                document.FileName,
-                existing.CreatedAt);
+            return MapSessionDocument(existing, document);
         }
 
         var link = new ChatSessionDocument
@@ -309,12 +294,7 @@ public sealed class AIChatService : IAIChatService
         await _unitOfWork.ChatSessionDocuments.AddAsync(link, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
-        return new ChatSessionDocumentResponseDto(
-            link.ChatSessionId,
-            link.DocumentId,
-            document.Title,
-            document.FileName,
-            link.CreatedAt);
+        return MapSessionDocument(link, document);
     }
 
     public async Task RemoveDocumentAsync(Guid sessionId, Guid documentId, Guid userId, CancellationToken ct = default)
@@ -361,11 +341,23 @@ public sealed class AIChatService : IAIChatService
             .AsNoTracking()
             .ToListAsync(ct);
 
-        return links.Select(x => new ChatSessionDocumentResponseDto(
-            x.ChatSessionId,
-            x.DocumentId,
-            x.Document.Title,
-            x.Document.FileName,
-            x.CreatedAt)).ToList();
+        return links.Select(link => MapSessionDocument(link, link.Document)).ToList();
+    }
+
+    private static ChatSessionDocumentResponseDto MapSessionDocument(
+        ChatSessionDocument link,
+        Document document)
+    {
+        var readiness = DocumentReadinessEvaluator.Evaluate(document);
+        return new ChatSessionDocumentResponseDto(
+            link.ChatSessionId,
+            link.DocumentId,
+            document.Title,
+            document.FileName,
+            link.CreatedAt,
+            readiness.Status,
+            readiness.IsChatReady,
+            readiness.Message,
+            readiness.CanRetry);
     }
 }

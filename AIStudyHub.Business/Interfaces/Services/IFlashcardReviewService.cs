@@ -27,4 +27,18 @@ public interface IFlashcardReviewService
     Task<ServiceResult<FlashcardReviewStatsDto>> GetStatsAsync(
         Guid userId,
         CancellationToken cancellationToken = default);
+
+    Task<PagedResultDto<FlashcardReviewHistoryItemDto>> GetHistoryAsync(
+        Guid userId,
+        Guid? documentId,
+        Guid? flashcardId,
+        DateTime? fromDate,
+        DateTime? toDate,
+        PaginationParams pagination,
+        CancellationToken cancellationToken = default);
+
+    Task<FlashcardReviewHistoryDetailDto?> GetHistoryDetailAsync(
+        Guid userId,
+        Guid attemptId,
+        CancellationToken cancellationToken = default);
 }

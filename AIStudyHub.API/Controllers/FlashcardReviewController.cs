@@ -66,12 +66,58 @@ public sealed class FlashcardReviewController : ControllerBase
         return Ok(await _service.CountDueAsync(userId, cancellationToken));
     }
 
-    /// <summary>Get review statistics for a user (total reviewed, due now, mastered count, average ease).</summary>
-    [HttpGet("stats/{userId:guid}")]
-    public async Task<ActionResult<FlashcardReviewStatsDto>> GetStats(
-        Guid userId,
+    [HttpGet("history")]
+    public async Task<ActionResult<PagedResultDto<FlashcardReviewHistoryItemDto>>> GetHistory(
+        [FromQuery] Guid? documentId,
+        [FromQuery] Guid? flashcardId,
+        [FromQuery] DateTime? fromDate,
+        [FromQuery] DateTime? toDate,
+        [FromQuery] int offset = 0,
+        [FromQuery] int limit = 20,
+        CancellationToken cancellationToken = default)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var pagination = new PaginationParams
+        {
+            Offset = Math.Max(0, offset),
+            Limit = limit
+        };
+        var result = await _service.GetHistoryAsync(
+            userId,
+            documentId,
+            flashcardId,
+            fromDate,
+            toDate,
+            pagination,
+            cancellationToken);
+        return Ok(result);
+    }
+
+    [HttpGet("history/{attemptId:guid}")]
+    public async Task<ActionResult<FlashcardReviewHistoryDetailDto>> GetHistoryDetail(
+        Guid attemptId,
         CancellationToken cancellationToken)
     {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var result = await _service.GetHistoryDetailAsync(
+            userId,
+            attemptId,
+            cancellationToken);
+        return result is null ? NotFound() : Ok(result);
+    }
+
+    /// <summary>Get review statistics for the current user.</summary>
+    [HttpGet("stats")]
+    public async Task<ActionResult<FlashcardReviewStatsDto>> GetStats(
+        CancellationToken cancellationToken)
+    {
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
         var result = await _service.GetStatsAsync(userId, cancellationToken);
         if (!result.Success) return BadRequest(result.Error);
         return Ok(result.Data);

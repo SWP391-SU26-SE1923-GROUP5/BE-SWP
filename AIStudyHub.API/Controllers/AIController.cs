@@ -140,7 +140,7 @@ public sealed class AIController : ControllerBase
 
     /// <summary>Generate flashcards from a document using AI.</summary>
     [HttpPost("flashcards/generate")]
-    public async Task<ActionResult<IReadOnlyList<FlashcardResponseDto>>> GenerateFlashcards(
+    public async Task<ActionResult<FlashcardDeckResponseDto>> GenerateFlashcards(
         Guid docId,
         [FromBody] CreateFlashcardsViaAiRequestDto request,
         CancellationToken cancellationToken)
@@ -149,80 +149,49 @@ public sealed class AIController : ControllerBase
         if (userId == Guid.Empty)
             return Unauthorized();
 
+        _logger.LogInformation("Flashcard generation for document {DocumentId} by user {UserId}", docId, userId);
+        var result = await _flashcardAiService.GenerateFlashcardsAsync(docId, request, userId, cancellationToken);
+
         try
         {
-            _logger.LogInformation("Flashcard generation for document {DocumentId} by user {UserId}", docId, userId);
-            var result = await _flashcardAiService.GenerateFlashcardsAsync(docId, request, userId, cancellationToken);
-
-            try
+            var document = await _unitOfWork.Documents.GetByIdAsync(docId, cancellationToken);
+            if (document is not null)
             {
-                var document = await _unitOfWork.Documents.GetByIdAsync(docId, cancellationToken);
-                if (document is not null)
-                {
-                    await _realTimeNotifier.NotifyNewFlashcardsReadyAsync(userId, docId, document.Title ?? "Document", result.Count, cancellationToken);
-                }
+                await _realTimeNotifier.NotifyNewFlashcardsReadyAsync(userId, docId, result.DeckTitle, result.FlashcardLists.Count, cancellationToken);
             }
-            catch (Exception notifyEx)
-            {
-                _logger.LogWarning(notifyEx, "Real-time notify (flashcards ready) failed for document {DocumentId}", docId);
-            }
+        }
+        catch (Exception notifyEx)
+        {
+            _logger.LogWarning(notifyEx, "Real-time notify (flashcards ready) failed for document {DocumentId}", docId);
+        }
 
-            return Ok(result);
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(ex.Message);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error generating flashcards for document {DocumentId}", docId);
-            return StatusCode(500, "An error occurred while generating flashcards");
-        }
+        return Ok(result);
     }
 
     /// <summary>Generate a quiz from a document using AI.</summary>
     [HttpPost("quizzes/generate")]
     public async Task<ActionResult<QuizResponseDto>>  GenerateQuiz(
         Guid docId,
-        [FromBody] CreateQuizRequestViaAIDto dto,
+        [FromBody] CreateQuizRequestViaAiDto dto,
         CancellationToken cancellationToken)
     {
         var userId = GetCurrentUserId();
         if (userId == Guid.Empty)
             return Unauthorized();
 
-        if (dto.numberOfQuestions <= 0 || dto.numberOfQuestions > 20)
-            return BadRequest("Number of questions must be between 1 and 20.");
+        _logger.LogInformation("Quiz generation for document {DocumentId} by user {UserId}", docId, userId);
+        var result = await _quizAiService.GenerateAndPersistQuizAsync(docId, dto, userId, cancellationToken);
 
         try
         {
-            _logger.LogInformation("Quiz generation for document {DocumentId} by user {UserId}", docId, userId);
-            var result = await _quizAiService.GenerateAndPersistQuizAsync(docId, dto, userId, cancellationToken);
+            await _realTimeNotifier.NotifyQuizReadyAsync(userId, result.Id, result.Title, cancellationToken);
+        }
+        catch (Exception notifyEx)
+        {
+            _logger.LogWarning(notifyEx, "Real-time notify (quiz ready) failed for quiz {QuizId}", result.Id);
+        }
 
-            try
-            {
-                await _realTimeNotifier.NotifyQuizReadyAsync(userId, result.Id, result.Title, cancellationToken);
-            }
-            catch (Exception notifyEx)
-            {
-                _logger.LogWarning(notifyEx, "Real-time notify (quiz ready) failed for quiz {QuizId}", result.Id);
-            }
-
-            return Ok(result);
-        }
-        catch (KeyNotFoundException ex)
-        {
-            return NotFound(ex.Message);
-        }
-        catch (ArgumentOutOfRangeException ex)
-        {
-            return BadRequest(ex.Message);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error generating quiz for document {DocumentId}", docId);
-            return StatusCode(500, "An error occurred while generating the quiz");
-        }
+        return Ok(result);
     }
 }
 

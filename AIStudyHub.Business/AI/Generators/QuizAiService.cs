@@ -9,6 +9,9 @@ using AIStudyHub.Business.Common;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using AIStudyHub.Business.DTOs.AI;
+using AIStudyHub.Business.DTOs.Answers;
+using AIStudyHub.Business.DTOs.Questions;
 using AIStudyHub.Business.DTOs.Quizzes;
 using AIStudyHub.Business.Interfaces.Services;
 using AIStudyHub.Business.Exceptions;
@@ -27,7 +30,9 @@ public sealed class QuizAiService : IQuizAiService
     private readonly IVectorStoreService _vectorStoreService;
     private readonly ILogger<QuizAiService> _logger;
     private readonly ITokenTrackerService _tokenTracker;
+    private readonly IQuizService _quizService;
 
+    private const int MaxModelCalls = 4;
     private const int EstimatedTokensPerBatch = 1800; // was 2000
 
     public QuizAiService(
@@ -35,38 +40,37 @@ public sealed class QuizAiService : IQuizAiService
         IOpenAIService openAiService,
         IVectorStoreService vectorStoreService,
         ILogger<QuizAiService> logger,
-        ITokenTrackerService tokenTracker)
+        ITokenTrackerService tokenTracker,
+        IQuizService quizService)
     {
         _unitOfWork = unitOfWork;
         _openAiService = openAiService;
         _vectorStoreService = vectorStoreService;
         _logger = logger;
         _tokenTracker = tokenTracker;
+        _quizService = quizService;
     }
 
     public async Task<QuizResponseDto> GenerateAndPersistQuizAsync(
         Guid documentId,
-        CreateQuizRequestViaAIDto request,
+        CreateQuizRequestViaAiDto request,
         Guid userId,
         CancellationToken cancellationToken = default)
     {
-        if (request.numberOfQuestions <= 0 || request.numberOfQuestions > 20)
+        var accountingOperationId = Guid.NewGuid();
+
+        if (request.NumberOfQuestions <= 0 || request.NumberOfQuestions > 20)
             throw new ArgumentOutOfRangeException(
-                nameof(request.numberOfQuestions),
+                nameof(request.NumberOfQuestions),
                 "Number of questions must be between 1 and 20.");
 
         var document = await _unitOfWork.Documents.GetByIdAsync(documentId, cancellationToken);
-        if (document is null)
-            throw new KeyNotFoundException("Document not found");
+        if (document is null || document.UserId != userId)
+            throw new KeyNotFoundException("Document not found.");
 
-        // Check AI token quota before processing
-        var estimatedBatches = (int)Math.Ceiling((double)request.numberOfQuestions / 15);
-        var estimatedTokens = estimatedBatches * EstimatedTokensPerBatch;
-        if (!await _tokenTracker.HasQuotaAsync(userId, estimatedTokens, cancellationToken))
-        {
-            var (current, limit) = await _tokenTracker.GetUsageInfoAsync(userId, cancellationToken);
-            throw new QuotaExceededException(current, limit, estimatedTokens);
-        }
+        if (document.Status != DocumentStatus.Done)
+            throw new InvalidOperationException(
+                "Document must finish processing before AI generation.");
 
         var payloads = await _vectorStoreService.GetPayloadsByDocumentIdAsync(documentId);
 
@@ -77,6 +81,8 @@ public sealed class QuizAiService : IQuizAiService
             .ToList();
 
         var context = string.Join("\n\n", sortedChunks);
+        if (string.IsNullOrWhiteSpace(context))
+            throw new InvalidOperationException("Document has no processed content.");
 
         if (context.Length > 20000)
         {
@@ -91,110 +97,161 @@ public sealed class QuizAiService : IQuizAiService
         _logger.LogInformation("Quiz context length: {Length} chars from {ChunkCount} chunks",
             context.Length, sortedChunks.Count);
 
+        var estimatedTokens = MaxModelCalls * EstimatedTokensPerBatch;
+        if (!await _tokenTracker.HasQuotaAsync(userId, estimatedTokens, cancellationToken))
+        {
+            var (current, limit) = await _tokenTracker.GetUsageInfoAsync(userId, cancellationToken);
+            throw new QuotaExceededException(current, limit, estimatedTokens);
+        }
+
         const int batchSize = 15;
-        var allQuestions = new List<AiGeneratedQuestionDto>(request.numberOfQuestions);
+        var allQuestions = new List<AiGeneratedQuestionDto>(request.NumberOfQuestions);
         var seenTitles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var remaining = request.numberOfQuestions;
-        var batchNumber = 0;
-        var maxBatches = request.numberOfQuestions * 3;
-        var consecutiveZeroAdded = 0;
-        var runningTitle = string.Empty;
+        var totalInputTokens = 0;
+        var totalOutputTokens = 0;
 
-        // Track total tokens used
-        int totalInputTokens = 0;
-        int totalOutputTokens = 0;
-
-        while (remaining > 0 && batchNumber < maxBatches)
+        try
         {
-            batchNumber++;
-            var wantThisBatch = Math.Min(batchSize, remaining + 2);
-
-            var prompt = BuildBatchPrompt(
-                wantThisBatch,
-                context,
-                allQuestions,
-                startingPosition: allQuestions.Count + 1);
-
-            var (batchQuestions, inputTokens, outputTokens) = await RunBatchWithRetryWithTrackingAsync(
-                prompt, wantThisBatch, batchNumber, cancellationToken);
-
-            totalInputTokens += inputTokens;
-            totalOutputTokens += outputTokens;
-
-            var added = 0;
-            foreach (var q in batchQuestions)
+            for (var modelCall = 1;
+                 modelCall <= MaxModelCalls
+                 && allQuestions.Count < request.NumberOfQuestions;
+                 modelCall++)
             {
-                if (allQuestions.Count >= request.numberOfQuestions)
+                if (cancellationToken.IsCancellationRequested)
                     break;
 
-                var normalized = NormalizeQuestion(q, allQuestions.Count + 1);
-                if (normalized is null) continue;
+                var remaining =
+                    request.NumberOfQuestions - allQuestions.Count;
+                var wantThisBatch =
+                    Math.Min(batchSize, remaining + 2);
 
-                var normalizedTitleText = new string(normalized.QuestionTitle.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
-                if (normalizedTitleText.Length < 5) continue;
+                var prompt = BuildBatchPrompt(
+                    wantThisBatch,
+                    context,
+                    allQuestions,
+                    startingPosition: allQuestions.Count + 1);
 
-                if (!seenTitles.Add(normalizedTitleText))
+                var (batchQuestions, inputTokens, outputTokens) =
+                    await RunBatchWithTrackingAsync(prompt, modelCall);
+
+                totalInputTokens += inputTokens;
+                totalOutputTokens += outputTokens;
+
+                var added = 0;
+                foreach (var q in batchQuestions)
                 {
-                    continue;
+                    if (allQuestions.Count
+                        >= request.NumberOfQuestions)
+                    {
+                        break;
+                    }
+
+                    var normalized = NormalizeQuestion(
+                        q,
+                        allQuestions.Count + 1);
+                    if (normalized is null)
+                        continue;
+
+                    var normalizedTitleText = new string(
+                            normalized.QuestionTitle
+                                .Where(char.IsLetterOrDigit)
+                                .ToArray())
+                        .ToLowerInvariant();
+                    if (normalizedTitleText.Length < 5)
+                        continue;
+
+                    if (!seenTitles.Add(normalizedTitleText))
+                        continue;
+
+                    allQuestions.Add(normalized);
+                    added++;
                 }
 
-                allQuestions.Add(normalized);
-                added++;
+                _logger.LogInformation(
+                    "Quiz model call {ModelCall}: wanted {Want}, parsed {Parsed}, accepted {Accepted}, total {Total}/{Requested}",
+                    modelCall,
+                    wantThisBatch,
+                    batchQuestions.Count,
+                    added,
+                    allQuestions.Count,
+                    request.NumberOfQuestions);
             }
-
-            _logger.LogInformation(
-                "Quiz batch {Batch}: wanted {Want}, parsed {Parsed}, accepted {Accepted}, total {Total}/{Requested}",
-                batchNumber, wantThisBatch, batchQuestions.Count, added, allQuestions.Count, request.numberOfQuestions);
-
-            if (added == 0)
-            {
-                consecutiveZeroAdded++;
-                if (consecutiveZeroAdded >= 3)
-                {
-                    _logger.LogWarning("Aborting quiz generation after 3 consecutive zero-yield batches.");
-                    break;
-                }
-            }
-            else
-            {
-                consecutiveZeroAdded = 0;
-            }
-
-            remaining = request.numberOfQuestions - allQuestions.Count;
+        }
+        finally
+        {
+            await RecordConsumedTokensAsync(
+                accountingOperationId,
+                userId,
+                documentId,
+                totalInputTokens,
+                totalOutputTokens);
         }
 
-        if (allQuestions.Count == 0)
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (allQuestions.Count != request.NumberOfQuestions)
         {
             _logger.LogWarning(
-                "No quiz questions generated for document {DocumentId}", documentId);
-            throw new KeyNotFoundException("AI could not generate any valid questions from the document.");
+                "Quiz generation produced {Generated}/{Requested} valid questions for document {DocumentId}",
+                allQuestions.Count,
+                request.NumberOfQuestions,
+                documentId);
+            throw new ExactGenerationCountException(
+                request.NumberOfQuestions,
+                allQuestions.Count);
         }
 
-        runningTitle = string.IsNullOrWhiteSpace(runningTitle)
-            ? $"Quiz on {document.Title}"
-            : runningTitle;
+        var result = new AiGeneratedQuizResponseDto($"Quiz on {document.Title}", allQuestions);
 
-        var result = new AiGeneratedQuizResponseDto(runningTitle, allQuestions);
-
-        var quiz = await PersistQuizAsync(documentId, document.Title, result, cancellationToken);
+        var quizTitle = await _quizService.GetNextQuizTitleAsync(documentId, cancellationToken);
+        var quiz = await PersistQuizAsync(documentId, quizTitle, result, cancellationToken);
 
         _logger.LogInformation(
             "Generated {Count}/{Requested} quiz questions for document {DocumentId}",
-            allQuestions.Count, request.numberOfQuestions, documentId);
+            allQuestions.Count, request.NumberOfQuestions, documentId);
 
-        // Record token usage
-        if (totalInputTokens > 0 || totalOutputTokens > 0)
-        {
-            await _tokenTracker.RecordUsageAsync(userId, totalInputTokens, totalOutputTokens, "quiz", cancellationToken);
-        }
+        // Re-fetch the quiz with its questions + answers so the response carries the
+        // freshly-assigned entity IDs and timestamps. Without this, the FE sees a
+        // quiz with Questions=null and has to do a second GET to load them.
+        var persisted = await _unitOfWork.Quizzes
+            .Query()
+            .AsNoTracking()
+            .Include(q => q.Questions)
+                .ThenInclude(question => question.Answers)
+            .Where(q => q.Id == quiz.Id)
+            .OrderBy(q => q.CreatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var questionDtos = persisted?.Questions
+            .OrderBy(q => q.Position)
+            .Select(q => new QuestionResponseDto(
+                q.Id,
+                q.QuizId,
+                q.Title,
+                q.Type,
+                q.Position,
+                q.CreatedAt,
+                q.UpdatedAt,
+                q.Answers
+                    .OrderBy(a => a.CreatedAt)
+                    .Select(a => new AnswerResponseDto(
+                        a.Id,
+                        a.QuestionId,
+                        a.SelectedOption,
+                        a.IsCorrect,
+                        a.CreatedAt,
+                        a.UpdatedAt))
+                    .ToList()))
+            .ToList();
 
         return new QuizResponseDto(
             quiz.Id,
             quiz.DocumentId,
             quiz.Title,
             quiz.CreatedAt,
-            quiz.UpdatedAt
+            quiz.UpdatedAt,
+            questionDtos
         );
     }
 
@@ -255,73 +312,58 @@ IMPORTANT:
 """;
     }
 
-    private async Task<(List<AiGeneratedQuestionDto> questions, int inputTokens, int outputTokens)> RunBatchWithRetryWithTrackingAsync(
+    private async Task<(List<AiGeneratedQuestionDto> questions, int inputTokens, int outputTokens)> RunBatchWithTrackingAsync(
         string prompt,
-        int wantThisBatch,
-        int batchNumber,
-        CancellationToken cancellationToken)
+        int modelCall)
     {
-        const int maxAttempts = 2;
-        var best = new List<AiGeneratedQuestionDto>();
-        var bestInputTokens = 0;
-        var bestOutputTokens = 0;
-        var lastAttemptInputTokens = 0;
-        var lastAttemptOutputTokens = 0;
-
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        TokenUsageResult usageResult;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            string aiText;
-            int inputTokens = 0;
-            int outputTokens = 0;
-            try
-            {
-                var usageResult = await _openAiService.SendMessageWithUsageAsync(prompt, 0.2f);
-                aiText = usageResult.Text;
-                inputTokens = usageResult.InputTokens;
-                outputTokens = usageResult.OutputTokens;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(
-                    ex, "Quiz batch {Batch} attempt {Attempt}: AI call failed",
-                    batchNumber, attempt);
-                continue;
-            }
-
-            List<AiGeneratedQuestionDto> parsed;
-            try
-            {
-                parsed = ParseQuizPayload(aiText);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(
-                    ex, "Quiz batch {Batch} attempt {Attempt}: parse failed",
-                    batchNumber, attempt);
-                continue;
-            }
-
-            lastAttemptInputTokens = inputTokens;
-            lastAttemptOutputTokens = outputTokens;
-
-            if (parsed.Count > best.Count)
-            {
-                best = parsed;
-                bestInputTokens = inputTokens;
-                bestOutputTokens = outputTokens;
-            }
-
-            if (parsed.Count >= Math.Max(1, wantThisBatch / 2))
-                return (parsed, inputTokens, outputTokens);
-
+            usageResult = await _openAiService.SendMessageWithUsageAsync(prompt, 0.2f);
+        }
+        catch (Exception ex)
+        {
             _logger.LogWarning(
-                "Quiz batch {Batch} attempt {Attempt}: only {Got}/{Want} questions, retrying",
-                batchNumber, attempt, parsed.Count, wantThisBatch);
+                ex,
+                "Quiz model call {ModelCall}: AI call failed",
+                modelCall);
+            return (new List<AiGeneratedQuestionDto>(), 0, 0);
         }
 
-        return (best, lastAttemptInputTokens, lastAttemptOutputTokens);
+        try
+        {
+            return (
+                ParseQuizPayload(usageResult.Text),
+                usageResult.InputTokens,
+                usageResult.OutputTokens);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Quiz model call {ModelCall}: parse failed",
+                modelCall);
+            return (
+                new List<AiGeneratedQuestionDto>(),
+                usageResult.InputTokens,
+                usageResult.OutputTokens);
+        }
+    }
+
+    private Task RecordConsumedTokensAsync(
+        Guid operationId,
+        Guid userId,
+        Guid documentId,
+        int inputTokens,
+        int outputTokens)
+    {
+        return _tokenTracker.RecordGenerationUsageAsync(
+            operationId,
+            userId,
+            documentId,
+            inputTokens,
+            outputTokens,
+            "GenerateQuiz");
     }
 
     private static List<AiGeneratedQuestionDto> ParseQuizPayload(string aiText)
@@ -591,7 +633,7 @@ IMPORTANT:
         var quiz = new Quiz
         {
             DocumentId = documentId,
-            Title = string.IsNullOrWhiteSpace(result.QuizTitle) ? fallbackTitle : result.QuizTitle
+            Title = fallbackTitle
         };
         await _unitOfWork.Quizzes.AddAsync(quiz, cancellationToken);
 

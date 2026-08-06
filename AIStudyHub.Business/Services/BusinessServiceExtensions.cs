@@ -51,6 +51,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<IEmailService, EmailService>();
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<IDocumentService, DocumentService>();
+        services.AddScoped<IDocumentUploadService, DocumentUploadService>();
         services.AddScoped<ISubjectService, SubjectService>();
         services.AddScoped<IVoteService, VoteService>();
         services.AddScoped<IReportService, ReportService>();
@@ -100,7 +101,7 @@ public static class BusinessServiceExtensions
         services.AddScoped<IRerankingService, RerankingService>();
         services.AddScoped<RagContextExpander>();
         services.AddScoped<RagRetrievalPipeline>();
-        services.AddScoped<RagCitationFactory>();
+        services.AddScoped<RagContextSelector>();
 
         // L4: SK Orchestrator
         services.Configure<SemanticKernelOptions>(configuration.GetSection("SemanticKernel"));

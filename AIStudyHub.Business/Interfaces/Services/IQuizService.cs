@@ -5,4 +5,13 @@ namespace AIStudyHub.Business.Interfaces.Services;
 public interface IQuizService : ICrudService<QuizResponseDto, CreateQuizRequestDto, UpdateQuizRequestDto>
 {
     Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<QuizResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, Guid userId, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<QuizSummaryDto>> GetByDocumentAsync(
+        Guid documentId,
+        Guid userId,
+        CancellationToken cancellationToken = default);
+
+    Task<string> GetNextQuizTitleAsync(
+        Guid documentId,
+        CancellationToken cancellationToken = default);
 }

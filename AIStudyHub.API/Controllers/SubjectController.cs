@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using AIStudyHub.Business.DTOs.Common;
 using AIStudyHub.Business.DTOs.Subjects;
 using AIStudyHub.Business.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -17,46 +19,77 @@ public sealed class SubjectController : ControllerBase
         _service = service;
     }
 
-    /// <summary>Lấy danh sách tất cả môn học.</summary>
     [HttpGet]
-    public async Task<ActionResult<AIStudyHub.Business.DTOs.Common.PagedResultDto<SubjectResponseDto>>> GetAll([FromQuery] AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken)
+    public async Task<ActionResult<PagedResultDto<SubjectResponseDto>>> GetAll(
+        [FromQuery] PaginationParams pagination,
+        CancellationToken cancellationToken)
     {
-        var result = await _service.GetAllPagedAsync(@params, cancellationToken);
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var result = await _service.GetMineAsync(userId, pagination, cancellationToken);
         return Ok(result);
     }
 
-    /// <summary>Lấy thông tin môn học theo ID.</summary>
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<SubjectResponseDto>> GetById(Guid id, CancellationToken cancellationToken)
     {
-        var result = await _service.GetByIdAsync(id, cancellationToken);
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var result = await _service.GetOwnedByIdAsync(userId, id, cancellationToken);
         return result is null ? NotFound() : Ok(result);
     }
 
-    /// <summary>Tạo môn học mới (Admin only).</summary>
     [HttpPost]
-    [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<SubjectResponseDto>> Create([FromBody] CreateSubjectRequestDto request, CancellationToken cancellationToken)
+    public async Task<ActionResult<SubjectResponseDto>> Create(
+        [FromBody] CreateSubjectRequestDto request,
+        CancellationToken cancellationToken)
     {
-        var result = await _service.CreateAsync(request, cancellationToken);
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        var result = await _service.CreateForUserAsync(userId, request, cancellationToken);
         return CreatedAtAction(nameof(GetById), new { id = result.Id }, result);
     }
 
-    /// <summary>Cập nhật môn học (Admin only).</summary>
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Admin")]
-    public async Task<ActionResult<SubjectResponseDto>> Update(Guid id, [FromBody] UpdateSubjectRequestDto request, CancellationToken cancellationToken)
+    public async Task<ActionResult<SubjectResponseDto>> Update(
+        Guid id,
+        [FromBody] UpdateSubjectRequestDto request,
+        CancellationToken cancellationToken)
     {
-        var result = await _service.UpdateAsync(id, request, cancellationToken);
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        if (!await _service.ExistsForOwnerAsync(userId, id, cancellationToken))
+            return NotFound();
+
+        var result = await _service.UpdateOwnedAsync(userId, id, request, cancellationToken);
         return Ok(result);
     }
 
-    /// <summary>Xóa môn học (Admin only).</summary>
     [HttpDelete("{id:guid}")]
-    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
-        await _service.DeleteAsync(id, cancellationToken);
+        var userId = GetCurrentUserId();
+        if (userId == Guid.Empty) return Unauthorized();
+
+        if (!await _service.ExistsForOwnerAsync(userId, id, cancellationToken))
+            return NotFound();
+
+        await _service.DeleteOwnedAsync(userId, id, cancellationToken);
         return NoContent();
+    }
+
+    private Guid GetCurrentUserId()
+    {
+        var claim = User.FindFirst(ClaimTypes.NameIdentifier)
+            ?? User.FindFirst("sub")
+            ?? User.FindFirst("userId");
+
+        return claim != null && Guid.TryParse(claim.Value, out var userId)
+            ? userId
+            : Guid.Empty;
     }
 }

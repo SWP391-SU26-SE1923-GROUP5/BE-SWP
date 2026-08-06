@@ -69,15 +69,41 @@ public class AdminController : ControllerBase
 
         foreach (var doc in documents)
         {
+            if (string.IsNullOrWhiteSpace(doc.FileLink))
+                continue;
+
+            string filePath;
+            try
+            {
+                filePath = _storage.ResolveFullPath(
+                    GetStoredRelativePath(doc.FileLink));
+            }
+            catch (InvalidOperationException exception)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "Skipping document {DocumentId} with an invalid source path",
+                    doc.Id);
+                continue;
+            }
+
+            if (!System.IO.File.Exists(filePath))
+            {
+                _logger.LogWarning(
+                    "Skipping document {DocumentId} because its source file is missing",
+                    doc.Id);
+                continue;
+            }
+
             var request = new DocumentProcessRequest(
                 doc.Id,
                 doc.UserId,
-                doc.FileLink ?? string.Empty,
+                filePath,
                 doc.FileName ?? "unknown",
                 doc.FileType ?? "application/octet-stream");
 
-            await _queue.EnqueueAsync(request, ct);
-            count++;
+            if (_queue.TryEnqueue(request))
+                count++;
         }
 
         _logger.LogInformation("Queued {Count} documents for reindexing", count);
@@ -87,6 +113,19 @@ public class AdminController : ControllerBase
             message = $"Queued {count} documents for reindexing",
             count = count
         });
+    }
+
+    private static string GetStoredRelativePath(string fileLink)
+    {
+        const string uploadUrlPrefix = "/uploads/";
+        if (!fileLink.StartsWith(uploadUrlPrefix, StringComparison.Ordinal)
+            || fileLink.Length == uploadUrlPrefix.Length)
+        {
+            throw new InvalidOperationException(
+                "Document source path is invalid.");
+        }
+
+        return fileLink[uploadUrlPrefix.Length..];
     }
 
     [HttpPost("reindex-tables/{documentId:guid}")]

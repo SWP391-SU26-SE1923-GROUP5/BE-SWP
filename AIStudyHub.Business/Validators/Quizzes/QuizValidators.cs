@@ -19,3 +19,12 @@ public sealed class UpdateQuizRequestDtoValidator : AbstractValidator<UpdateQuiz
         RuleFor(x => x.Title).NotEmpty().MaximumLength(255);
     }
 }
+
+public sealed class CreateQuizRequestViaAiValidator : AbstractValidator<CreateQuizRequestViaAiDto>
+{
+    public CreateQuizRequestViaAiValidator()
+    {
+        RuleFor(request => request.NumberOfQuestions)
+            .InclusiveBetween(1, 20);
+    }
+}

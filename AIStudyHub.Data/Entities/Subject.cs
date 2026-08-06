@@ -6,6 +6,16 @@ namespace AIStudyHub.Data.Entities;
 public sealed class Subject : BaseEntity
 {
     /// <summary>
+    /// Gets or sets the identifier of the student who owns the subject.
+    /// </summary>
+    public Guid OwnerUserId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the student who owns the subject.
+    /// </summary>
+    public User OwnerUser { get; set; } = null!;
+
+    /// <summary>
     /// Gets or sets the unique subject code.
     /// </summary>
     public string SubjectCode { get; set; } = string.Empty;

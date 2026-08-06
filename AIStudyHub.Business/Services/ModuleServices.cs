@@ -43,16 +43,26 @@ public sealed class DocumentService : IDocumentService
         _vectorStoreService = vectorStoreService;
     }
 
-    private static DocumentResponseDto MapToDto(Document d) => new(
-        d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
-        d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status, d.ErrorMessage,
-        d.Votes.Sum(v => v.Type == AIStudyHub.Data.Enums.VoteType.Upvote ? 1 : -1),
-        d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
+    private static DocumentResponseDto MapToDto(Document d)
+    {
+        var readiness = DocumentReadinessEvaluator.Evaluate(d);
+        return new(
+            d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
+            d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status,
+            readiness.IsChatReady, readiness.Message, readiness.CanRetry,
+            d.Votes.Sum(v => v.Type == AIStudyHub.Data.Enums.VoteType.Upvote ? 1 : -1),
+            d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
+    }
 
-    private static DocumentResponseDto MapToDtoNoVotes(Document d) => new(
-        d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
-        d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status, d.ErrorMessage,
-        d.Votes.Count, d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
+    private static DocumentResponseDto MapToDtoNoVotes(Document d)
+    {
+        var readiness = DocumentReadinessEvaluator.Evaluate(d);
+        return new(
+            d.Id, d.UserId, d.SubjectId, d.Title, d.FileLink, d.FileName, d.FileExtension,
+            d.FileType, d.FileSizeBytes, d.ShareStatus, d.Status,
+            readiness.IsChatReady, readiness.Message, readiness.CanRetry,
+            d.Votes.Count, d.LifecycleStatus, d.TrashedAt, d.CreatedAt, d.UpdatedAt);
+    }
 
     public async Task<string> GetAvailableFileNameAsync(
         Guid userId,
@@ -196,9 +206,13 @@ public sealed class DocumentService : IDocumentService
 
     public async Task<DocumentResponseDto> CreateAsync(CreateDocumentRequestDto request, CancellationToken cancellationToken = default)
     {
-        var subjectExists = await _unitOfWork.Subjects.GetByIdAsync(request.SubjectId, cancellationToken) is not null;
+        var subjectExists = await _unitOfWork.Subjects.Query()
+            .AnyAsync(
+                subject => subject.Id == request.SubjectId
+                    && subject.OwnerUserId == request.UserId,
+                cancellationToken);
         if (!subjectExists)
-            throw new InvalidOperationException($"Subject with ID {request.SubjectId} not found.");
+            throw new KeyNotFoundException("Subject not found.");
 
         var document = _mapper.Map<Data.Entities.Document>(request);
         document.LifecycleStatus = DocumentLifecycleStatus.Active;
@@ -1154,8 +1168,9 @@ public sealed class FlashcardService : IFlashcardService
     public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<FlashcardResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, Guid userId, CancellationToken cancellationToken = default)
     {
         var query = _unitOfWork.Flashcards.Query()
-            .Include(f => f.Document)
-            .Where(f => f.Document.UserId == userId || f.Document.ShareStatus == "public")
+            .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
+            .Where(f => f.FlashcardDeck.Document.LifecycleStatus == DocumentLifecycleStatus.Active
+                        && (f.FlashcardDeck.Document.UserId == userId || f.FlashcardDeck.Document.ShareStatus == "public"))
             .AsNoTracking();
 
         if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
@@ -1187,7 +1202,7 @@ public sealed class FlashcardService : IFlashcardService
     {
         var flashcards = await _unitOfWork.Flashcards
             .Query()
-            .Include(f => f.Document)
+            .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
@@ -1198,7 +1213,7 @@ public sealed class FlashcardService : IFlashcardService
     {
         var flashcard = await _unitOfWork.Flashcards
             .Query()
-            .Include(f => f.Document)
+            .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
             .AsNoTracking()
             .FirstOrDefaultAsync(f => f.Id == id, cancellationToken);
 
@@ -1207,10 +1222,10 @@ public sealed class FlashcardService : IFlashcardService
 
     public async Task<FlashcardResponseDto> CreateAsync(CreateFlashcardRequestDto request, CancellationToken cancellationToken = default)
     {
-        var documentExists = await _unitOfWork.Documents.GetByIdAsync(request.DocumentId, cancellationToken) is not null;
-        if (!documentExists)
+        var deckExists = await _unitOfWork.FlashcardDecks.GetByIdAsync(request.DeckId, cancellationToken) is not null;
+        if (!deckExists)
         {
-            throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
+            throw new KeyNotFoundException($"FlashcardDeck with ID {request.DeckId} not found.");
         }
 
         var flashcard = _mapper.Map<Data.Entities.Flashcard>(request);
@@ -1219,7 +1234,7 @@ public sealed class FlashcardService : IFlashcardService
 
         var created = await _unitOfWork.Flashcards
             .Query()
-            .Include(f => f.Document)
+            .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
             .AsNoTracking()
             .FirstOrDefaultAsync(f => f.Id == flashcard.Id, cancellationToken);
 
@@ -1240,7 +1255,7 @@ public sealed class FlashcardService : IFlashcardService
 
         var updated = await _unitOfWork.Flashcards
             .Query()
-            .Include(f => f.Document)
+            .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
             .AsNoTracking()
             .FirstOrDefaultAsync(f => f.Id == id, cancellationToken);
 
@@ -1259,20 +1274,170 @@ public sealed class FlashcardService : IFlashcardService
         await _unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlyList<FlashcardResponseDto>> GetByDocumentAsync(
+    public async Task<int> DeleteDeckAsync(
+        Guid deckId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var ownedDeck = await _unitOfWork.FlashcardDecks
+            .Query()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                deck => deck.Id == deckId && deck.Document.UserId == userId,
+                cancellationToken);
+        if (ownedDeck is null)
+            throw new KeyNotFoundException("Deck not found.");
+
+        var flashcards = await _unitOfWork.Flashcards
+            .Query()
+            .Where(flashcard => flashcard.DeckId == deckId)
+            .ToListAsync(cancellationToken);
+
+        var flashcardIds = flashcards.Select(f => f.Id).ToList();
+
+        // Cascade in FK-safe order: attempts → reviews → flashcards → deck.
+        if (flashcardIds.Count > 0)
+        {
+            var attempts = await _unitOfWork.FlashcardReviewAttempts
+                .Query()
+                .Where(attempt => flashcardIds.Contains(attempt.FlashcardId))
+                .ToListAsync(cancellationToken);
+            foreach (var attempt in attempts)
+                _unitOfWork.FlashcardReviewAttempts.Remove(attempt);
+
+            var reviews = await _unitOfWork.FlashcardReviews
+                .Query()
+                .Where(review => flashcardIds.Contains(review.FlashcardId))
+                .ToListAsync(cancellationToken);
+            foreach (var review in reviews)
+                _unitOfWork.FlashcardReviews.Remove(review);
+        }
+
+        foreach (var flashcard in flashcards)
+            _unitOfWork.Flashcards.Remove(flashcard);
+
+        var deck = await _unitOfWork.FlashcardDecks
+            .Query()
+            .FirstOrDefaultAsync(deck => deck.Id == deckId, cancellationToken);
+        if (deck is not null)
+            _unitOfWork.FlashcardDecks.Remove(deck);
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        return flashcards.Count;
+    }
+
+    public async Task<int> DeleteByDocumentAsync(
         Guid documentId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var documentExists = await _unitOfWork.Documents
+            .Query()
+            .AsNoTracking()
+            .AnyAsync(d => d.Id == documentId && d.UserId == userId, cancellationToken);
+        if (!documentExists)
+            throw new KeyNotFoundException("Document not found.");
+
+        var decks = await _unitOfWork.FlashcardDecks
+            .Query()
+            .Where(deck => deck.DocumentId == documentId)
+            .ToListAsync(cancellationToken);
+
+        var deckIds = decks.Select(d => d.Id).ToList();
+        var flashcards = await _unitOfWork.Flashcards
+            .Query()
+            .Where(f => deckIds.Contains(f.DeckId))
+            .ToListAsync(cancellationToken);
+
+        var flashcardIds = flashcards.Select(f => f.Id).ToList();
+
+        // Cascade in FK-safe order: attempts → reviews → flashcards → decks.
+        if (flashcardIds.Count > 0)
+        {
+            var attempts = await _unitOfWork.FlashcardReviewAttempts
+                .Query()
+                .Where(attempt => flashcardIds.Contains(attempt.FlashcardId))
+                .ToListAsync(cancellationToken);
+            foreach (var attempt in attempts)
+                _unitOfWork.FlashcardReviewAttempts.Remove(attempt);
+
+            var reviews = await _unitOfWork.FlashcardReviews
+                .Query()
+                .Where(review => flashcardIds.Contains(review.FlashcardId))
+                .ToListAsync(cancellationToken);
+            foreach (var review in reviews)
+                _unitOfWork.FlashcardReviews.Remove(review);
+        }
+
+        foreach (var flashcard in flashcards)
+            _unitOfWork.Flashcards.Remove(flashcard);
+
+        foreach (var deck in decks)
+            _unitOfWork.FlashcardDecks.Remove(deck);
+
+        await _unitOfWork.SaveChangesAsync(cancellationToken);
+        return flashcards.Count;
+    }
+
+    public async Task<IReadOnlyList<FlashcardResponseDto>> GetByDeckAsync(
+        Guid deckId,
         Guid userId,
         CancellationToken cancellationToken = default)
     {
         var flashcards = await _unitOfWork.Flashcards
             .Query()
-            .Include(f => f.Document)
-            .Where(f => f.DocumentId == documentId && (f.Document.UserId == userId || f.Document.ShareStatus == "public"))
+            .Include(f => f.FlashcardDeck).ThenInclude(d => d.Document)
+            .Where(f => f.DeckId == deckId
+                        && f.FlashcardDeck.Document.LifecycleStatus == DocumentLifecycleStatus.Active
+                        && (f.FlashcardDeck.Document.UserId == userId || f.FlashcardDeck.Document.ShareStatus == "public"))
             .OrderBy(f => f.CreatedAt)
             .AsNoTracking()
             .ToListAsync(cancellationToken);
 
         return flashcards.Select(_mapper.Map<FlashcardResponseDto>).ToList();
+    }
+
+    public async Task<IReadOnlyList<FlashcardDeckSummaryDto>> GetDecksByDocumentAsync(
+        Guid documentId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var document = await _unitOfWork.Documents
+            .Query()
+            .AsNoTracking()
+            .Where(d => d.Id == documentId
+                        && d.LifecycleStatus == DocumentLifecycleStatus.Active)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (document is null)
+            throw new KeyNotFoundException("Document not found.");
+
+        if (document.UserId != userId && document.ShareStatus != "public")
+            throw new KeyNotFoundException("Document not found.");
+
+        var decks = await _unitOfWork.FlashcardDecks
+            .Query()
+            .AsNoTracking()
+            .Where(d => d.DocumentId == documentId)
+            .OrderBy(d => d.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        var deckIds = decks.Select(d => d.Id).ToList();
+        var counts = await _unitOfWork.Flashcards
+            .Query()
+            .AsNoTracking()
+            .Where(f => deckIds.Contains(f.DeckId))
+            .GroupBy(f => f.DeckId)
+            .Select(g => new { DeckId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.DeckId, x => x.Count, cancellationToken);
+
+        return decks.Select(d => new FlashcardDeckSummaryDto(
+            d.Id,
+            d.DocumentId,
+            d.Name,
+            d.CreatedAt,
+            counts.TryGetValue(d.Id, out var c) ? c : 0
+        )).ToList();
     }
 
     public async Task<IReadOnlyList<FlashcardResponseDto>> CreateBulkAsync(
@@ -1282,15 +1447,15 @@ public sealed class FlashcardService : IFlashcardService
         if (requests is null || requests.Count == 0)
             return Array.Empty<FlashcardResponseDto>();
 
-        var documentIds = requests.Select(r => r.DocumentId).Distinct().ToList();
-        var allDocumentsExist = await _unitOfWork.Documents
+        var deckIds = requests.Select(r => r.DeckId).Distinct().ToList();
+        var allDecksExist = await _unitOfWork.FlashcardDecks
             .Query()
-            .Where(d => documentIds.Contains(d.Id))
+            .Where(d => deckIds.Contains(d.Id))
             .Select(d => d.Id)
-            .CountAsync(cancellationToken) == documentIds.Count;
+            .CountAsync(cancellationToken) == deckIds.Count;
 
-        if (!allDocumentsExist)
-            throw new KeyNotFoundException("One or more documents not found.");
+        if (!allDecksExist)
+            throw new KeyNotFoundException("One or more decks not found.");
 
         var flashcards = requests
             .Select(r => _mapper.Map<Data.Entities.Flashcard>(r))
@@ -1326,7 +1491,8 @@ public sealed class QuizService : IQuizService
     {
         var query = _unitOfWork.Quizzes.Query()
             .Include(q => q.Document)
-            .Where(q => q.Document.UserId == userId || q.Document.ShareStatus == "public")
+            .Where(q => q.Document.LifecycleStatus == DocumentLifecycleStatus.Active
+                        && (q.Document.UserId == userId || q.Document.ShareStatus == "public"))
             .AsNoTracking();
 
         if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
@@ -1352,6 +1518,35 @@ public sealed class QuizService : IQuizService
 
         var dtos = items.Select(_mapper.Map<QuizResponseDto>).ToList();
         return new AIStudyHub.Business.DTOs.Common.PagedResultDto<QuizResponseDto>(dtos, totalCount, @params.Offset, @params.Limit);
+    }
+
+    public async Task<IReadOnlyList<QuizSummaryDto>> GetByDocumentAsync(
+        Guid documentId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
+    {
+        var quizzes = await _unitOfWork.Quizzes
+            .Query()
+            .Where(q =>
+                q.DocumentId == documentId
+                && q.Document.LifecycleStatus == DocumentLifecycleStatus.Active
+                && (q.Document.UserId == userId || q.Document.ShareStatus == "public"))
+            .OrderByDescending(q => q.CreatedAt)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        return quizzes.Select(_mapper.Map<QuizSummaryDto>).ToList();
+    }
+
+    public async Task<string> GetNextQuizTitleAsync(
+        Guid documentId,
+        CancellationToken cancellationToken = default)
+    {
+        var existingCount = await _unitOfWork.Quizzes
+            .Query()
+            .CountAsync(q => q.DocumentId == documentId, cancellationToken);
+
+        return $"Quiz {existingCount + 1}";
     }
 
     public async Task<IReadOnlyList<QuizResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
@@ -1386,7 +1581,11 @@ public sealed class QuizService : IQuizService
             throw new KeyNotFoundException($"Document with ID {request.DocumentId} not found.");
         }
 
-        var quiz = _mapper.Map<Data.Entities.Quiz>(request);
+        var title = string.IsNullOrWhiteSpace(request.Title)
+            ? await GetNextQuizTitleAsync(request.DocumentId, cancellationToken)
+            : request.Title;
+
+        var quiz = _mapper.Map<Data.Entities.Quiz>(request with { Title = title });
         await _unitOfWork.Quizzes.AddAsync(quiz, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
@@ -1630,16 +1829,77 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
         return submissions.Select(_mapper.Map<QuizSubmissionResponseDto>).ToList();
     }
 
-    public async Task<QuizSubmissionResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<QuizSubmissionDetailDto?> GetOwnedDetailAsync(
+        Guid submissionId,
+        Guid userId,
+        CancellationToken cancellationToken = default)
     {
         var submission = await _unitOfWork.QuizSubmissions
             .Query()
-            .Include(qs => qs.User)
             .Include(qs => qs.Quiz)
+                .ThenInclude(quiz => quiz.Document)
+                    .ThenInclude(document => document.Subject)
+            .Include(qs => qs.Quiz)
+                .ThenInclude(quiz => quiz.Questions)
+                    .ThenInclude(question => question.Answers)
             .AsNoTracking()
-            .FirstOrDefaultAsync(qs => qs.Id == id, cancellationToken);
+            .FirstOrDefaultAsync(
+                qs => qs.Id == submissionId && qs.UserId == userId,
+                cancellationToken);
 
-        return submission is null ? null : _mapper.Map<QuizSubmissionResponseDto>(submission);
+        if (submission is null)
+            return null;
+
+        var submittedAnswers = DeserializeSubmittedAnswers(
+            submission.Answers,
+            submission.Id);
+        var questions = submission.Quiz.Questions
+            .OrderBy(question => question.Position)
+            .ThenBy(question => question.Id)
+            .Select(question =>
+            {
+                submittedAnswers.TryGetValue(
+                    question.Id.ToString(),
+                    out var selectedOption);
+                var options = question.Answers
+                    .OrderBy(answer => answer.CreatedAt)
+                    .ThenBy(answer => answer.Id)
+                    .Select(answer => new QuizSubmissionOptionDetailDto(
+                        answer.Id,
+                        answer.SelectedOption,
+                        selectedOption is not null
+                            && AnswersMatch(answer.SelectedOption, selectedOption),
+                        answer.IsCorrect))
+                    .ToList();
+
+                return new QuizSubmissionQuestionDetailDto(
+                    question.Id,
+                    question.Title,
+                    question.Type,
+                    question.Position,
+                    options);
+            })
+            .ToList();
+
+        return new QuizSubmissionDetailDto(
+            submission.Id,
+            submission.QuizId,
+            submission.Quiz.Title,
+            submission.Quiz.DocumentId,
+            submission.Quiz.Document.Title,
+            submission.Quiz.Document.SubjectId,
+            submission.Quiz.Document.Subject.SubjectCode,
+            submission.Quiz.Document.Subject.SubjectName,
+            submission.Score,
+            submission.MaxScore,
+            submission.TotalCorrect,
+            submission.DurationSeconds,
+            submission.MaxScore > 0
+                ? Math.Round((double)submission.Score / submission.MaxScore * 100, 1)
+                : 0,
+            submission.GradedAt,
+            submission.SubmittedAt,
+            questions);
     }
 
     public async Task<IReadOnlyList<QuizSubmissionResponseDto>> GetByUserAndQuizAsync(Guid userId, Guid quizId, CancellationToken cancellationToken = default)
@@ -1694,7 +1954,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             qs.Quiz?.Document?.Title ?? string.Empty,
             qs.Quiz?.Document?.Subject?.SubjectCode ?? string.Empty,
             qs.Score, qs.MaxScore, qs.TotalCorrect,
-            null, // DurationSeconds - not tracked in entity
+            qs.DurationSeconds,
             qs.MaxScore > 0 ? Math.Round((double)qs.Score / qs.MaxScore * 100, 1) : 0,
             qs.GradedAt, qs.SubmittedAt, qs.CreatedAt, qs.UpdatedAt)).ToList();
 
@@ -1703,6 +1963,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
 
     public async Task<PagedResultDto<QuizSubmissionHistoryDto>> GetQuizHistoryAsync(
         Guid quizId,
+        Guid userId,
         DateTime? fromDate,
         DateTime? toDate,
         PaginationParams @params,
@@ -1713,7 +1974,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             .Include(qs => qs.Quiz)
                 .ThenInclude(q => q.Document)
                     .ThenInclude(d => d.Subject)
-            .Where(qs => qs.QuizId == quizId);
+            .Where(qs => qs.UserId == userId && qs.QuizId == quizId);
 
         if (fromDate.HasValue)
             query = query.Where(qs => qs.SubmittedAt >= fromDate.Value);
@@ -1735,7 +1996,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             qs.Quiz?.Document?.Title ?? string.Empty,
             qs.Quiz?.Document?.Subject?.SubjectCode ?? string.Empty,
             qs.Score, qs.MaxScore, qs.TotalCorrect,
-            null,
+            qs.DurationSeconds,
             qs.MaxScore > 0 ? Math.Round((double)qs.Score / qs.MaxScore * 100, 1) : 0,
             qs.GradedAt, qs.SubmittedAt, qs.CreatedAt, qs.UpdatedAt)).ToList();
 
@@ -1761,6 +2022,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             UserId = request.UserId,
             QuizId = request.QuizId,
             Answers = request.Answers,
+            DurationSeconds = request.DurationSeconds,
             SubmittedAt = DateTime.UtcNow,
             CreatedAt = DateTime.UtcNow
         };
@@ -1774,15 +2036,16 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
             // Simple grading: parse submitted answers and match with questions
             // Assuming request.Answers is JSON string like "{\"q1\":\"A\",\"q2\":\"B\"}"
             // And Question has Answers where IsCorrect == true
-            var submittedAnswers = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(request.Answers)
-                ?? new Dictionary<string, string>();
+            var submittedAnswers = DeserializeSubmittedAnswers(
+                request.Answers,
+                submission.Id);
 
             foreach (var question in quiz.Questions)
             {
                 var correctAnswer = question.Answers.FirstOrDefault(a => a.IsCorrect);
                 if (correctAnswer != null && submittedAnswers.TryGetValue(question.Id.ToString(), out var selectedOption))
                 {
-                    if (correctAnswer.SelectedOption.Equals(selectedOption, StringComparison.OrdinalIgnoreCase))
+                    if (AnswersMatch(correctAnswer.SelectedOption, selectedOption))
                     {
                         totalCorrect++;
                     }
@@ -1869,7 +2132,7 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
                     var xpResult = await _gamificationService.AwardXpAsync(
                         new AIStudyHub.Business.DTOs.Gamification.XpAwardRequest(
                             UserId: submission.UserId,
-                            XpEarned: 0, // computed inside service
+                            XpEarned: submission.TotalCorrect, // computed inside service
                             IsCorrect: allCorrect,
                             ActivityType: AIStudyHub.Data.Enums.ActivityType.QuizSubmission,
                             DocumentId: documentId,
@@ -1936,6 +2199,39 @@ public sealed class QuizSubmissionService : IQuizSubmissionService
         }
 
         return new SubmitQuizResultDto(submission, xpEarned, unlocked);
+    }
+
+    private Dictionary<string, string> DeserializeSubmittedAnswers(
+        string serializedAnswers,
+        Guid submissionId)
+    {
+        try
+        {
+            var submittedAnswers = JsonSerializer.Deserialize<Dictionary<string, string>>(
+                serializedAnswers);
+            if (submittedAnswers is null
+                || submittedAnswers.Any(answer =>
+                    !Guid.TryParse(answer.Key, out var questionId)
+                    || questionId == Guid.Empty
+                    || string.IsNullOrWhiteSpace(answer.Value)))
+            {
+                throw new JsonException();
+            }
+
+            return submittedAnswers;
+        }
+        catch (JsonException)
+        {
+            _logger?.LogError(
+                "Stored answers are invalid for quiz submission {SubmissionId}",
+                submissionId);
+            throw new CorruptedQuizSubmissionException(submissionId);
+        }
+    }
+
+    private static bool AnswersMatch(string expected, string selected)
+    {
+        return string.Equals(expected, selected, StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
@@ -2279,95 +2575,148 @@ public sealed class SubjectService : ISubjectService
         _mapper = mapper;
     }
 
-    public async Task<AIStudyHub.Business.DTOs.Common.PagedResultDto<SubjectResponseDto>> GetAllPagedAsync(AIStudyHub.Business.DTOs.Common.PaginationParams @params, CancellationToken cancellationToken = default)
+    public async Task<PagedResultDto<SubjectResponseDto>> GetMineAsync(
+        Guid ownerUserId,
+        PaginationParams pagination,
+        CancellationToken cancellationToken = default)
     {
-        var query = _unitOfWork.Subjects.Query().AsNoTracking();
+        var query = _unitOfWork.Subjects.Query()
+            .Where(subject => subject.OwnerUserId == ownerUserId)
+            .AsNoTracking();
 
-        if (!string.IsNullOrWhiteSpace(@params.SearchTerm))
+        if (!string.IsNullOrWhiteSpace(pagination.SearchTerm))
         {
-            var search = @params.SearchTerm.ToLower();
+            var search = pagination.SearchTerm.ToLower();
             query = query.Where(s => s.SubjectName.ToLower().Contains(search) || s.SubjectCode.ToLower().Contains(search));
         }
 
         var totalCount = await query.CountAsync(cancellationToken);
 
-        if (!string.IsNullOrWhiteSpace(@params.SortBy))
+        if (!string.IsNullOrWhiteSpace(pagination.SortBy))
         {
-            query = @params.IsDescending 
-                ? query.OrderByDescending(s => EF.Property<object>(s, @params.SortBy))
-                : query.OrderBy(s => EF.Property<object>(s, @params.SortBy));
+            query = pagination.IsDescending
+                ? query.OrderByDescending(s => EF.Property<object>(s, pagination.SortBy))
+                : query.OrderBy(s => EF.Property<object>(s, pagination.SortBy));
         }
         else
         {
             query = query.OrderByDescending(s => s.CreatedAt);
         }
 
-        var items = await query.Skip(@params.Offset).Take(@params.Limit).ToListAsync(cancellationToken);
+        var items = await query.Skip(pagination.Offset).Take(pagination.Limit).ToListAsync(cancellationToken);
 
         var dtos = items.Select(_mapper.Map<SubjectResponseDto>).ToList();
-        return new AIStudyHub.Business.DTOs.Common.PagedResultDto<SubjectResponseDto>(dtos, totalCount, @params.Offset, @params.Limit);
+        return new PagedResultDto<SubjectResponseDto>(dtos, totalCount, pagination.Offset, pagination.Limit);
     }
 
-    public async Task<IReadOnlyList<SubjectResponseDto>> GetAllAsync(CancellationToken cancellationToken = default)
+    public async Task<SubjectResponseDto?> GetOwnedByIdAsync(
+        Guid ownerUserId,
+        Guid subjectId,
+        CancellationToken cancellationToken = default)
     {
-        var subjects = await _unitOfWork.Subjects.GetAllAsync(cancellationToken);
-        return subjects.Select(_mapper.Map<SubjectResponseDto>).ToList();
-    }
+        var subject = await _unitOfWork.Subjects.Query()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                subject => subject.Id == subjectId
+                    && subject.OwnerUserId == ownerUserId,
+                cancellationToken);
 
-    public async Task<SubjectResponseDto?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
-    {
-        var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
         return subject is null ? null : _mapper.Map<SubjectResponseDto>(subject);
     }
 
-    public async Task<SubjectResponseDto> CreateAsync(CreateSubjectRequestDto request, CancellationToken cancellationToken = default)
+    public Task<bool> ExistsForOwnerAsync(
+        Guid ownerUserId,
+        Guid subjectId,
+        CancellationToken cancellationToken = default)
     {
-        var existing = await _unitOfWork.Subjects
-            .Query()
-            .FirstOrDefaultAsync(s => s.SubjectCode == request.SubjectCode, cancellationToken);
+        return _unitOfWork.Subjects.Query()
+            .AnyAsync(
+                subject => subject.Id == subjectId
+                    && subject.OwnerUserId == ownerUserId,
+                cancellationToken);
+    }
 
-        if (existing is not null)
+    public async Task<SubjectResponseDto> CreateForUserAsync(
+        Guid ownerUserId,
+        CreateSubjectRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedCode = request.SubjectCode.Trim().ToUpperInvariant();
+        var exists = await _unitOfWork.Subjects.Query()
+            .AnyAsync(
+                subject => subject.OwnerUserId == ownerUserId
+                    && subject.SubjectCode == normalizedCode,
+                cancellationToken);
+
+        if (exists)
         {
-            throw new InvalidOperationException($"Subject with code '{request.SubjectCode}' already exists.");
+            throw new InvalidOperationException($"Subject with code '{normalizedCode}' already exists.");
         }
 
         var subject = _mapper.Map<Data.Entities.Subject>(request);
+        subject.OwnerUserId = ownerUserId;
+        subject.SubjectCode = normalizedCode;
+        subject.SubjectName = request.SubjectName.Trim();
         await _unitOfWork.Subjects.AddAsync(subject, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return _mapper.Map<SubjectResponseDto>(subject);
     }
 
-    public async Task<SubjectResponseDto> UpdateAsync(Guid id, UpdateSubjectRequestDto request, CancellationToken cancellationToken = default)
+    public async Task<SubjectResponseDto> UpdateOwnedAsync(
+        Guid ownerUserId,
+        Guid subjectId,
+        UpdateSubjectRequestDto request,
+        CancellationToken cancellationToken = default)
     {
-        var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
-        if (subject is null)
+        var normalizedCode = request.SubjectCode.Trim().ToUpperInvariant();
+        var subject = await _unitOfWork.Subjects.Query()
+            .FirstOrDefaultAsync(
+                subject => subject.Id == subjectId
+                    && subject.OwnerUserId == ownerUserId,
+                cancellationToken)
+            ?? throw new KeyNotFoundException($"Subject with ID {subjectId} not found.");
+
+        var codeConflict = await _unitOfWork.Subjects.Query()
+            .AnyAsync(
+                candidate => candidate.OwnerUserId == ownerUserId
+                    && candidate.SubjectCode == normalizedCode
+                    && candidate.Id != subjectId,
+                cancellationToken);
+
+        if (codeConflict)
         {
-            throw new KeyNotFoundException($"Subject with ID {id} not found.");
+            throw new InvalidOperationException($"Subject with code '{normalizedCode}' already exists.");
         }
 
-        var codeConflict = await _unitOfWork.Subjects
-            .Query()
-            .FirstOrDefaultAsync(s => s.SubjectCode == request.SubjectCode && s.Id != id, cancellationToken);
-
-        if (codeConflict is not null)
-        {
-            throw new InvalidOperationException($"Subject with code '{request.SubjectCode}' already exists.");
-        }
-
-        _mapper.Map(request, subject);
+        subject.SubjectCode = normalizedCode;
+        subject.SubjectName = request.SubjectName.Trim();
+        subject.Description = request.Description;
         _unitOfWork.Subjects.Update(subject);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return _mapper.Map<SubjectResponseDto>(subject);
     }
 
-    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteOwnedAsync(
+        Guid ownerUserId,
+        Guid subjectId,
+        CancellationToken cancellationToken = default)
     {
-        var subject = await _unitOfWork.Subjects.GetByIdAsync(id, cancellationToken);
-        if (subject is null)
+        var subject = await _unitOfWork.Subjects.Query()
+            .FirstOrDefaultAsync(
+                subject => subject.Id == subjectId
+                    && subject.OwnerUserId == ownerUserId,
+                cancellationToken)
+            ?? throw new KeyNotFoundException($"Subject with ID {subjectId} not found.");
+
+        var isReferenced = await _unitOfWork.Documents.Query()
+            .AnyAsync(document => document.SubjectId == subjectId, cancellationToken);
+
+        if (isReferenced)
         {
-            throw new KeyNotFoundException($"Subject with ID {id} not found.");
+            throw new InvalidOperationException(
+                "Subject cannot be deleted while it is used by a document.");
         }
 
         _unitOfWork.Subjects.Remove(subject);

@@ -1,45 +1,51 @@
 # AIStudyHub - Frontend Integration Guide
 
-## AI Notebook session reload and persistent citations
+## AI Notebook: tải lại phiên, trạng thái tài liệu và vị trí nội dung
 
-Frontend route khuyen nghi: `/ai-notebook/{sessionId}`.
+Frontend route khuyến nghị: `/ai-notebook/{sessionId}`.
 
-Khi mo route hoac refresh trang, Frontend dung `sessionId` de goi:
+Khi mở route hoặc refresh trang, Frontend dùng `sessionId` để gọi:
 
 ```http
 GET /api/Chat/sessions/{sessionId}/messages
 GET /api/Chat/sessions/{sessionId}/documents
 ```
 
-Backend tra `404` neu session khong ton tai hoac khong thuoc user dang dang nhap. Khong tu dong chon Notebook moi nhat khi URL da co `sessionId`.
+Backend trả `404` nếu session không tồn tại hoặc không thuộc user đang đăng nhập. Không tự động chọn Notebook mới nhất khi URL đã có `sessionId`.
 
-Moi assistant message tra `citations` la mot array khong null. Marker `[n]` duoc tra bang truong `citationIndex`, khong suy ra tu vi tri phan tu trong array. Khi click `[n]`, Frontend tim citation co `citationIndex === n`, sau do dung `documentId` cua citation do de mo tai lieu.
-
-Contract citation giong nhau cho ca response tao message va response lich su:
+Response tạo message và response lịch sử dùng cùng contract `ChatMessageResponseDto`:
 
 ```json
 {
-  "citationIndex": 1,
-  "documentId": "d9b8775b-45f4-4a4d-a257-43ea7e730fda",
-  "source": "document.pdf",
-  "snippet": "Exact source text",
-  "pageNumber": 12,
-  "relevance": 0.91,
-  "matchType": "hybrid",
-  "isHighlightable": true,
-  "reason": null
+  "id": "11111111-1111-1111-1111-111111111111",
+  "chatSessionId": "22222222-2222-2222-2222-222222222222",
+  "sender": "assistant",
+  "content": "Nội dung trả lời dựa trên tài liệu.",
+  "createdAt": "2026-07-30T07:30:00Z",
+  "updatedAt": null,
+  "isRelevant": true
 }
 ```
 
-Sau khi tim dung citation, Frontend chuyen den `pageNumber` neu co va chi highlight `snippet` khi `isHighlightable` la `true`. Neu khong highlight duoc, van mo dung tai lieu/trang va co the hien thi `reason`. `documentId` luon la GUID tai lieu that, khong phai so marker nhu `"1"`.
+Response không có `citations`, source snippet, marker `[n]`, hoặc highlight metadata. Frontend chỉ render `content`; không cần parser marker hoặc UI source list. Mỗi câu trả lời grounded liên quan đều tự động có phần văn bản thuần `Vị trí nội dung liên quan trong tài liệu:` ở cuối. Backend nhóm vị trí theo file, gộp các trang liên tiếp thành khoảng, hiển thị `không xác định được trang` khi file không có trang đáng tin cậy, và thêm `một số đoạn không xác định được trang` khi một file có cả trang biết và không biết. Câu trả lời không liên quan hoặc rỗng không có phần này.
 
-Message tao truoc migration persistent citations khong duoc backfill va se tra `citations: []`.
+Trang chỉ đến từ `pageNumber` dương của chunk PDF/OCR; không suy ra từ `chunkIndex`, thứ tự text, hay thông tin của model. Phần vị trí là nội dung text của câu trả lời, không phải citation array hay hệ thống citation theo từng claim.
 
-> **Phiên bản**: cập nhật 2026-07-18
+### Trạng thái sẵn sàng cho Chat
+
+`isChatReady` là cờ quyết định duy nhất việc gửi Chat. Hiển thị đúng copy tiếng Việt: `Tài liệu đang được chuẩn bị.` cho `Processing`, `Tài liệu đã sẵn sàng.` cho `Done`, `Không thể chuẩn bị tài liệu.` cho `Failed`, và `Loại tài liệu này không hỗ trợ Chat.` cho file không hỗ trợ. Dùng SignalR làm cập nhật tức thời và poll `GET /api/Document/{id}/status` làm fallback; trong lúc `Processing`, dùng spinner không xác định thay vì phần trăm giả.
+
+Response upload là `{ documentId, status, chunkCount, message, isChatReady, canRetry }`; status endpoint là `{ id, status, isChatReady, message, canRetry }`; response document/Chat attachment cũng có `status`, `isChatReady`, `message`, `canRetry`. Chỉ hiển thị Retry khi `canRetry=true`; ngay khi click phải disable nút rồi gọi `POST /api/Document/{id}/reprocess`.
+
+Có thể attach tài liệu `Processing` và `Failed`, nhưng không được gửi message nếu bất kỳ attachment nào có `isChatReady=false`. Backend trả `409` với code `DOCUMENTS_NOT_READY`, chỉ chứa các document đang chặn; request bị chặn không tạo user message và không dùng AI token. Không hiển thị hoặc lưu `ErrorMessage` nội bộ: REST và SignalR chỉ gửi các safe fields ở trên.
+
+Migration `20260730071539_RemoveChatCitations` chỉ xóa bảng metadata cũ; lịch sử `ChatMessage.content` và session vẫn còn sau khi deploy.
+
+> **Phiên bản**: cập nhật 2026-07-30
 > **Backend**: ASP.NET Core 8 Web API
 > **Auth**: JWT Bearer (access + refresh) + External (Google, GitHub)
 > **Real-time**: SignalR tại `/hubs/notifications`
-> **Database**: EF Core (citation contract mới nhất: `20260718140849_CompleteChatCitationFlow`)
+> **Database**: EF Core (page-aware chat schema: `20260730071539_RemoveChatCitations`)
 
 Document này chia làm 3 phần:
 1. **Phần 1 (mục 1-5)**: Mô tả luồng nghiệp vụ bằng ngôn ngữ dễ hiểu cho BA/QC/Frontend dev.
@@ -57,7 +63,7 @@ AIStudyHub là nền tảng học tập cá nhân hoá bằng AI với 4 trụ c
 | Trụ cột | Mô tả |
 |---|---|
 | **Tài liệu (Document)** | User upload file PDF/Word/TXT/MD → hệ thống OCR, chunk, vector hoá để phục vụ RAG. |
-| **AI Hỏi đáp (RAG Chat)** | Hỏi đáp theo tài liệu của user, có trích dẫn nguồn và độ tin cậy. |
+| **AI Hỏi đáp (RAG Chat)** | Hỏi đáp theo tài liệu của user, có vị trí nội dung dạng văn bản thuần theo từng file và độ tin cậy. |
 | **Flashcard + Spaced Repetition (SM-2)** | Tạo flashcard (thủ công hoặc AI), ôn tập theo lịch SM-2 tự động. |
 | **Quiz + Gamification** | Sinh quiz từ tài liệu bằng AI, chấm điểm, cộng XP/level/streak, có leaderboard. |
 
@@ -70,8 +76,8 @@ Hệ thống có 3 tier thành viên (mặc định `Free`, `Pro`) với quota s
 | Vai trò | Mô tả |
 |---|---|
 | **Guest** | Xem trang chủ, trang giới thiệu tier, đăng ký/đăng nhập, OAuth Google/GitHub. |
-| **User (thường)** | Upload tài liệu, chat AI, làm quiz, ôn flashcard, nâng cấp tier, vote/share tài liệu công khai. |
-| **Admin** | Quản lý Subject, TierMembership, Report, refund payment, reindex toàn bộ tài liệu. |
+| **User (thường)** | Upload tài liệu, quản lý Subject riêng, chat AI, làm quiz, ôn flashcard, nâng cấp tier, vote/share tài liệu công khai. |
+| **Admin** | Quản lý TierMembership, Report, refund payment, reindex toàn bộ tài liệu; không có quyền vượt phạm vi môn học riêng của student. |
 
 ---
 
@@ -135,15 +141,15 @@ sequenceDiagram
     U->>FE: Chọn file PDF + title + subject
     FE->>API: POST /api/Document/upload/file (multipart)
     API->>API: Lưu file + queue background job
-    API-->>FE: 202 Accepted { documentId, status: "processing" }
+    API-->>FE: 202 Accepted { documentId, status, message, isChatReady, canRetry }
     Note over API: Background worker xử lý: OCR → chunk → embed → vector store
     FE->>API: GET /api/Document/{id}/status (poll 3-5s)
-    API-->>FE: { status: "Done" | "Failed" | "Processing" }
-    Note over API: Khi xong, push qua SignalR: ReceiveNotification( DocumentProcessedPayload )
+    API-->>FE: { id, status, message, isChatReady, canRetry }
+    Note over API: Khi xong/lỗi, push qua SignalR: ReceiveNotification(payload readiness an toàn)
     FE->>U: Hiện toast "Tài liệu đã sẵn sàng"
 ```
 
-> **Lưu ý FE**: Status `5 = Processing`, `2 = Done`. Phải connect SignalR và join group `userId` **trước** khi upload để không miss notification.
+> **Lưu ý FE**: Dùng `isChatReady`, không suy luận từ mã enum status. Phải connect SignalR và join group `userId` **trước** khi upload để không bỏ lỡ notification; nếu mất kết nối, polling status vẫn phải cập nhật được trạng thái cuối.
 
 ### 3.5. Ôn tập Flashcard (Spaced Repetition - SM-2)
 
@@ -167,8 +173,10 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     U->>FE: Chọn document → "Tạo Quiz"
-    FE->>API: POST /api/AI/quizzes/generate?docId=X { numberOfQuestions: 5..20 }
-    API-->>FE: QuizResponseDto { id, title, questions[] }
+    FE->>API: POST /api/AI/quizzes/generate?docId=X { numberOfQuestions: 1..20 }
+    API-->>FE: QuizResponseDto { id, title, questions: null }
+    FE->>API: GET /api/Quiz/{id}
+    API-->>FE: QuizResponseDto { id, title, persisted questions }
     U->>FE: Làm bài, chọn đáp án
     Note over FE: Score và answers do FE tính hoặc dùng API khác
     FE->>API: (SubmitQuiz - xem mục 9.3)
@@ -244,11 +252,18 @@ sequenceDiagram
 ```json
 {
   "userId": "guid",
-  "title": "Document processed",
-  "body": "\"Slide_Tuan3.pdf\" is ready.",
+  "title": "Tài liệu đã sẵn sàng",
+  "body": "\"Slide_Tuan3.pdf\" đã sẵn sàng để sử dụng.",
   "type": 2,
   "timestamp": "2026-06-28T10:30:00Z",
-  "payload": { "documentId": "guid", "title": "Slide_Tuan3.pdf" }
+  "payload": {
+    "documentId": "guid",
+    "title": "Slide_Tuan3.pdf",
+    "status": "Done",
+    "isChatReady": true,
+    "message": "Tài liệu đã sẵn sàng.",
+    "canRetry": false
+  }
 }
 ```
 
@@ -256,7 +271,7 @@ sequenceDiagram
 
 | `type` enum | Khi nào | `payload` shape |
 |---|---|---|
-| `2` Document | Document xử lý xong | `{ documentId, title }` |
+| `2` Document | Document sẵn sàng hoặc xử lý thất bại | `{ documentId, title, status, isChatReady, message, canRetry }` — không có `ErrorMessage` nội bộ |
 | `3` Quiz | Quiz AI sinh xong | `{ quizId, title }` |
 | `3` Quiz | Flashcards mới sẵn sàng | `{ documentId, title, count }` |
 | `1` System | Streak sắp mất (chưa học trong ngày) | `{ currentStreak, hoursRemaining }` |
@@ -289,7 +304,7 @@ sequenceDiagram
 | Tính năng UI | Gọi API theo thứ tự | Ghi chú |
 |---|---|---|
 | **Trang danh sách tài liệu (có filter + phân trang)** | `GET /api/Document?pageIndex=1&pageSize=20&subjectId=&searchTerm=` | Hỗ trợ `subjectId` để lọc theo môn |
-| **Upload file PDF/Word** | 1. `POST /api/Document/upload/file` (multipart) → 2. Poll `GET /api/Document/{id}/status` mỗi 3s HOẶC đợi SignalR `ReceiveNotification` với `type=2` | Bước 1 trả 202 ngay, không cần đợi xử lý xong |
+| **Upload file PDF/Word** | 1. `POST /api/Document/upload/file` (multipart) → 2. Đợi SignalR `ReceiveNotification` với `type=2`; poll `GET /api/Document/{id}/status` mỗi 3s là fallback | Bước 1 trả 202 ngay với readiness fields; hiển thị spinner không xác định, không dùng phần trăm giả |
 | **Xem chi tiết document (metadata)** | `GET /api/Document/{id}` | Trả 403 nếu không phải owner và không public |
 | **Xem file PDF inline** | `GET /api/Document/{id}/preview` (stream) | Dùng `<iframe src=...>` hoặc PDF.js |
 | **Tải file về máy** | `GET /api/Document/{id}/download` (stream) | Có thể dùng `<a download>` |
@@ -297,7 +312,7 @@ sequenceDiagram
 | **Chia sẻ cho người khác** | 1. `GET /api/User/shareable?keyword=` (gợi ý user) → 2. `POST /api/Document/{id}/share { sharedUserIds: [...] }` | Bước 1 cần để hiển thị dropdown chọn user |
 | **Xoá tài liệu** | `DELETE /api/Document/{id}` | Response 204; FE refetch list sau khi xoá |
 | **Xem lại nội dung text chunks (debug)** | `GET /api/Document/{id}/chunks` | Chỉ owner, chỉ dùng cho debug/admin |
-| **Upload lại khi fail** | `POST /api/Document/{id}/reprocess` | Dùng khi status = 6 (Failed) |
+| **Upload lại khi fail** | `POST /api/Document/{id}/reprocess` | Chỉ hiện khi `canRetry=true`; disable nút ngay sau click |
 
 ### 5.5.3. AI & Chat
 
@@ -310,7 +325,7 @@ sequenceDiagram
 | **Danh sách chat session (sidebar)** | `GET /api/Chat/sessions` | |
 | **Tạo session mới** | `POST /api/Chat/sessions { sessionTitle }` | |
 | **Mở 1 session, xem messages** | `GET /api/Chat/sessions/{sessionId}/messages` | |
-| **Gửi message trong session** | `POST /api/Chat/messages { sessionId, message }` | Response là message AI; citation marker dùng `citationIndex`, viewer dùng `documentId` |
+| **Gửi message trong session** | `POST /api/Chat/messages { sessionId, message }` | Attachment `Processing`/`Failed` được phép, nhưng send trả `409 DOCUMENTS_NOT_READY` nếu có document chưa ready; response không tạo user message hay dùng token |
 
 ### 5.5.4. Flashcard & Spaced Repetition
 
@@ -323,7 +338,7 @@ sequenceDiagram
 | **Tạo flashcard thủ công** | `POST /api/Flashcard { documentId, front, back }` | |
 | **Sửa flashcard** | `PUT /api/Flashcard/{id} { front, back }` | |
 | **Xoá flashcard** | `DELETE /api/Flashcard/{id}` | |
-| **Trang stats cá nhân (mastery)** | `GET /api/FlashcardReview/stats/{userId}` (lấy `userId` từ token) | Trả `totalReviewed`, `dueNow`, `masteredCount`, `averageEaseFactor` |
+| **Trang stats cá nhân (mastery)** | `GET /api/FlashcardReview/stats` | Backend luôn lấy user hiện tại từ JWT; trả `totalReviewed`, `dueNow`, `masteredCount`, `averageEaseFactor` |
 
 ### 5.5.5. Quiz (Làm bài kiểm tra)
 
@@ -333,7 +348,7 @@ sequenceDiagram
 | **Xem chi tiết quiz (chưa có answers)** | `GET /api/Quiz/{id}/questions` | Trả list câu hỏi, không kèm đáp án đúng |
 | **Xem lại 1 câu hỏi (kèm answers)** | `GET /api/Quiz/{quizId}/questions/{questionId}` | Kèm `answers[]` |
 | **Làm bài → nộp bài** | `POST /api/Quiz/{id}/submit` (body: `CreateQuizSubmissionRequestDto` — `userId`/`quizId` trong body bị ignore, server tự lấy từ token + route) → trả `SubmitQuizResultDto` (submission + newAchievements) | Plan C3 / B.4.5 |
-| **Xem lịch sử nộp bài của tôi** | `GET /api/QuizSubmission/{id}` (với id biết trước) | Hiện chưa có endpoint list submissions của user |
+| **Xem lịch sử nộp bài của tôi** | 1. `GET /api/QuizSubmission/my?quizId={quizId}&offset=0&limit=20` → 2. `GET /api/QuizSubmission/{id}` | List và detail chỉ trả submission của user trong JWT; detail có question, option, selected/correct flags và duration |
 | **Xoá quiz** | `DELETE /api/Quiz/{id}` | Chỉ owner mới xoá được |
 
 ### 5.5.6. Gamification (XP, Level, Streak)
@@ -369,8 +384,9 @@ sequenceDiagram
 
 | Tính năng UI | Gọi API | Ghi chú |
 |---|---|---|
-| **Dropdown chọn môn học (khi upload, tạo quiz, …)** | `GET /api/Subject?pageIndex=1&pageSize=100` | Cache 5 phút, ít thay đổi |
-| **Chi tiết 1 môn** | `GET /api/Subject/{id}` | |
+| **Danh sách / dropdown Subject của tôi** | `GET /api/Subject?offset=0&limit=100` | Chỉ trả về Subject của user trong JWT; cache 5 phút |
+| **Tạo Subject** | `POST /api/Subject` | Subject được gán cho user trong JWT; cùng mã Subject có thể tồn tại cho student khác |
+| **Chi tiết / sửa / xóa Subject** | `GET`, `PUT`, `DELETE /api/Subject/{id}` | Chỉ Subject của user trong JWT; Subject thiếu hoặc của user khác trả 404; xóa Subject đang được Document tham chiếu trả 409 |
 
 ### 5.5.10. Vote & Share
 
@@ -400,7 +416,6 @@ sequenceDiagram
 
 | Tính năng UI | Gọi API | Ghi chú |
 |---|---|---|
-| **Trang quản lý Subject** | `GET /api/Subject`, `POST /api/Subject`, `PUT /api/Subject/{id}`, `DELETE /api/Subject/{id}` | |
 | **Trang quản lý Tier** | `GET /api/TierMembership`, `POST /api/TierMembership`, `PUT /api/TierMembership/{id}`, `DELETE /api/TierMembership/{id}` | |
 | **Trang quản lý User** | `GET /api/User`, `GET /api/User/{id}`, `PUT /api/User/{id}/tier` (gán tier) | |
 | **Trang quản lý Report** | `GET /api/Report/search?status=&category=&keyword=`, `PATCH /api/Report/{id}/status`, `POST /api/Report/bulk-status`, `POST /api/Report/documents/{id}/mark-non-flaggable` | |
@@ -438,7 +453,7 @@ await connection.invoke("JoinGroup", String(currentUserId));
 **Các event cần handle**:
 | `type` | Label cho user | Action FE nên làm |
 |---|---|---|
-| `2` Document | "Tài liệu đã sẵn sàng" | Toast success + refetch list document |
+| `2` Document | Hiển thị `payload.message` | Chỉ dùng toast success khi `payload.isChatReady === true`; luôn refetch document. `Done` với `isChatReady === false` (ví dụ định dạng không hỗ trợ Chat) không được báo đã sẵn sàng |
 | `3` Quiz (FlashcardsReady) | "X flashcard mới sẵn sàng" | Toast + refetch flashcard list |
 | `3` Quiz (QuizReady) | "Quiz đã được tạo" | Toast + navigate tới quiz |
 | `1` System (StreakAtRisk) | "Streak sắp mất, ôn ngay!" | Toast warning + link tới /review |
@@ -489,6 +504,9 @@ await connection.invoke("JoinGroup", String(currentUserId));
 | `401 Unauthorized` | Token thiếu/hết hạn |
 | `403 Forbidden` | Token hợp lệ nhưng không đủ quyền (role/tier) |
 | `404 Not Found` | Resource không tồn tại |
+| `409 Conflict` | Document chưa sẵn sàng cho thao tác này |
+| `413 Payload Too Large` | File content vượt giới hạn upload |
+| `422 Unprocessable Entity` | AI không tạo được đúng số lượng item hợp lệ yêu cầu |
 | `500 Internal Server Error` | Lỗi backend, FE hiện "Đã có lỗi xảy ra" |
 
 ### Error body mẫu (400):
@@ -520,8 +538,7 @@ await connection.invoke("JoinGroup", String(currentUserId));
 {
   "fullName": "Nguyễn Văn A",
   "email": "user@example.com",
-  "password": "Matkhau123",
-  "dateOfBirth": "2000-01-15"
+  "password": "Matkhau123"
 }
 ```
 
@@ -746,8 +763,11 @@ Lấy documents của user hiện tại (phân trang).
       "title": "string", "fileLink": "/uploads/abc.pdf",
       "fileName": "abc.pdf", "fileExtension": ".pdf",
       "fileType": "application/pdf", "fileSizeBytes": 1048576,
-      "sharedUsers": "guid1,guid2", "shareStatus": "private",
-      "status": 2, "voteCount": 5,
+      "shareStatus": "private", "status": 2,
+      "isChatReady": true,
+      "message": "Tài liệu đã sẵn sàng.",
+      "canRetry": false,
+      "voteCount": 5, "lifecycleStatus": 0, "trashedAt": null,
       "createdAt": "...", "updatedAt": null
     }
   ],
@@ -803,7 +823,16 @@ Stream file inline (cho PDF viewer).
 
 ### 9.8. GET `/api/Document/{id}/status`
 
-**Response 200**: `{ "id": "guid", "Status": "Processing" }`
+**Response 200**:
+```json
+{
+  "id": "guid",
+  "status": "Processing",
+  "isChatReady": false,
+  "message": "Tài liệu đang được chuẩn bị.",
+  "canRetry": false
+}
+```
 
 > Dùng để poll sau khi upload. Trả 403 nếu không phải owner.
 
@@ -832,14 +861,25 @@ Lấy text chunks (sau khi xử lý xong) - dùng cho debug.
 **Errors**:
 | Status | Khi nào |
 |---|---|
-| 400 | File trống, thiếu title, subjectId không tồn tại, extension không hợp lệ, file quá lớn (>MaxFileSizeBytes, mặc định 20MB) |
+| 400 | File trống, thiếu title, hoặc extension không hợp lệ |
+| 404 | `subjectId` không tồn tại hoặc không thuộc user hiện tại |
+| 413 | File content vượt `5,242,880` bytes (5 MiB) |
 | 403 | Vượt quota storage của tier |
 | 202 | Accepted - xử lý bất đồng bộ |
 
 **Response 202**:
 ```json
-{ "documentId": "guid", "status": "processing", "chunkCount": 0, "message": "Document is being processed in the background" }
+{
+  "documentId": "guid",
+  "status": "Processing",
+  "chunkCount": 0,
+  "message": "Tài liệu đang được chuẩn bị.",
+  "isChatReady": false,
+  "canRetry": false
+}
 ```
+
+`202` chỉ được trả sau khi file và Document `Processing` đã được lưu và queue; không chờ OCR/embed. Worker chuyển status sang `Done` hoặc `Failed`. Sau khi app restart, các Document active `Processing` được khôi phục; nếu file đã lưu bị mất thì Document chuyển sang `Failed`.
 
 ### 9.11. POST `/api/Document/{id}/reprocess`
 
@@ -877,12 +917,13 @@ Hybrid search trên các tài liệu của user. Endpoint này không gọi chat
       "fileName": "document.pdf",
       "pageNumber": 12,
       "chunkIndex": 22,
-      "matchType": "semantic",
-      "isHighlightable": true
+      "matchType": "semantic"
     }
   ]
 }
 ```
+
+`pageNumber` va `chunkIndex` la metadata chan doan cua hybrid search va co the la `null`. Response khong co `isHighlightable`.
 
 ### 10.2. POST `/api/AI/rag/summarize`
 
@@ -894,9 +935,11 @@ Hybrid search trên các tài liệu của user. Endpoint này không gọi chat
 
 **Query**: `docId` (guid, required)
 
-**Body**: `{ "numberOfFlashcards": 10 }` (default 10)
+**Body**: `{ "numberOfFlashcards": 10 }`
 
 **Response 200**: `[ FlashcardResponseDto ]`
+
+`numberOfFlashcards` là integer **bắt buộc**, trong khoảng 1..20; không có default. Document phải thuộc user đang gọi, có status `Done`, và có processed context không rỗng. Thành công sẽ persist và trả **đúng** số flashcard yêu cầu. Thiếu/không phải integer/ngoài 1..20 trả 400; Document không tồn tại hoặc không thuộc user trả 404; chưa `Done` hoặc context rỗng trả 409. Nếu AI không tạo đủ đúng số item hợp lệ, trả 422 và không persist partial flashcard.
 
 > Sau khi sinh, hệ thống gửi SignalR `ReceiveNotification` với `payload = { documentId, title, count }` để FE refresh danh sách.
 
@@ -904,7 +947,7 @@ Hybrid search trên các tài liệu của user. Endpoint này không gọi chat
 
 **Query**: `docId` (guid, required)
 
-**Body**: `{ "numberOfQuestions": 5 }` (range 1..20, backend validate)
+**Body**: `{ "numberOfQuestions": 5 }`
 
 **Response 200**: `QuizResponseDto`
 ```json
@@ -914,18 +957,11 @@ Hybrid search trên các tài liệu của user. Endpoint này không gọi chat
   "title": "string",
   "createdAt": "...",
   "updatedAt": null,
-  "questions": [
-    {
-      "id": "guid", "quizId": "guid", "title": "string",
-      "type": 1, "position": 0,
-      "createdAt": "...", "updatedAt": null,
-      "answers": [
-        { "id": "guid", "questionId": "guid", "selectedOption": "string", "isCorrect": true, "createdAt": "..." }
-      ]
-    }
-  ]
+  "questions": null
 }
 ```
+
+`numberOfQuestions` là integer **bắt buộc**, trong khoảng 1..20; không có default. Document phải thuộc user đang gọi, có status `Done`, và có processed context không rỗng. Thành công sẽ persist **đúng** số question yêu cầu, nhưng response generate chỉ trả metadata quiz và hiện phát `"questions": null`. FE cần gọi `GET /api/Quiz/{id}` để lấy câu hỏi/đáp án đã persist trước khi hiển thị hoặc làm bài. Thiếu/không phải integer/ngoài 1..20 trả 400; Document không tồn tại hoặc không thuộc user trả 404; chưa `Done` hoặc context rỗng trả 409. Nếu AI không tạo đủ đúng số question hợp lệ, trả 422 và không persist partial quiz, question, hoặc answer.
 
 > **`type` mapping**: 1=SingleChoice, 2=MultipleChoice, 3=TrueFalse.
 
@@ -1010,7 +1046,9 @@ Số flashcard đến hạn - dùng cho badge counter trên UI.
 
 **Response 200**: `42` (int)
 
-### 12.4. GET `/api/FlashcardReview/stats/{userId}`
+### 12.4. GET `/api/FlashcardReview/stats`
+
+Backend lấy user hiện tại từ JWT; FE không truyền `userId`.
 
 **Response 200**:
 ```json
@@ -1169,17 +1207,26 @@ Lấy answers của 1 question (chỉ dùng cho debug/admin).
 
 ### 16.2. GET `/api/QuizSubmission/{id}`
 
-Trả về kết quả nộp bài (nếu là user thường, chỉ xem được submission của mình - enforced ở service layer).
+Trả về chi tiết đầy đủ của submission thuộc user trong JWT. Submission không tồn tại hoặc thuộc user khác đều trả `404`.
 
-**Response 200** (`QuizSubmissionResponseDto`):
+**Response 200** (`QuizSubmissionDetailDto`):
 ```json
 {
-  "id": "guid", "userId": "guid", "quizId": "guid",
-  "answers": "{\"q1\":\"A\",\"q2\":[\"B\",\"C\"]}", // JSON string
-  "score": 8, "maxScore": 10, "totalCorrect": 4,
+  "id": "guid", "quizId": "guid", "quizTitle": "string",
+  "documentId": "guid", "documentTitle": "string",
+  "subjectId": "guid", "subjectCode": "SUB101", "subjectName": "string",
+  "score": 8, "maxScore": 10, "totalCorrect": 8,
+  "durationSeconds": 95, "percentageScore": 80.0,
   "gradedAt": "2026-06-28T10:30:00Z",
   "submittedAt": "2026-06-28T10:25:00Z",
-  "createdAt": "...", "updatedAt": null
+  "questions": [
+    {
+      "questionId": "guid", "title": "string", "type": 0, "position": 1,
+      "options": [
+        { "answerId": "guid", "text": "A", "isSelected": true, "isCorrect": true }
+      ]
+    }
+  ]
 }
 ```
 
@@ -1205,11 +1252,13 @@ Lấy lịch sử messages của 1 session.
 
 ### 17.4. POST `/api/Chat/messages`
 
-Gửi message mới theo hai giai đoạn: backend lưu user message trước khi gọi AI; sau đó lưu assistant message và toàn bộ citation snapshots trong cùng một `SaveChangesAsync`.
+Khi tất cả attachment đã ready, backend lưu user message trước khi gọi AI; sau đó lưu assistant message với nội dung trả lời và `isRelevant`. Token accounting được ghi từ kết quả orchestration. Trước bước này, backend kiểm tra tất cả attachment: `Processing` và `Failed` vẫn có thể được attach, nhưng bất kỳ attachment chưa ready nào đều trả `409 DOCUMENTS_NOT_READY`. Response có `documents[]` chỉ gồm blocker với `{ documentId, title, status, isChatReady, message, canRetry }`; request bị chặn không lưu user message và không dùng AI token.
 
 **Body**: `{ "sessionId": "guid", "message": "string" }`
 
-**Response 200**: `ChatMessageResponseDto` (AI response). `citations` dùng cùng contract đã mô tả ở đầu tài liệu: tìm marker `[n]` bằng `citationIndex == n`, rồi mở file bằng GUID `documentId`.
+**Response 200**: `ChatMessageResponseDto` với `id`, `chatSessionId`, `sender`, `content`, `createdAt`, `updatedAt`, và `isRelevant`. Không có `citations`, marker nguồn, source snippet, hay highlight metadata. Mỗi câu trả lời grounded liên quan tự append phần `Vị trí nội dung liên quan trong tài liệu:` theo từng file; trang PDF/OCR đáng tin cậy được gộp thành range, file không có trang tin cậy hiển thị `không xác định được trang`, và trường hợp mixed thêm `một số đoạn không xác định được trang`. Đây là plain text, không phải citation contract; không dùng `chunkIndex` làm trang.
+
+`GET /api/Chat/sessions/{sessionId}/messages` trả cùng response shape. Sau migration loại bỏ bảng metadata cũ, text của các message đã lưu vẫn được giữ nguyên.
 
 ---
 
@@ -1290,13 +1339,17 @@ Mark tất cả. **Response**: 204.
 
 | Method | Endpoint | Auth | Mô tả |
 |---|---|---|---|
-| GET | `/api/Subject?pageIndex=1&pageSize=20` | User | Danh sách môn học (phân trang) |
-| GET | `/api/Subject/{id}` | User | Chi tiết |
-| POST | `/api/Subject` | Admin | Tạo |
-| PUT | `/api/Subject/{id}` | Admin | Cập nhật |
-| DELETE | `/api/Subject/{id}` | Admin | Xóa |
+| GET | `/api/Subject?offset=0&limit=20` | Authenticated student | Danh sách Subject của chính user (phân trang) |
+| GET | `/api/Subject/{id}` | Authenticated student | Chi tiết Subject của chính user |
+| POST | `/api/Subject` | Authenticated student | Tạo Subject cho chính user |
+| PUT | `/api/Subject/{id}` | Authenticated student | Cập nhật Subject của chính user |
+| DELETE | `/api/Subject/{id}` | Authenticated student | Xóa Subject của chính user nếu chưa được Document tham chiếu |
 
 **Response mẫu**: `{ id, subjectCode, subjectName, description, createdAt, updatedAt }`
+
+Tất cả thao tác Subject được scope theo user trong JWT; quyền Admin không thay đổi phạm vi này.
+
+ID không tồn tại hoặc thuộc user khác trả `404`. Xóa Subject đang được Document tham chiếu trả `409`. Khi tạo Document, `subjectId` phải thuộc user đang đăng nhập; Subject của user khác bị từ chối với `404`.
 
 ---
 
@@ -1462,10 +1515,10 @@ Hệ thống sau migration `RemoveEducatorRole` chỉ còn `User` và `Admin`.
 | `dateOfBirth` | ISO date `YYYY-MM-DD`, phải là ngày quá khứ |
 | `fullName` | Không trống, độ dài 2-100 |
 | `documentTitle` | Không trống |
-| `numberOfFlashcards` | 1-20 |
-| `numberOfQuestions` | 1-20 |
+| `numberOfFlashcards` | Bắt buộc, integer 1-20 (không có default) |
+| `numberOfQuestions` | Bắt buộc, integer 1-20 (không có default) |
 | `quality` | Enum 0..3 |
-| File upload | `.pdf`, `.docx`, `.txt`, `.md`; max 20MB |
+| File upload | `.pdf`, `.docx`, `.txt`, `.md`; file content tối đa 5,242,880 bytes (5 MiB), vượt mức trả 413 |
 | `pageIndex` | >= 1 |
 | `pageSize` | 1-100 |
 
@@ -1578,7 +1631,7 @@ export default api;
 - [ ] Tích hợp `/api/Auth/login` + `/refresh-token` + Auto-refresh interceptor
 - [ ] OAuth Google/GitHub (window.location redirect)
 - [ ] Subject picker + Tier picker (load 1 lần, cache)
-- [ ] Document upload với progress bar + status polling + SignalR fallback
+- [ ] Document upload: có thể dùng progress bar xác định cho tiến độ truyền HTTP; sau `202 Accepted`, dùng readiness state/spinner không xác định cho bước chuẩn bị tài liệu, không hiển thị phần trăm giả. SignalR là cập nhật tức thời, status polling là fallback.
 - [ ] Chat UI qua `POST /api/Chat/messages`; `/api/AI/rag/ask` chỉ dùng cho hybrid search
 - [ ] Flashcard review UI (hỗ trợ keyboard 1/2/3/4 cho Again/Hard/Good/Easy)
 - [ ] Quiz taking UI (timer, navigation, submit)
@@ -1619,7 +1672,7 @@ erDiagram
 
 Tài liệu này khác với bản trước ở các điểm sau (FE phải update code):
 
-1. **Có SignalR** - Bản cũ nói "Dự án không sử dụng SignalR" - **SAI**. Hiện tại có hub `/hubs/notifications`. FE **bắt buộc** connect SignalR để nhận document processed, flashcard ready, level up, streak warning.
+1. **Có SignalR** - Bản cũ nói "Dự án không sử dụng SignalR" - **SAI**. Hiện tại có hub `/hubs/notifications`. FE nên connect SignalR để nhận document readiness, flashcard ready, level up, streak warning; polling trạng thái document vẫn là fallback khi SignalR mất kết nối.
 2. ✅ **Đã bổ sung `POST /api/Quiz/{id}/submit`** - FE submit bài thi qua endpoint này (xem mục 5.5.5). Backend cũ `POST /api/QuizSubmission` vẫn bị xoá và không nên dùng.
 3. **`/api/Notification` POST/PUT/DELETE đã xóa** - Notification do hệ thống tự tạo, FE chỉ GET + mark-as-read.
 4. **`/api/User` POST/DELETE đã xóa** - Đăng ký qua `/api/Auth/register`, xóa user cần nghiệp vụ riêng (chưa có API).

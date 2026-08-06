@@ -1,4 +1,17 @@
 @AIStudyHub.API_HostAddress = http://localhost:5000
+@accessToken = replace-with-jwt-access-token
+# Replace the nonzero GUID placeholders below with IDs from your own data.
+# They are intentionally nonzero so pre-action FluentValidation does not reject the request shape.
+@userId = 11111111-1111-1111-1111-111111111111
+@quizId = 22222222-2222-2222-2222-222222222222
+@questionId = 33333333-3333-3333-3333-333333333333
+@selectedOptionText = replace-with-exact-option-text
+@submissionId = 44444444-4444-4444-4444-444444444444
+@flashcardId = 55555555-5555-5555-5555-555555555555
+@attemptId = 66666666-6666-6666-6666-666666666666
+@documentId = 77777777-7777-7777-7777-777777777777
+@pdfSessionId = 88888888-8888-8888-8888-888888888888
+@missingPageSessionId = 99999999-9999-9999-9999-999999999999
 
 POST {{AIStudyHub.API_HostAddress}}/api/Auth/login
 Content-Type: application/json
@@ -7,6 +20,153 @@ Accept: application/json
 {
   "email": "admin@aistudyhub.local",
   "password": "ChangeMe123!"
+}
+
+###
+
+# Submit a quiz with a persisted duration. Copy submission.id from the response.
+POST {{AIStudyHub.API_HostAddress}}/api/Quiz/{{quizId}}/submit
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "userId": "{{userId}}",
+  "quizId": "{{quizId}}",
+  "answers": "{\"{{questionId}}\":\"{{selectedOptionText}}\"}",
+  "durationSeconds": 95
+}
+
+###
+
+# List the authenticated user's submissions for the quiz.
+GET {{AIStudyHub.API_HostAddress}}/api/QuizSubmission/my?quizId={{quizId}}&offset=0&limit=20
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+###
+
+# Open the owned quiz submission and inspect questions/options/duration.
+GET {{AIStudyHub.API_HostAddress}}/api/QuizSubmission/{{submissionId}}
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+###
+
+# Review the same flashcard for the first time.
+POST {{AIStudyHub.API_HostAddress}}/api/FlashcardReview/review
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "flashcardId": "{{flashcardId}}",
+  "quality": 2,
+  "timeSpentSeconds": 18
+}
+
+###
+
+# Review the same flashcard again; this appends a second immutable attempt.
+POST {{AIStudyHub.API_HostAddress}}/api/FlashcardReview/review
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "flashcardId": "{{flashcardId}}",
+  "quality": 3,
+  "timeSpentSeconds": 11
+}
+
+###
+
+# List both review attempts. Copy an attemptId from items.
+GET {{AIStudyHub.API_HostAddress}}/api/FlashcardReview/history?flashcardId={{flashcardId}}&offset=0&limit=20
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+###
+
+# Open one immutable attempt with before/result SM-2 snapshots.
+GET {{AIStudyHub.API_HostAddress}}/api/FlashcardReview/history/{{attemptId}}
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+###
+
+# Delete every flashcard in the owned document deck.
+DELETE {{AIStudyHub.API_HostAddress}}/api/Flashcard/by-document/{{documentId}}
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+###
+
+# Confirm quiz history remains available after deck deletion.
+GET {{AIStudyHub.API_HostAddress}}/api/Quiz/{{quizId}}/history?offset=0&limit=20
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+###
+
+# Normal grounded chat: use a session with an attached processed document.
+# Verify content has no source marker/list and the response has no removed source-array property.
+POST {{AIStudyHub.API_HostAddress}}/api/Chat/messages
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "sessionId": "{{pdfSessionId}}",
+  "message": "Hãy giải thích ngắn gọn nội dung chính của tài liệu."
+}
+
+###
+
+# Explicit page question against a PDF/OCR session whose supporting chunk has a positive pageNumber.
+POST {{AIStudyHub.API_HostAddress}}/api/Chat/messages
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "sessionId": "{{pdfSessionId}}",
+  "message": "Nội dung này nằm ở trang nào?"
+}
+
+###
+
+# Same page question against DOCX/TXT or legacy vectors without trustworthy page metadata.
+# Verify the answer says the exact page is unavailable.
+POST {{AIStudyHub.API_HostAddress}}/api/Chat/messages
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "sessionId": "{{missingPageSessionId}}",
+  "message": "Nội dung này nằm ở trang nào?"
+}
+
+###
+
+# History after applying the schema-removal migration: stored message text remains, with no removed source-array property.
+GET {{AIStudyHub.API_HostAddress}}/api/Chat/sessions/{{pdfSessionId}}/messages
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+###
+
+# Search-only hybrid diagnostics: results retain pageNumber/chunkIndex and have no highlight field.
+POST {{AIStudyHub.API_HostAddress}}/api/AI/rag/ask
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "Nội dung chính của tài liệu là gì?",
+  "documentIds": ["{{documentId}}"],
+  "topK": 5
 }
 
 ###

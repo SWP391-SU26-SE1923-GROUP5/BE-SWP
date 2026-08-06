@@ -14,6 +14,7 @@ using AIStudyHub.Business.DTOs.TierMemberships;
 using AIStudyHub.Business.DTOs.TokenWallet;
 using AIStudyHub.Business.DTOs.Users;
 using AIStudyHub.Business.DTOs.Votes;
+using AIStudyHub.Business.Services;
 using AIStudyHub.Data.Entities;
 using AutoMapper;
 
@@ -44,28 +45,10 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<CreateUserRequestDto, User>()
             .ForMember(dest => dest.CurrentAiTokenUsage, opt => opt.MapFrom(src => src.CurrentAiTokenUsage));
         CreateMap<UpdateUserRequestDto, User>()
-            .ForMember(dest => dest.CurrentAiTokenUsage, opt => opt.MapFrom(src => src.CurrentAiTokenUsage));
+            .ForMember(dest => dest.CurrentAiTokenUsage, opt => opt.Ignore());
 
         CreateMap<Document, DocumentResponseDto>()
-            .ConstructUsing(src => new DocumentResponseDto(
-                src.Id,
-                src.UserId,
-                src.SubjectId,
-                src.Title,
-                src.FileLink,
-                src.FileName,
-                src.FileExtension,
-                src.FileType,
-                src.FileSizeBytes,
-                src.ShareStatus,
-                src.Status,
-                src.ErrorMessage,
-                src.Votes != null ? src.Votes.Count : 0,
-                src.LifecycleStatus,
-                src.TrashedAt,
-                src.CreatedAt,
-                src.UpdatedAt
-            ));
+            .ConvertUsing(source => MapDocument(source));
         CreateMap<CreateDocumentRequestDto, Document>();
         CreateMap<UpdateDocumentRequestDto, Document>();
 
@@ -84,6 +67,7 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<UpdateFlashcardRequestDto, Flashcard>();
 
         CreateMap<Quiz, QuizResponseDto>();
+        CreateMap<Quiz, QuizSummaryDto>();
         CreateMap<CreateQuizRequestDto, Quiz>();
         CreateMap<UpdateQuizRequestDto, Quiz>();
 
@@ -99,7 +83,7 @@ public sealed class ApplicationMappingProfile : Profile
                 string.Empty,
                 string.Empty,
                 src.Score, src.MaxScore, src.TotalCorrect,
-                null,
+                src.DurationSeconds,
                 src.MaxScore > 0 ? Math.Round((double)src.Score / src.MaxScore * 100, 1) : 0,
                 src.GradedAt, src.SubmittedAt, src.CreatedAt, src.UpdatedAt));
         CreateMap<CreateQuizSubmissionRequestDto, QuizSubmission>();
@@ -113,50 +97,67 @@ public sealed class ApplicationMappingProfile : Profile
         CreateMap<UpdateTierMembershipRequestDto, TierMembership>();
 
         CreateMap<Subject, SubjectResponseDto>();
-        CreateMap<CreateSubjectRequestDto, Subject>();
-        CreateMap<UpdateSubjectRequestDto, Subject>();
+        CreateMap<CreateSubjectRequestDto, Subject>()
+            .ForMember(destination => destination.OwnerUserId, option => option.Ignore())
+            .ForMember(destination => destination.OwnerUser, option => option.Ignore());
+        CreateMap<UpdateSubjectRequestDto, Subject>()
+            .ForMember(destination => destination.OwnerUserId, option => option.Ignore())
+            .ForMember(destination => destination.OwnerUser, option => option.Ignore());
 
         CreateMap<ChatSession, ChatSessionResponseDto>();
         CreateMap<CreateChatSessionRequestDto, ChatSession>();
-        CreateMap<ChatMessage, ChatMessageResponseDto>()
-            .ConstructUsing(src => new ChatMessageResponseDto(
-                src.Id,
-                src.ChatSessionId,
-                src.Sender,
-                src.Content,
-                src.CreatedAt,
-                src.UpdatedAt,
-                src.IsRelevant,
-                src.Citations
-                    .OrderBy(citation => citation.CitationIndex)
-                    .Select(citation => new ChatCitationDto(
-                        citation.CitationIndex,
-                        citation.DocumentId,
-                        citation.Source,
-                        citation.Snippet,
-                        citation.PageNumber,
-                        citation.Relevance,
-                        citation.MatchType,
-                        citation.IsHighlightable,
-                        citation.Reason))
-                    .ToList()))
-            .ForMember(destination => destination.Citations, option => option.Ignore());
+        CreateMap<ChatMessage, ChatMessageResponseDto>();
         CreateMap<CreateChatMessageRequestDto, ChatMessage>()
             .ForMember(dest => dest.ChatSessionId, opt => opt.MapFrom(src => src.SessionId))
             .ForMember(dest => dest.Content, opt => opt.MapFrom(src => src.Message))
             .ForMember(dest => dest.Sender, opt => opt.MapFrom(_ => "user"));
         CreateMap<ChatSessionDocument, ChatSessionDocumentResponseDto>()
-            .ConstructUsing(src => new ChatSessionDocumentResponseDto(
-                src.ChatSessionId,
-                src.DocumentId,
-                src.Document.Title,
-                src.Document.FileName,
-                src.CreatedAt));
+            .ConstructUsing((source, _) => MapChatSessionDocument(source));
 
         CreateMap<TokenLedger, TokenWalletHistoryDto>()
             .ConstructUsing(src => new TokenWalletHistoryDto(
                 src.Id, src.OperationType, src.Status.ToString(), src.EstimatedTokens,
                 src.ActualTokens, src.FailureReason, src.CreatedAt));
         CreateMap<Recommendation, RecommendationResponseDto>();
+    }
+
+    private static DocumentResponseDto MapDocument(Document source)
+    {
+        var readiness = DocumentReadinessEvaluator.Evaluate(source);
+        return new DocumentResponseDto(
+            source.Id,
+            source.UserId,
+            source.SubjectId,
+            source.Title,
+            source.FileLink,
+            source.FileName,
+            source.FileExtension,
+            source.FileType,
+            source.FileSizeBytes,
+            source.ShareStatus,
+            source.Status,
+            readiness.IsChatReady,
+            readiness.Message,
+            readiness.CanRetry,
+            source.Votes != null ? source.Votes.Count : 0,
+            source.LifecycleStatus,
+            source.TrashedAt,
+            source.CreatedAt,
+            source.UpdatedAt);
+    }
+
+    private static ChatSessionDocumentResponseDto MapChatSessionDocument(ChatSessionDocument source)
+    {
+        var readiness = DocumentReadinessEvaluator.Evaluate(source.Document);
+        return new ChatSessionDocumentResponseDto(
+            source.ChatSessionId,
+            source.DocumentId,
+            source.Document.Title,
+            source.Document.FileName,
+            source.CreatedAt,
+            readiness.Status,
+            readiness.IsChatReady,
+            readiness.Message,
+            readiness.CanRetry);
     }
 }

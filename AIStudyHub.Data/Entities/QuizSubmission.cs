@@ -8,6 +8,7 @@ public sealed class QuizSubmission : BaseEntity
     public int Score { get; set; }
     public int MaxScore { get; set; }
     public int TotalCorrect { get; set; }
+    public int? DurationSeconds { get; set; }
     public DateTime? GradedAt { get; set; }
     public DateTime SubmittedAt { get; set; } = DateTime.UtcNow;
 

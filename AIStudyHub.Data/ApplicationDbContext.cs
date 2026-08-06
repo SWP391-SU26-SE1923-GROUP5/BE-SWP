@@ -19,7 +19,9 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
     public DbSet<Vote> Votes => Set<Vote>();
     public DbSet<Report> Reports => Set<Report>();
     public DbSet<Flashcard> Flashcards => Set<Flashcard>();
+    public DbSet<FlashcardDeck> FlashcardDecks => Set<FlashcardDeck>();
     public DbSet<FlashcardReview> FlashcardReviews => Set<FlashcardReview>();
+    public DbSet<FlashcardReviewAttempt> FlashcardReviewAttempts => Set<FlashcardReviewAttempt>();
     public DbSet<Quiz> Quizzes => Set<Quiz>();
     public DbSet<Question> Questions => Set<Question>();
     public DbSet<Answer> Answers => Set<Answer>();
@@ -28,7 +30,6 @@ public sealed class ApplicationDbContext : IdentityDbContext<User, IdentityRole<
     public DbSet<Payment> Payments => Set<Payment>();
     public DbSet<ChatSession> ChatSessions => Set<ChatSession>();
     public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
-    public DbSet<ChatMessageCitation> ChatMessageCitations => Set<ChatMessageCitation>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<OtpRecord> OtpRecords => Set<OtpRecord>();
     public DbSet<UserStats> UserStats => Set<UserStats>();
