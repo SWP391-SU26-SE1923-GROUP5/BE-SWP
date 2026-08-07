@@ -439,7 +439,7 @@ public class DocumentBackgroundProcessor : BackgroundService
                 var text = string.Join("\n", segments.Select(segment => segment.Text));
                 extractedText = text;
 
-                if (string.IsNullOrWhiteSpace(text) || text.Length < 10)
+                if (string.IsNullOrWhiteSpace(text))
                 {
                     throw new InvalidOperationException(
                         $"Text extraction returned insufficient content ({text?.Length ?? 0} chars). "
