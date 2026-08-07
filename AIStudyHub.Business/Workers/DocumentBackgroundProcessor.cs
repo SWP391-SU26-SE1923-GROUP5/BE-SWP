@@ -438,7 +438,7 @@ public class DocumentBackgroundProcessor : BackgroundService
                 var segments = await documentProcessing.ExtractSegmentsAsync(fileContent, extension);
                 var text = string.Join("\n", segments.Select(segment => segment.Text));
                 extractedText = text;
-
+//hello
                 if (string.IsNullOrWhiteSpace(text))
                 {
                     throw new InvalidOperationException(
